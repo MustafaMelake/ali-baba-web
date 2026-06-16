@@ -1,0 +1,338 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Dual-business platform — Online Patisserie Shop + Dine-in Café Menu
+// Datasource: PostgreSQL (Neon).  Connection URL is supplied by prisma.config.ts.
+// Client:    `prisma-client` generator emitting to src/generated/prisma,
+//            consumed via `@/generated/prisma/client` with the @prisma/adapter-pg
+//            driver adapter (see src/lib/prisma.ts).
+// Auth:      Better Auth standard models (User, Session, Account, Verification).
+// ─────────────────────────────────────────────────────────────────────────────
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+/// Which storefront a category / menu page belongs to.
+enum CategoryType {
+  SHOP // Online patisserie shop
+  CAFE // Dine-in café menu
+}
+
+/// The five fixed, first-class categories surfaced in the homepage CategorySlider.
+/// A Category that carries one of these is a "core" category (slider-eligible);
+/// the @unique on Category.identifier guarantees exactly one row per value.
+enum CategoryIdentifier {
+  ORIENTAL_SWEETS
+  WESTERN_SWEETS
+  MOULID_SWEETS
+  EID_SWEETS
+  BAKERY
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum FulfillmentMethod {
+  DELIVERY
+  PICKUP
+}
+
+enum OrderStatus {
+  PENDING
+  PREPARING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+/// Cities we deliver to.
+enum DeliveryLocation {
+  MENOUF
+  SADAT
+  SARS
+  TITA
+  BARHEEM
+  AL_HAMOUL
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Better Auth — standard models
+// Field names & types must match what Better Auth's prismaAdapter expects.
+// NOTE: credential passwords are stored on Account.password (NOT on User).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  role          UserRole @default(USER)
+
+  // Auth relations
+  sessions Session[]
+  accounts Account[]
+
+  // Business relations
+  orders    Order[]
+  reviews   Review[]
+  cartItems CartItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Product organization (matrix structure)
+//
+//   Category  → the product's *classification*        (Modern, Croissant, …)
+//   MenuPage  → the UI page/section it is shown on     (a digital-menu page)
+//   Product   → relates to BOTH a Category and a MenuPage
+//   Variant   → the purchasable unit + its price       (Scoop, Litre, Pieces)
+//
+// Prices live ONLY on ProductVariant; carts & orders reference a variant id so
+// the price is always resolved server-side (no client-supplied prices).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Category {
+  id   String       @id @default(cuid())
+  name String       @unique
+  slug String       @unique
+  type CategoryType @default(SHOP)
+
+  // ── CategorySlider presentation fields ─────────────────────────────────────
+  /// Short marketing tagline shown under the title in the slider card.
+  subtitle   String?
+  /// Hero image URL (or /public path) for the slider card.
+  image      String?
+  /// Marks this as one of the five core categories rendered in the homepage
+  /// slider. NULL for ordinary categories. @unique → one row per enum value.
+  identifier CategoryIdentifier? @unique
+
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model MenuPage {
+  id          String       @id @default(cuid())
+  title       String
+  slug        String       @unique
+  description String?
+  /// Optional unified starting price for the page (when variants aren't itemised).
+  basePrice   Float?
+  type        CategoryType @default(SHOP)
+  isActive    Boolean      @default(true)
+  sortOrder   Int          @default(0)
+  products    Product[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([type])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  name        String
+  /// URL-safe identifier used for product detail routing (/product/[slug]).
+  slug        String   @unique
+  description String?
+  images      String[]
+  isAvailable Boolean  @default(true)
+  isFeatured  Boolean  @default(false)
+
+  // Classification
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  // Presentation (which menu page it appears on)
+  menuPageId String
+  menuPage   MenuPage @relation(fields: [menuPageId], references: [id], onDelete: Restrict)
+
+  variants ProductVariant[]
+  reviews  Review[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+  @@index([categoryId])
+  @@index([menuPageId])
+}
+
+model ProductVariant {
+  id             String  @id @default(cuid())
+  productId      String
+  product        Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// e.g. "Scoop", "1 Litre", "6 Pieces"
+  name           String
+  sku            String? @unique
+  price          Float
+  /// Optional strikethrough / original price for promotions.
+  compareAtPrice Float?
+  isAvailable    Boolean @default(true)
+  sortOrder      Int     @default(0)
+
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reviews (admin-moderated)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Review {
+  id        String       @id @default(cuid())
+  rating    Int
+  comment   String
+  status    ReviewStatus @default(PENDING)
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@unique([userId, productId]) // one review per user per product
+  @@index([productId])
+  @@index([userId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cart & Orders
+// CartItem / OrderItem link strictly to a ProductVariant id (price integrity).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CartItem {
+  id        String         @id @default(cuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  quantity  Int            @default(1)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([userId, variantId])
+  @@index([userId])
+  @@index([variantId])
+}
+
+model Order {
+  id          String @id @default(cuid())
+  /// Human-friendly sequential number for staff / customers.
+  orderNumber Int    @unique @default(autoincrement())
+
+  // Optional: orders may be placed by guests.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  items OrderItem[]
+
+  subtotal    Float
+  deliveryFee Float @default(0)
+  totalAmount Float
+
+  status      OrderStatus       @default(PENDING)
+  fulfillment FulfillmentMethod @default(DELIVERY)
+
+  // DELIVERY → deliveryCity (+ addressLine).  PICKUP → pickupBranch.
+  deliveryCity DeliveryLocation?
+  addressLine  String?
+  pickupBranch String?
+
+  customerName  String
+  customerPhone String
+  orderNotes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id        String         @id @default(cuid())
+  orderId   String
+  order     Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId String
+  // Restrict: a variant referenced by a placed order cannot be hard-deleted.
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  // Snapshot captured at purchase time (price resolved server-side from the variant).
+  productName String
+  variantName String
+  unitPrice   Float
+  quantity    Int
+
+  @@index([orderId])
+  @@index([variantId])
+}
