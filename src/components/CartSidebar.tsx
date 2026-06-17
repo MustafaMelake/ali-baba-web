@@ -31,11 +31,11 @@ function EmptyCart({ onClose }: { onClose: () => void }) {
       </p>
 
       <Link
-        href="/menu"
+        href="/shop"
         onClick={onClose}
         className="mt-10 group inline-flex items-center gap-2.5 rounded-full bg-stone-900 px-7 py-3.5 text-xs font-sans font-semibold uppercase tracking-widest text-white hover:bg-stone-700 transition-colors"
       >
-        Explore Menu
+        Explore Shop
         <ArrowRight className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
       </Link>
     </motion.div>
@@ -43,7 +43,11 @@ function EmptyCart({ onClose }: { onClose: () => void }) {
 }
 
 // ─── Cart Line Item ───────────────────────────────────────────────
-function CartLineItem({ item }: { item: ReturnType<typeof useCartStore.getState>["items"][number] }) {
+function CartLineItem({
+  item,
+}: {
+  item: ReturnType<typeof useCartStore.getState>["items"][number];
+}) {
   const { updateQuantity, removeItem } = useCartStore();
 
   return (
@@ -144,7 +148,9 @@ export default function CartSidebar() {
   // Lock body scroll while drawer is open
   useEffect(() => {
     document.body.style.overflow = isOpen ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [isOpen]);
 
   return (
