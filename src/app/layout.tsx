@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Cormorant_Garamond, Geist } from "next/font/google"; // استخدمنا خط فاخر للـ Serif
+import { Toaster } from "sonner";
 import "./globals.css";
 
 // خط فاخر للـ Headlines
@@ -48,6 +49,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background text-foreground font-sans">
         {children}
+        <Toaster richColors position="top-center" />
       </body>
     </html>
   );

@@ -14,3 +14,18 @@ import { auth } from "./auth";
 export const getServerSession = cache(async () => {
   return auth.api.getSession({ headers: await headers() });
 });
+
+/**
+ * Guard for Server Actions / Route Handlers that must be admin-only.
+ *
+ * Throws on anonymous or non-admin callers (the UI never lets this happen, so a
+ * thrown error here means someone is hitting the action directly). Returns the
+ * session so callers can use `session.user.id` etc.
+ */
+export async function requireAdmin() {
+  const session = await getServerSession();
+  if (!session || session.user.role !== "ADMIN") {
+    throw new Error("Unauthorized: admin access required.");
+  }
+  return session;
+}
