@@ -43,6 +43,47 @@ export const productInputSchema = z.object({
 
 export type ProductInput = z.infer<typeof productInputSchema>;
 
+// A single variant on the edit form. `id` present → an existing row to update;
+// absent → a brand-new variant to create.
+export const variantInputSchema = z.object({
+  id: z.string().optional(),
+  name: z
+    .string()
+    .trim()
+    .min(1, "Variant name is required")
+    .max(80, "Variant name is too long"),
+  price: z
+    .number({ error: "Enter a valid price" })
+    .positive("Price must be greater than 0"),
+  sku: optionalText(64),
+});
+
+export type VariantInput = z.infer<typeof variantInputSchema>;
+
+// Full payload for updating a product, including its (multi-)variant list.
+export const productUpdateSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Name must be at least 2 characters")
+    .max(120, "Name is too long"),
+  slug: z
+    .string()
+    .trim()
+    .min(2, "Slug must be at least 2 characters")
+    .max(140, "Slug is too long")
+    .regex(slugRegex, "Use lowercase letters, numbers and hyphens only"),
+  description: optionalText(2000),
+  categoryId: z.string().min(1, "Select a category"),
+  menuPageId: z.string().min(1, "Select a menu page"),
+  images: z.array(z.string()).default([]),
+  isAvailable: z.boolean(),
+  isFeatured: z.boolean(),
+  variants: z.array(variantInputSchema).min(1, "Add at least one variant"),
+});
+
+export type ProductUpdateInput = z.infer<typeof productUpdateSchema>;
+
 export const categoryUpdateSchema = z.object({
   id: z.string().min(1, "Missing category id"),
   subtitle: optionalText(160),

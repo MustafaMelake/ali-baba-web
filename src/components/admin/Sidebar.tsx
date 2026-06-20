@@ -10,6 +10,7 @@ import {
   Package,
   Tags,
   Coffee,
+  Star,
   Users,
   Settings,
   Store,
@@ -35,6 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/admin/products", label: "Products", icon: Package },
   { href: "/admin/categories", label: "Categories", icon: Tags },
   { href: "/admin/menu", label: "Café Menu", icon: Coffee },
+  { href: "/admin/reviews", label: "Reviews", icon: Star },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
