@@ -3,32 +3,22 @@
 import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Loader2, Check, ImagePlus, RefreshCw } from "lucide-react";
+import { X, Loader2, Check, ImagePlus, RefreshCw, FolderPlus } from "lucide-react";
 import { toast } from "sonner";
 import { CategoryIdentifier } from "@/generated/prisma/enums";
-import { updateCategory } from "@/lib/actions/categories";
+import { createCategory } from "@/lib/actions/categories";
 import { UploadDropzone } from "@/lib/uploadthing";
 import { prettyLabel } from "@/lib/utils";
-
-export type EditableCategory = {
-  id: string;
-  name: string;
-  subtitle: string | null;
-  image: string | null;
-  identifier: CategoryIdentifier | null;
-};
 
 const inputClasses =
   "w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm text-stone-900 outline-none transition-colors placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20";
 
 const IDENTIFIER_OPTIONS = Object.values(CategoryIdentifier);
 
-export default function EditCategoryModal({
-  category,
+export default function NewCategoryModal({
   isOpen,
   onClose,
 }: {
-  category: EditableCategory | null;
   isOpen: boolean;
   onClose: () => void;
 }) {
@@ -40,19 +30,17 @@ export default function EditCategoryModal({
   const [identifier, setIdentifier] = useState<string>(""); // "" === NONE
   const [image, setImage] = useState("");
 
-  // Sync the controlled form with the target category whenever the modal opens
-  // or the selected category changes.
+  // Reset to a blank form every time the modal opens.
   useEffect(() => {
-    if (!isOpen || !category) return;
-    /* eslint-disable react-hooks/set-state-in-effect -- intentional: seed the form from props on open */
-    setName(category.name);
-    setSubtitle(category.subtitle ?? "");
-    setIdentifier(category.identifier ?? "");
-    setImage(category.image ?? "");
+    if (!isOpen) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- intentional: clear the form on open */
+    setName("");
+    setSubtitle("");
+    setIdentifier("");
+    setImage("");
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [isOpen, category]);
+  }, [isOpen]);
 
-  // Lock body scroll + Escape-to-close while open.
   useEffect(() => {
     if (!isOpen) return;
     function onKey(e: KeyboardEvent) {
@@ -68,11 +56,9 @@ export default function EditCategoryModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!category) return;
 
     startTransition(async () => {
-      const result = await updateCategory({
-        id: category.id,
+      const result = await createCategory({
         name: name.trim(),
         subtitle: subtitle.trim() || null,
         identifier: identifier || null,
@@ -84,9 +70,9 @@ export default function EditCategoryModal({
         return;
       }
 
-      toast.success("Category updated", {
+      toast.success("Category created", {
         description: result.transferredFrom
-          ? `Core position moved here from “${result.transferredFrom}”.`
+          ? `Core position moved here from "${result.transferredFrom}".`
           : undefined,
       });
       onClose();
@@ -96,9 +82,8 @@ export default function EditCategoryModal({
 
   return (
     <AnimatePresence>
-      {isOpen && category && (
+      {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -108,11 +93,10 @@ export default function EditCategoryModal({
             className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm"
           />
 
-          {/* Panel */}
           <motion.div
             role="dialog"
             aria-modal="true"
-            aria-label={`Edit ${category.name}`}
+            aria-label="Add new category"
             initial={{ opacity: 0, y: 16, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 16, scale: 0.98 }}
@@ -122,13 +106,18 @@ export default function EditCategoryModal({
             <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
               {/* Header */}
               <div className="flex items-center justify-between border-b border-stone-100 px-6 py-4">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
-                    Edit Category
-                  </p>
-                  <h3 className="font-serif text-xl font-medium text-stone-900">
-                    {category.name}
-                  </h3>
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <FolderPlus className="h-4.5 w-4.5" />
+                  </span>
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
+                      New Category
+                    </p>
+                    <h3 className="font-serif text-xl font-medium text-stone-900">
+                      Add a category
+                    </h3>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -140,46 +129,41 @@ export default function EditCategoryModal({
                 </button>
               </div>
 
-              {/* Body (scrolls if tall) */}
+              {/* Body */}
               <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
                 <div className="space-y-1.5">
-                  <label htmlFor="cat-name" className="text-sm font-medium text-stone-700">
+                  <label htmlFor="new-cat-name" className="text-sm font-medium text-stone-700">
                     Name
                   </label>
                   <input
-                    id="cat-name"
+                    id="new-cat-name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="Oriental Sweets"
+                    placeholder="Seasonal Specials"
                     className={inputClasses}
+                    autoFocus
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <label
-                    htmlFor="cat-subtitle"
-                    className="text-sm font-medium text-stone-700"
-                  >
+                  <label htmlFor="new-cat-subtitle" className="text-sm font-medium text-stone-700">
                     Subtitle
                   </label>
                   <input
-                    id="cat-subtitle"
+                    id="new-cat-subtitle"
                     value={subtitle}
                     onChange={(e) => setSubtitle(e.target.value)}
-                    placeholder="Baklava, Kunafa & Heritage Confections"
+                    placeholder="Limited-time favourites"
                     className={inputClasses}
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <label
-                    htmlFor="cat-identifier"
-                    className="text-sm font-medium text-stone-700"
-                  >
+                  <label htmlFor="new-cat-identifier" className="text-sm font-medium text-stone-700">
                     Core Position
                   </label>
                   <select
-                    id="cat-identifier"
+                    id="new-cat-identifier"
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
                     className={inputClasses}
@@ -198,17 +182,15 @@ export default function EditCategoryModal({
                 </div>
 
                 <div className="space-y-2">
-                  <span className="text-sm font-medium text-stone-700">
-                    Cover Image
-                  </span>
+                  <span className="text-sm font-medium text-stone-700">Cover Image</span>
 
                   {image ? (
                     <div className="relative overflow-hidden rounded-xl border border-stone-200">
-                      {/* Plain <img> — UploadThing URLs, no next/image yet. */}
+                      {/* Plain <img> — UploadThing URLs, no next/image in admin forms. */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={image}
-                        alt={`${category.name} cover`}
+                        alt="New category cover"
                         className="h-40 w-full object-cover"
                       />
                       <button
@@ -223,8 +205,6 @@ export default function EditCategoryModal({
                   ) : (
                     <UploadDropzone
                       endpoint="categoryImage"
-                      // Styled via `appearance` (we don't import UploadThing's global
-                      // stylesheet — it ships a Tailwind v3 reset that breaks layout).
                       appearance={{
                         container:
                           "flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-stone-200 bg-stone-50/60 px-6 py-6",
@@ -270,12 +250,12 @@ export default function EditCategoryModal({
                   {isPending ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving…
+                      Creating…
                     </>
                   ) : (
                     <>
                       <Check className="h-4 w-4" />
-                      Save Changes
+                      Create Category
                     </>
                   )}
                 </button>

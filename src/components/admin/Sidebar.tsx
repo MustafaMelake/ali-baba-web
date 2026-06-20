@@ -9,6 +9,7 @@ import {
   ShoppingBag,
   Package,
   Tags,
+  Coffee,
   Users,
   Settings,
   Store,
@@ -33,6 +34,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/admin/orders", label: "Orders", icon: ShoppingBag },
   { href: "/admin/products", label: "Products", icon: Package },
   { href: "/admin/categories", label: "Categories", icon: Tags },
+  { href: "/admin/menu", label: "Café Menu", icon: Coffee },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
@@ -81,7 +83,7 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
               "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
               active
                 ? "bg-primary/10 text-primary"
-                : "text-stone-500 hover:bg-stone-100 hover:text-stone-900",
+                : "text-stone-500 hover:bg-stone-100 hover:text-stone-900"
             )}
           >
             <Icon
@@ -89,7 +91,7 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
                 "h-[18px] w-[18px] shrink-0 transition-colors",
                 active
                   ? "text-primary"
-                  : "text-stone-400 group-hover:text-stone-600",
+                  : "text-stone-400 group-hover:text-stone-600"
               )}
             />
             {label}

@@ -336,3 +336,49 @@ model OrderItem {
   @@index([orderId])
   @@index([variantId])
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Café Menu (dine-in / pickup digital menu)
+//
+// Self-contained from the e-commerce catalogue above: the café menu is a flat
+// list of categories, each holding simply-priced items, managed entirely from
+// /admin/menu and rendered on the public /menu route.
+//
+//   MenuCategory.isFixedPrice → "Smoothies" style: every item shares one price,
+//   so the storefront renders a flavour grid + a single unified price badge
+//   (the shared price is read from the items, which are kept equal).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model MenuCategory {
+  id    String @id @default(cuid())
+  title String
+  slug  String @unique
+  /// Display order in both the storefront nav and the admin list (ascending).
+  order Int    @default(0)
+  /// When true, all items share one price (flavour-grid presentation).
+  isFixedPrice Boolean @default(false)
+
+  items     MenuItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([order])
+}
+
+model MenuItem {
+  id    String @id @default(cuid())
+  /// Item name — typically Arabic (rendered RTL on the storefront).
+  name  String
+  price Float
+  /// Display order within its category (ascending).
+  order Int    @default(0)
+
+  categoryId String
+  category   MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([order])
+}
