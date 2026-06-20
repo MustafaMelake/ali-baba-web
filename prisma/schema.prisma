@@ -42,12 +42,6 @@ enum CategoryIdentifier {
   BAKERY
 }
 
-enum ReviewStatus {
-  PENDING
-  APPROVED
-  REJECTED
-}
-
 enum FulfillmentMethod {
   DELIVERY
   PICKUP
@@ -247,21 +241,26 @@ model ProductVariant {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Review {
-  id        String       @id @default(cuid())
-  rating    Int
-  comment   String
-  status    ReviewStatus @default(PENDING)
-  userId    String
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  productId String
-  product   Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id      String @id @default(cuid())
+  rating  Int // 1–5, enforced in the server action
+  comment String
+  /// Snapshot of the reviewer's display name at submission time.
+  authorName String
+  /// Moderation flag — reviews are hidden until an admin sets this true.
+  isApproved Boolean @default(false)
 
-  @@unique([userId, productId]) // one review per user per product
+  // Reviews are written only by authenticated users.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
   @@index([productId])
+  @@index([isApproved])
   @@index([userId])
-  @@index([status])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

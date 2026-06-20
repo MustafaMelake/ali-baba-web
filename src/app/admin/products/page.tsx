@@ -5,6 +5,7 @@ import { formatEGP } from "@/lib/utils";
 import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
 import Pill from "@/components/admin/Pill";
+import ProductRowActions from "@/components/admin/ProductRowActions";
 
 export const metadata = {
   title: "Products | Admin",
@@ -54,6 +55,7 @@ export default async function AdminProductsPage() {
                   <th className="px-6 py-3.5 font-semibold">Category</th>
                   <th className="px-6 py-3.5 font-semibold">Price</th>
                   <th className="px-6 py-3.5 font-semibold">Stock</th>
+                  <th className="px-6 py-3.5 text-right font-semibold">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -117,6 +119,9 @@ export default async function AdminProductsPage() {
                             Out of Stock
                           </Pill>
                         )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <ProductRowActions id={product.id} />
                       </td>
                     </tr>
                   );
