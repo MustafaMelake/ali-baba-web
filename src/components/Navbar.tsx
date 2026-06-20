@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ShoppingCart, X, Menu } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ShoppingCart, X, Menu, LayoutDashboard, LogOut } from "lucide-react";
 import {
   motion,
   useScroll,
@@ -10,7 +11,9 @@ import {
   AnimatePresence,
 } from "framer-motion";
 import { useCartStore } from "@/lib/cart-store";
+import { useSession, signOut } from "@/lib/auth-client";
 import CartSidebar from "@/components/CartSidebar";
+import UserMenu from "@/components/UserMenu";
 
 const NAV_LINKS = [
   { label: "Home", href: "/" },
@@ -21,6 +24,7 @@ const NAV_LINKS = [
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
 export default function Navbar() {
+  const router = useRouter();
   const { scrollY } = useScroll();
   const [hidden, setHidden] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -28,6 +32,18 @@ export default function Navbar() {
   const toggleCart = useCartStore((s) => s.toggleCart);
   const totalItems = useCartStore((s) => s.totalItems);
   const itemCount = totalItems();
+
+  // Reactive session — re-renders on login/logout without a full page reload.
+  const { data: session, isPending } = useSession();
+  const user = session?.user;
+  const isAdmin = user?.role === "ADMIN";
+
+  async function handleMobileSignOut() {
+    await signOut();
+    setMobileOpen(false);
+    router.push("/");
+    router.refresh();
+  }
 
   // Hide on scroll down, reveal on scroll up
   useMotionValueEvent(scrollY, "change", (latest) => {
@@ -92,18 +108,37 @@ export default function Navbar() {
           <div className="flex items-center gap-2 md:gap-5">
             {/* Auth — desktop only */}
             <div className="hidden md:flex items-center gap-5">
-              <Link
-                href="/login"
-                className="text-[13px] font-sans font-medium uppercase tracking-[0.15em] text-foreground/70 hover:text-primary transition-colors"
-              >
-                Sign In
-              </Link>
-              <Link
-                href="/signup"
-                className="rounded-full border border-primary/40 px-5 py-2 text-[13px] font-sans font-semibold uppercase tracking-[0.15em] text-primary hover:bg-primary/5 hover:border-primary transition-all"
-              >
-                Join
-              </Link>
+              {isPending ? (
+                // Avoid a flash of "Sign In" before the session resolves.
+                <div
+                  className="h-9 w-9 animate-pulse rounded-full bg-stone-100"
+                  aria-hidden="true"
+                />
+              ) : user ? (
+                <UserMenu
+                  user={{
+                    name: user.name,
+                    email: user.email,
+                    image: user.image,
+                    role: user.role,
+                  }}
+                />
+              ) : (
+                <>
+                  <Link
+                    href="/login"
+                    className="text-[13px] font-sans font-medium uppercase tracking-[0.15em] text-foreground/70 hover:text-primary transition-colors"
+                  >
+                    Sign In
+                  </Link>
+                  <Link
+                    href="/signup"
+                    className="rounded-full border border-primary/40 px-5 py-2 text-[13px] font-sans font-semibold uppercase tracking-[0.15em] text-primary hover:bg-primary/5 hover:border-primary transition-all"
+                  >
+                    Join
+                  </Link>
+                </>
+              )}
             </div>
 
             {/* Cart button */}
@@ -224,20 +259,55 @@ export default function Navbar() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, ease: EASE, delay: 0.24 }}
               >
-                <Link
-                  href="/signup"
-                  onClick={() => setMobileOpen(false)}
-                  className="w-full text-center rounded-full bg-stone-900 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-white hover:bg-stone-700 transition-colors"
-                >
-                  Join the Inner Circle
-                </Link>
-                <Link
-                  href="/login"
-                  onClick={() => setMobileOpen(false)}
-                  className="w-full text-center rounded-full border border-stone-200 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-stone-600 hover:border-stone-400 transition-colors"
-                >
-                  Sign In
-                </Link>
+                {isPending ? (
+                  <div className="h-12 w-full animate-pulse rounded-full bg-stone-100" />
+                ) : user ? (
+                  <>
+                    {/* Identity */}
+                    <div className="mb-1 flex flex-col">
+                      <span className="font-serif text-lg font-medium text-stone-900">
+                        {user.name}
+                      </span>
+                      <span className="text-xs text-stone-400">{user.email}</span>
+                    </div>
+
+                    {isAdmin && (
+                      <Link
+                        href="/admin"
+                        onClick={() => setMobileOpen(false)}
+                        className="flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-white transition-colors hover:bg-primary/90"
+                      >
+                        <LayoutDashboard className="h-4 w-4" />
+                        Admin Dashboard
+                      </Link>
+                    )}
+
+                    <button
+                      onClick={handleMobileSignOut}
+                      className="flex w-full items-center justify-center gap-2 rounded-full border border-stone-200 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Sign Out
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Link
+                      href="/signup"
+                      onClick={() => setMobileOpen(false)}
+                      className="w-full text-center rounded-full bg-stone-900 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-white hover:bg-stone-700 transition-colors"
+                    >
+                      Join the Inner Circle
+                    </Link>
+                    <Link
+                      href="/login"
+                      onClick={() => setMobileOpen(false)}
+                      className="w-full text-center rounded-full border border-stone-200 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-stone-600 hover:border-stone-400 transition-colors"
+                    >
+                      Sign In
+                    </Link>
+                  </>
+                )}
               </motion.div>
 
               {/* Footer strip */}
