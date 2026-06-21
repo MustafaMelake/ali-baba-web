@@ -258,9 +258,11 @@ model Review {
 
   createdAt DateTime @default(now())
 
+  // One review per user per product — re-submission is a P2002, handled in
+  // the server action as "you've already reviewed this product".
+  @@unique([userId, productId])
   @@index([productId])
   @@index([isApproved])
-  @@index([userId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -108,6 +108,9 @@ export async function submitProductReview(
       message: "Thank you! Your review is pending admin approval.",
     };
   } catch (err) {
+    if (prismaErrorCode(err) === "P2002") {
+      return { success: false, error: "You've already reviewed this product." };
+    }
     console.error("submitProductReview failed:", err);
     return {
       success: false,
