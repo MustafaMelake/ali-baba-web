@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, X, ImagePlus, Check } from "lucide-react";
+import { Loader2, X, ImagePlus, Check, Plus, Trash2 } from "lucide-react";
 import { z } from "zod";
 import { productInputSchema, fieldErrors } from "@/lib/validators";
 import { createProduct } from "@/app/admin/products/actions";
@@ -10,6 +10,13 @@ import { UploadDropzone } from "@/lib/uploadthing";
 import { cn } from "@/lib/utils";
 
 export type SelectOption = { id: string; name: string };
+
+type VariantRow = {
+  key: string;
+  name: string;
+  price: string;
+  sku: string;
+};
 
 const inputClasses =
   "w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm text-stone-900 outline-none transition-colors placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20";
@@ -48,6 +55,13 @@ function Field({
   );
 }
 
+// تسلسل فريد لعمل الـ Keys الخاصة بالـ Variants الجديدة في الـ UI
+let variantKeySeq = 0;
+function newVariantRow(): VariantRow {
+  variantKeySeq += 1;
+  return { key: `new-${variantKeySeq}`, name: "", price: "", sku: "" };
+}
+
 export default function NewProductForm({
   categories,
   menuPages,
@@ -58,6 +72,7 @@ export default function NewProductForm({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
+  // ── Product States ──────────────────────────────────────
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
@@ -65,9 +80,10 @@ export default function NewProductForm({
   const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "");
   const [menuPageId, setMenuPageId] = useState(menuPages[0]?.id ?? "");
   const [images, setImages] = useState<string[]>([]);
-  const [variantName, setVariantName] = useState("");
-  const [price, setPrice] = useState("");
-  const [sku, setSku] = useState("");
+
+  // ── Dynamic Variants State ──────────────────────────────
+  // بنبدأ الفورم بـ Variant واحد جاهز للكتابة تلقائياً
+  const [variants, setVariants] = useState<VariantRow[]>([newVariantRow()]);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -83,6 +99,19 @@ export default function NewProductForm({
     setImages((prev) => prev.filter((u) => u !== url));
   }
 
+  // ── Variants Handlers ───────────────────────────────────
+  function updateVariant(key: string, patch: Partial<VariantRow>) {
+    setVariants((prev) =>
+      prev.map((v) => (v.key === key ? { ...v, ...patch } : v))
+    );
+  }
+
+  // حذف الـ Variant من المصفوفة
+  function removeVariant(key: string) {
+    setVariants((prev) => prev.filter((v) => v.key !== key));
+  }
+
+  // ── Submit Handler ──────────────────────────────────────
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
@@ -94,11 +123,12 @@ export default function NewProductForm({
       categoryId,
       menuPageId,
       images,
-      variant: {
-        name: variantName,
-        price: price === "" ? Number.NaN : Number(price),
-        sku,
-      },
+      // بنعمل خريطة (Map) لكل الـ variants عشان تتبعت كـ Array للسيرفر
+      variants: variants.map((v) => ({
+        name: v.name,
+        price: v.price === "" ? Number.NaN : Number(v.price),
+        sku: v.sku,
+      })),
     };
 
     const parsed = productInputSchema.safeParse(candidate);
@@ -144,7 +174,12 @@ export default function NewProductForm({
         </h2>
         <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <Field label="Product Name" htmlFor="name" error={errors.name} required>
+            <Field
+              label="Product Name"
+              htmlFor="name"
+              error={errors.name}
+              required
+            >
               <input
                 id="name"
                 value={name}
@@ -156,12 +191,7 @@ export default function NewProductForm({
           </div>
 
           <div className="sm:col-span-2">
-            <Field
-              label="Slug"
-              htmlFor="slug"
-              error={errors.slug}
-              required
-            >
+            <Field label="Slug" htmlFor="slug" error={errors.slug} required>
               <input
                 id="slug"
                 value={slug}
@@ -207,7 +237,9 @@ export default function NewProductForm({
               onChange={(e) => setCategoryId(e.target.value)}
               className={inputClasses}
             >
-              {categories.length === 0 && <option value="">No categories</option>}
+              {categories.length === 0 && (
+                <option value="">No categories</option>
+              )}
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -228,7 +260,9 @@ export default function NewProductForm({
               onChange={(e) => setMenuPageId(e.target.value)}
               className={inputClasses}
             >
-              {menuPages.length === 0 && <option value="">No menu pages</option>}
+              {menuPages.length === 0 && (
+                <option value="">No menu pages</option>
+              )}
               {menuPages.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}
@@ -252,7 +286,6 @@ export default function NewProductForm({
               <div
                 key={url}
                 className="group relative h-24 w-24 overflow-hidden rounded-xl border border-stone-200 bg-stone-100 bg-cover bg-center"
-                // Constraint: plain CSS background for UploadThing URLs (no next/image).
                 style={{ backgroundImage: `url(${url})` }}
               >
                 <button
@@ -283,10 +316,9 @@ export default function NewProductForm({
               uploadIcon: <ImagePlus className="h-8 w-8 text-stone-400" />,
             }}
             onClientUploadComplete={(res) => {
-              setImages((prev) => [
-                ...prev,
-                ...res.map((file) => file.ufsUrl),
-              ].slice(0, 4));
+              setImages((prev) =>
+                [...prev, ...res.map((file) => file.ufsUrl)].slice(0, 4)
+              );
             }}
             onUploadError={(error) => {
               setFormError(error.message || "Image upload failed.");
@@ -295,59 +327,112 @@ export default function NewProductForm({
         </div>
       </section>
 
-      {/* ── Pricing / first variant ─────────────────────────── */}
+      {/* ── Dynamic Variants Section ─────────────────────────── */}
       <section className="rounded-2xl border border-stone-200/70 bg-white p-6 shadow-sm">
-        <h2 className="font-serif text-xl font-medium text-stone-900">
-          Initial Variant
-        </h2>
-        <p className="mt-1 text-xs text-stone-400">
-          Every product needs at least one purchasable variant. Add more later.
-        </p>
-
-        <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-3">
-          <Field
-            label="Variant Name"
-            htmlFor="variantName"
-            error={errors["variant.name"]}
-            required
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-serif text-xl font-medium text-stone-900">
+              Product Variants
+            </h2>
+            <p className="mt-1 text-xs text-stone-400">
+              Every product needs at least one purchasable variant. You can add
+              multiple options here.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setVariants((prev) => [...prev, newVariantRow()])}
+            className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 px-3 py-1.5 text-xs font-semibold text-stone-600 transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
           >
-            <input
-              id="variantName"
-              value={variantName}
-              onChange={(e) => setVariantName(e.target.value)}
-              placeholder="1 Piece"
-              className={inputClasses}
-            />
-          </Field>
+            <Plus className="h-3.5 w-3.5" />
+            Add variant
+          </button>
+        </div>
 
-          <Field
-            label="Price (EGP)"
-            htmlFor="price"
-            error={errors["variant.price"]}
-            required
-          >
-            <input
-              id="price"
-              type="number"
-              min="0"
-              step="0.01"
-              inputMode="decimal"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              placeholder="185"
-              className={inputClasses}
-            />
-          </Field>
+        {typeof errors.variants === "string" && (
+          <p className="mt-3 text-xs font-medium text-red-600">
+            {errors.variants}
+          </p>
+        )}
 
-          <Field label="SKU (optional)" htmlFor="sku" error={errors["variant.sku"]}>
-            <input
-              id="sku"
-              value={sku}
-              onChange={(e) => setSku(e.target.value)}
-              placeholder="MILLE-001"
-              className={cn(inputClasses, "font-mono text-[13px]")}
-            />
-          </Field>
+        <div className="mt-5 space-y-4">
+          {variants.map((variant, index) => (
+            <div
+              key={variant.key}
+              className="rounded-xl border border-stone-200/80 bg-stone-50/40 p-4"
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wide text-stone-400">
+                  Variant {index + 1}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeVariant(variant.key)}
+                  disabled={variants.length === 1} // قفل الزرار لو مفيش غير خيار واحد متبقي
+                  aria-label={`Remove variant ${index + 1}`}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-stone-400"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <Field
+                  label="Name"
+                  htmlFor={`variant-name-${variant.key}`}
+                  error={errors[`variants.${index}.name`]}
+                  required
+                >
+                  <input
+                    id={`variant-name-${variant.key}`}
+                    value={variant.name}
+                    onChange={(e) =>
+                      updateVariant(variant.key, { name: e.target.value })
+                    }
+                    placeholder="1 Piece / 250g / Medium"
+                    className={inputClasses}
+                  />
+                </Field>
+
+                <Field
+                  label="Price (EGP)"
+                  htmlFor={`variant-price-${variant.key}`}
+                  error={errors[`variants.${index}.price`]}
+                  required
+                >
+                  <input
+                    id={`variant-price-${variant.key}`}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={variant.price}
+                    onChange={(e) =>
+                      updateVariant(variant.key, { price: e.target.value })
+                    }
+                    placeholder="185"
+                    className={inputClasses}
+                  />
+                </Field>
+
+                <Field
+                  label="SKU (optional)"
+                  htmlFor={`variant-sku-${variant.key}`}
+                  error={errors[`variants.${index}.sku`]}
+                >
+                  <input
+                    id={`variant-sku-${variant.key}`}
+                    value={variant.sku}
+                    onChange={(e) =>
+                      updateVariant(variant.key, { sku: e.target.value })
+                    }
+                    placeholder="MILLE-001"
+                    className={cn(inputClasses, "font-mono text-[13px]")}
+                  />
+                </Field>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 

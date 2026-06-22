@@ -212,7 +212,7 @@ export async function deleteProduct(id: string): Promise<DeleteProductResult> {
 }
 
 /**
- * Creates a Product together with its first ProductVariant in a single nested
+ * Creates a Product together with its ProductVariants in a single nested
  * write. Re-validates input server-side (never trusts the client) and revalidates
  * the affected routes so the new product shows up without a manual refresh.
  */
@@ -237,14 +237,12 @@ export async function createProduct(
         categoryId: data.categoryId,
         menuPageId: data.menuPageId,
         variants: {
-          create: [
-            {
-              name: data.variant.name,
-              price: data.variant.price,
-              sku: data.variant.sku?.trim() || null,
-              sortOrder: 0,
-            },
-          ],
+          create: data.variants.map((v, index) => ({
+            name: v.name,
+            price: v.price,
+            sku: v.sku?.trim() || null,
+            sortOrder: index,
+          })),
         },
       },
       select: { id: true },
