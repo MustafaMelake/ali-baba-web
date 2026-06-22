@@ -5,7 +5,14 @@ import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { LayoutDashboard, LogOut, User as UserIcon, Loader2 } from "lucide-react";
+import {
+  LayoutDashboard,
+  LogOut,
+  User as UserIcon,
+  Loader2,
+  Package,
+  Heart,
+} from "lucide-react";
 import { signOut } from "@/lib/auth-client";
 
 type SessionUser = {
@@ -116,6 +123,24 @@ export default function UserMenu({ user }: { user: SessionUser }) {
             </div>
 
             <div className="py-1.5">
+              <Link
+                href="/my-orders"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 hover:text-primary"
+              >
+                <Package className="h-4 w-4" />
+                My Orders
+              </Link>
+              <Link
+                href="/wishlist"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 hover:text-primary"
+              >
+                <Heart className="h-4 w-4" />
+                Wishlist
+              </Link>
               {isAdmin && (
                 <Link
                   href="/admin"

@@ -3,7 +3,15 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ShoppingCart, X, Menu, LayoutDashboard, LogOut } from "lucide-react";
+import {
+  ShoppingCart,
+  X,
+  Menu,
+  LayoutDashboard,
+  LogOut,
+  Package,
+  Heart,
+} from "lucide-react";
 import {
   motion,
   useScroll,
@@ -270,6 +278,24 @@ export default function Navbar() {
                       </span>
                       <span className="text-xs text-stone-400">{user.email}</span>
                     </div>
+
+                    <Link
+                      href="/my-orders"
+                      onClick={() => setMobileOpen(false)}
+                      className="flex w-full items-center justify-center gap-2 rounded-full border border-stone-200 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-stone-700 transition-colors hover:border-primary/40 hover:text-primary"
+                    >
+                      <Package className="h-4 w-4" />
+                      My Orders
+                    </Link>
+
+                    <Link
+                      href="/wishlist"
+                      onClick={() => setMobileOpen(false)}
+                      className="flex w-full items-center justify-center gap-2 rounded-full border border-stone-200 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-stone-700 transition-colors hover:border-primary/40 hover:text-primary"
+                    >
+                      <Heart className="h-4 w-4" />
+                      Wishlist
+                    </Link>
 
                     {isAdmin && (
                       <Link
