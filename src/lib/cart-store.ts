@@ -2,7 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 export interface CartItem {
-  id: string;
+  id: string;         // product id — the merge key for quantity stacking
+  variantId: string;  // purchasable unit — what placeOrder() prices server-side
   name: string;
   price: number;      // in the store's local currency (EGP)
   quantity: number;

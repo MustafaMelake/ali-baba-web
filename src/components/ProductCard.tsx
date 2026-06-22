@@ -6,9 +6,12 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Check, ArrowUpRight } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
+import WishlistButton from "@/components/products/WishlistButton";
 
 export interface ShopProduct {
   id: string;
+  /** Starting (lowest-price) variant id — what the quick-add / cart references. */
+  variantId: string;
   name: string;
   slug: string;
   category: string;
@@ -17,7 +20,14 @@ export interface ShopProduct {
   tagline?: string;
 }
 
-export default function ProductCard({ product }: { product: ShopProduct }) {
+export default function ProductCard({
+  product,
+  initialIsFavorited,
+}: {
+  product: ShopProduct;
+  /** Server-resolved wishlist state — keeps the heart's first paint hydration-safe. */
+  initialIsFavorited: boolean;
+}) {
   const addItem = useCartStore((s) => s.addItem);
   const [added, setAdded] = useState(false);
 
@@ -27,6 +37,7 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
   function quickAdd() {
     addItem({
       id: product.id,
+      variantId: product.variantId,
       name: product.name,
       price: product.price,
       image: product.image,
@@ -53,6 +64,15 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
           {/* Subtle veil that deepens on hover for text legibility */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-60 group-hover:opacity-90 transition-opacity duration-500" />
         </Link>
+
+        {/* Wishlist heart — sibling over the image, always visible */}
+        <div className="absolute top-3 right-3 z-10">
+          <WishlistButton
+            variant="icon"
+            productId={product.id}
+            initialIsFavorited={initialIsFavorited}
+          />
+        </div>
 
         {/* Quick-add — sibling over the image, slides up on hover */}
         <button

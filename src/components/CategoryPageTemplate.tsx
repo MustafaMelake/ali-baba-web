@@ -3,6 +3,7 @@ import { ChevronRight } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import ProductCard, { type ShopProduct } from "@/components/ProductCard";
+import { getWishlistedProductIds } from "@/lib/actions/wishlist";
 
 /**
  * The shape this template needs from a fetched Product. It is intentionally a
@@ -20,7 +21,7 @@ export interface CategoryProduct {
   description: string | null;
   images: string[];
   category: { name: string };
-  variants: { price: number }[];
+  variants: { id: string; price: number }[];
 }
 
 export interface CategoryPageTemplateProps {
@@ -40,11 +41,14 @@ export interface CategoryPageTemplateProps {
  * `ProductCard` for interactivity (quick-add) while everything else streams
  * as server-rendered HTML.
  */
-export default function CategoryPageTemplate({
+export default async function CategoryPageTemplate({
   title,
   description,
   products,
 }: CategoryPageTemplateProps) {
+  // Seed each card's heart from the live per-user wishlist (empty for guests).
+  const favorited = new Set(await getWishlistedProductIds());
+
   return (
     <div className="min-h-screen bg-white font-sans" dir="ltr">
       <Navbar />
@@ -120,6 +124,7 @@ export default function CategoryPageTemplate({
               {products.map((product) => {
                 const card: ShopProduct = {
                   id: product.id,
+                  variantId: product.variants[0]?.id ?? "",
                   name: product.name,
                   slug: product.slug,
                   category: product.category.name,
@@ -127,7 +132,13 @@ export default function CategoryPageTemplate({
                   image: product.images[0] ?? "/placeholder.jpg",
                   tagline: product.description ?? undefined,
                 };
-                return <ProductCard key={product.id} product={card} />;
+                return (
+                  <ProductCard
+                    key={product.id}
+                    product={card}
+                    initialIsFavorited={favorited.has(product.id)}
+                  />
+                );
               })}
             </div>
           )}

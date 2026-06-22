@@ -1,0 +1,183 @@
+"use server";
+
+import { prisma } from "@/lib/prisma";
+// السيشن من الـ wrapper المخصص (مش من better-auth مباشرة).
+import { getServerSession, requireAdmin } from "@/lib/session";
+import { revalidatePath } from "next/cache";
+import {
+  DeliveryLocation,
+  FulfillmentMethod,
+  OrderStatus,
+} from "@/generated/prisma/enums";
+
+// التسعير لازم يطابق ملخص الـ checkout بالظبط: توصيل 35 + ضريبة 14%.
+const DELIVERY_FEE = 35;
+const VAT_RATE = 0.14;
+
+export interface CheckoutPayload {
+  items: { variantId: string; quantity: number }[];
+  fulfillment: FulfillmentMethod;
+  deliveryCity?: DeliveryLocation;
+  addressLine?: string;
+  pickupBranch?: string;
+  customerName: string;
+  customerPhone: string;
+  orderNotes?: string;
+}
+
+export type PlaceOrderResult =
+  | { success: true; orderNumber: number; orderId: string }
+  | { success: false; error: string };
+
+export async function placeOrder(
+  payload: CheckoutPayload,
+): Promise<PlaceOrderResult> {
+  // الأوردر يقبل يوزر مسجّل أو زائر (Guest).
+  const session = await getServerSession();
+  const userId = session?.user?.id ?? null;
+
+  if (!payload.items?.length) {
+    return { success: false, error: "Your cart is empty." };
+  }
+  if (!payload.customerName?.trim() || !payload.customerPhone?.trim()) {
+    return { success: false, error: "Name and phone number are required." };
+  }
+
+  try {
+    // Transaction يضمن تماسك الداتا: إمّا الأوردر بكل سطوره يتعمل، أو لا شيء.
+    const newOrder = await prisma.$transaction(async (tx) => {
+      let subtotal = 0;
+      const orderItemsData: {
+        variantId: string;
+        productName: string;
+        variantName: string;
+        unitPrice: number;
+        quantity: number;
+      }[] = [];
+
+      // الأسعار تتقري من قاعدة البيانات مباشرة (الـ Source of Truth) — لا نثق
+      // بأي سعر جاي من العميل، نمنع التلاعب بالأسعار.
+      for (const item of payload.items) {
+        const quantity = Math.max(1, Math.floor(item.quantity));
+
+        const dbVariant = await tx.productVariant.findUnique({
+          where: { id: item.variantId },
+          include: { product: { select: { name: true, isAvailable: true } } },
+        });
+
+        if (
+          !dbVariant ||
+          !dbVariant.isAvailable ||
+          !dbVariant.product.isAvailable
+        ) {
+          throw new Error(
+            `${dbVariant?.product.name ?? "An item in your cart"} is no longer available.`,
+          );
+        }
+
+        subtotal += dbVariant.price * quantity;
+
+        // Snapshot لبيانات السطر وقت الشراء (الاسم/الـ variant/السعر).
+        orderItemsData.push({
+          variantId: dbVariant.id,
+          productName: dbVariant.product.name,
+          variantName: dbVariant.name,
+          unitPrice: dbVariant.price,
+          quantity,
+        });
+      }
+
+      const deliveryFee =
+        payload.fulfillment === FulfillmentMethod.DELIVERY ? DELIVERY_FEE : 0;
+      // VAT غير مخزّن في عمود مستقل — مدموج في totalAmount، وبيتحسب كـ residual
+      // وقت العرض (totalAmount - subtotal - deliveryFee) فيفضل دايماً متسق.
+      const vat = Math.round(subtotal * VAT_RATE);
+      const totalAmount = subtotal + deliveryFee + vat;
+
+      // إنشاء الأوردر مع سطوره في عملية واحدة (nested write).
+      return tx.order.create({
+        data: {
+          userId,
+          subtotal,
+          deliveryFee,
+          totalAmount,
+          fulfillment: payload.fulfillment,
+          status: OrderStatus.PENDING,
+          deliveryCity: payload.deliveryCity,
+          addressLine: payload.addressLine,
+          pickupBranch: payload.pickupBranch,
+          customerName: payload.customerName.trim(),
+          customerPhone: payload.customerPhone.trim(),
+          orderNotes: payload.orderNotes,
+          items: { create: orderItemsData },
+        },
+        select: { id: true, orderNumber: true },
+      });
+    });
+
+    // تحديث كاش لوحة التحكم فوراً (الإيرادات + الطلبات اللحظية) وصفحة طلبات اليوزر.
+    revalidatePath("/admin");
+    revalidatePath("/admin/orders");
+    if (userId) revalidatePath("/my-orders");
+
+    return {
+      success: true,
+      orderNumber: newOrder.orderNumber,
+      orderId: newOrder.id,
+    };
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Could not place your order.";
+    console.error("placeOrder failed:", err);
+    return { success: false, error: message };
+  }
+}
+
+/** Reads a Prisma known-request error code without importing the error class. */
+function prismaErrorCode(err: unknown): string | undefined {
+  if (typeof err === "object" && err !== null && "code" in err) {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return undefined;
+}
+
+/**
+ * Admin: move an order along its lifecycle. Guarded by `requireAdmin` (the UI
+ * never exposes this to non-admins, so a thrown guard here means a direct hit).
+ * Revalidates the orders board AND the dashboard so revenue / counters re-sync.
+ */
+export async function updateOrderStatus(
+  orderId: string,
+  status: OrderStatus,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await requireAdmin();
+  } catch {
+    return { success: false, error: "Unauthorized." };
+  }
+
+  if (!orderId) return { success: false, error: "Missing order id." };
+  // Defensive: never trust a status that isn't a real enum member.
+  if (!Object.values(OrderStatus).includes(status)) {
+    return { success: false, error: "Invalid order status." };
+  }
+
+  try {
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { status },
+      select: { id: true },
+    });
+
+    revalidatePath("/admin/orders");
+    revalidatePath("/admin");
+    return { success: true };
+  } catch (err) {
+    if (prismaErrorCode(err) === "P2025") {
+      return { success: false, error: "That order no longer exists." };
+    }
+    console.error("updateOrderStatus failed:", err);
+    return { success: false, error: "Could not update the order status." };
+  }
+}

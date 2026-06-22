@@ -3,8 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { CategoryIdentifier } from "@/generated/prisma/client";
 import CategoryPageTemplate from "@/components/CategoryPageTemplate";
 
-// ISR: re-fetch this category at most once per hour (tune or remove as needed).
-export const revalidate = 3600;
+// Personalised per-user wishlist state → render dynamically (no shared ISR cache).
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Western Sweets | Ali Baba",

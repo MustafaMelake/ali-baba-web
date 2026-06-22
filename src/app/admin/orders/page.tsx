@@ -1,99 +1,175 @@
-import { ShoppingBag } from "lucide-react";
+import { ShoppingBag, SearchX } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { formatDate, formatEGP } from "@/lib/utils";
-import type { OrderStatus } from "@/generated/prisma/enums";
+import { formatDate, formatDateTime, prettyLabel } from "@/lib/utils";
+import { OrderStatus } from "@/generated/prisma/enums";
+import type { Prisma } from "@/generated/prisma/client";
 import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
-import Pill from "@/components/admin/Pill";
+import AdminOrderFilters, {
+  type TabValue,
+} from "@/components/admin/AdminOrderFilters";
+import AdminOrdersTable from "@/components/admin/AdminOrdersTable";
+import type { AdminOrderView } from "@/components/admin/order-types";
 
 export const metadata = {
   title: "Orders | Admin",
 };
 
-// Colour map keyed by the Prisma OrderStatus enum (exhaustive).
-const STATUS_STYLES: Record<OrderStatus, string> = {
-  PENDING: "bg-amber-50 text-amber-700 ring-amber-600/20",
-  PREPARING: "bg-blue-50 text-blue-700 ring-blue-600/20",
-  SHIPPED: "bg-violet-50 text-violet-700 ring-violet-600/20",
-  DELIVERED: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  CANCELLED: "bg-red-50 text-red-700 ring-red-600/20",
-};
+// Always reflect the live database (admin board mutates status in place).
+export const dynamic = "force-dynamic";
 
-// PENDING -> "Pending"
-function statusLabel(status: OrderStatus) {
-  return status.charAt(0) + status.slice(1).toLowerCase();
+/** Validate the ?status= param against the enum — never trust the raw URL. */
+function parseStatus(raw?: string): TabValue {
+  if (raw && raw in OrderStatus) return raw as OrderStatus;
+  return "ALL";
 }
 
-export default async function AdminOrdersPage() {
-  // 25 most recent orders, with the placing user (orders may be guest → user null).
-  const orders = await prisma.order.findMany({
-    orderBy: { createdAt: "desc" },
-    take: 25,
-    include: { user: { select: { name: true, email: true } } },
-  });
+export default async function AdminOrdersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string; query?: string }>;
+}) {
+  const sp = await searchParams;
+  const activeStatus = parseStatus(sp.status);
+  const q = sp.query?.trim() ?? "";
+
+  // Order # is an Int column, so Prisma can't `contains` on it directly —
+  // a raw ::text cast lets staff search "100" and match order #10024.
+  const numericOrderIds =
+    q && /\d/.test(q)
+      ? (
+          await prisma.$queryRaw<{ id: string }[]>`
+            SELECT id FROM "Order" WHERE "orderNumber"::text ILIKE ${`%${q}%`}
+          `
+        ).map((row) => row.id)
+      : [];
+
+  // Search clause (order # partial-numeric, or name/phone contains). Reused
+  // for the counters so they reflect the current search context.
+  const searchWhere: Prisma.OrderWhereInput = q
+    ? {
+        OR: [
+          { customerName: { contains: q, mode: "insensitive" } },
+          { customerPhone: { contains: q } },
+          ...(numericOrderIds.length ? [{ id: { in: numericOrderIds } }] : []),
+        ],
+      }
+    : {};
+
+  const listWhere: Prisma.OrderWhereInput = {
+    ...searchWhere,
+    ...(activeStatus !== "ALL" ? { status: activeStatus } : {}),
+  };
+
+  const [orders, grouped] = await Promise.all([
+    prisma.order.findMany({
+      where: listWhere,
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: {
+        user: { select: { email: true } },
+        items: {
+          select: {
+            id: true,
+            productName: true,
+            variantName: true,
+            unitPrice: true,
+            quantity: true,
+          },
+        },
+      },
+    }),
+    prisma.order.groupBy({
+      by: ["status"],
+      where: searchWhere,
+      _count: { _all: true },
+    }),
+  ]);
+
+  // Per-status counters (+ ALL total) for the tab bar.
+  const counts: Record<TabValue, number> = {
+    ALL: 0,
+    PENDING: 0,
+    PREPARING: 0,
+    SHIPPED: 0,
+    DELIVERED: 0,
+    CANCELLED: 0,
+  };
+  for (const g of grouped) {
+    counts[g.status] = g._count._all;
+    counts.ALL += g._count._all;
+  }
+
+  // Serialize for the client table/drawer; VAT is the residual so receipts
+  // reconcile to the canonical totalAmount.
+  const view: AdminOrderView[] = orders.map((order) => ({
+    id: order.id,
+    orderNumber: order.orderNumber,
+    status: order.status,
+    dateLabel: formatDate(order.createdAt),
+    dateTimeLabel: formatDateTime(order.createdAt),
+    customerName: order.customerName,
+    customerPhone: order.customerPhone,
+    orderNotes: order.orderNotes,
+    fulfillment: order.fulfillment,
+    deliveryCity: order.deliveryCity,
+    addressLine: order.addressLine,
+    pickupBranch: order.pickupBranch,
+    subtotal: order.subtotal,
+    vat: Math.max(0, order.totalAmount - order.subtotal - order.deliveryFee),
+    deliveryFee: order.deliveryFee,
+    totalAmount: order.totalAmount,
+    itemCount: order.items.reduce((n, it) => n + it.quantity, 0),
+    items: order.items.map((it) => ({
+      id: it.id,
+      productName: it.productName,
+      variantName: it.variantName,
+      quantity: it.quantity,
+      unitPrice: it.unitPrice,
+      lineTotal: it.unitPrice * it.quantity,
+    })),
+    userEmail: order.user?.email ?? null,
+  }));
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
       <PageHeader
         eyebrow="Commerce"
         title="Orders"
-        description="The 25 most recent orders placed across the store."
+        description="Search, filter and manage every order placed across the store."
       />
 
-      <div className="overflow-hidden rounded-2xl border border-stone-200/70 bg-white shadow-sm">
-        {orders.length === 0 ? (
-          <EmptyState
-            icon={ShoppingBag}
-            title="No orders found"
-            description="New orders will appear here as customers check out."
-          />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-stone-50/70 text-left text-xs font-semibold uppercase tracking-wide text-stone-400">
-                  <th className="px-6 py-3.5 font-semibold">Order</th>
-                  <th className="px-6 py-3.5 font-semibold">Customer</th>
-                  <th className="px-6 py-3.5 font-semibold">Date</th>
-                  <th className="px-6 py-3.5 font-semibold">Status</th>
-                  <th className="px-6 py-3.5 text-right font-semibold">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map((order) => (
-                  <tr
-                    key={order.id}
-                    className="border-t border-stone-100 transition-colors hover:bg-stone-50/50"
-                  >
-                    <td className="px-6 py-4 font-medium text-stone-900">
-                      #{order.orderNumber}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="font-medium text-stone-800">
-                        {order.customerName}
-                      </div>
-                      <div className="text-xs text-stone-400">
-                        {order.user?.email ?? order.customerPhone}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-stone-500">
-                      {formatDate(order.createdAt)}
-                    </td>
-                    <td className="px-6 py-4">
-                      <Pill className={STATUS_STYLES[order.status]}>
-                        {statusLabel(order.status)}
-                      </Pill>
-                    </td>
-                    <td className="px-6 py-4 text-right font-medium text-stone-900">
-                      {formatEGP(order.totalAmount)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <AdminOrderFilters
+        activeStatus={activeStatus}
+        query={q}
+        counts={counts}
+      />
+
+      {view.length === 0 ? (
+        <div className="overflow-hidden rounded-2xl border border-stone-200/70 bg-white shadow-sm">
+          {q ? (
+            <EmptyState
+              icon={SearchX}
+              title={`No orders match “${q}”`}
+              description="Try a different order number, customer name or phone number."
+            />
+          ) : activeStatus !== "ALL" ? (
+            <EmptyState
+              icon={ShoppingBag}
+              title={`No ${prettyLabel(activeStatus)} orders`}
+              description="There are no orders in this status right now."
+            />
+          ) : (
+            <EmptyState
+              icon={ShoppingBag}
+              title="No orders found"
+              description="New orders will appear here as customers check out."
+            />
+          )}
+        </div>
+      ) : (
+        <AdminOrdersTable orders={view} />
+      )}
     </div>
   );
 }

@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Loader2, ArrowLeft, Check, Truck, Store } from "lucide-react";
+import { toast } from "sonner";
 import { useCartStore } from "@/lib/cart-store";
+import { placeOrder } from "@/lib/actions/orders";
+import { DeliveryLocation, FulfillmentMethod } from "@/generated/prisma/enums";
+import { prettyLabel } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
@@ -15,6 +19,10 @@ const BRANCHES      = [
   { value: "menouf", label: "Menouf Boutique", sublabel: "فرع منوف" },
   { value: "beba",   label: "Beba Café",        sublabel: "بيبا كافيه"  },
 ];
+
+// Cities we deliver to — values mirror the Prisma `DeliveryLocation` enum exactly,
+// so the selected value drops straight into placeOrder()'s `deliveryCity` field.
+const DELIVERY_CITIES = Object.values(DeliveryLocation);
 
 // Fallback items shown when the cart is empty (design preview / mock)
 const MOCK_ITEMS = [
@@ -150,6 +158,71 @@ function BranchSelect({
                     <span className="font-sans text-xs text-stone-400" dir="rtl">{b.sublabel}</span>
                   </span>
                   {b.value === value && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                </button>
+              </li>
+            ))}
+          </motion.ul>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── City dropdown (strictly bound to the DeliveryLocation enum) ──
+function CitySelect({
+  value,
+  onChange,
+}: {
+  value: DeliveryLocation;
+  onChange: (v: DeliveryLocation) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="w-full flex items-center justify-between border-b border-stone-300 pb-3 text-left focus:outline-none focus:border-primary transition-colors group"
+      >
+        <span className="font-sans text-sm font-medium text-stone-900">
+          {prettyLabel(value)}
+        </span>
+        <ChevronDown
+          className="w-4 h-4 text-stone-400 group-hover:text-stone-700 transition-all duration-200"
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
+        />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.ul
+            role="listbox"
+            className="absolute top-full left-0 right-0 z-20 mt-1.5 bg-white rounded-xl border border-stone-200 shadow-[0_8px_32px_rgba(0,0,0,0.1)] overflow-hidden"
+            initial={{ opacity: 0, y: -8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.98 }}
+            transition={{ duration: 0.2, ease: EASE }}
+          >
+            {DELIVERY_CITIES.map((c) => (
+              <li key={c}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={c === value}
+                  onClick={() => {
+                    onChange(c);
+                    setOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-stone-50 transition-colors text-left"
+                >
+                  {/* Friendly text shown; the bound value stays the UPPERCASE enum. */}
+                  <span className="font-sans text-sm font-medium text-stone-900">
+                    {prettyLabel(c)}
+                  </span>
+                  {c === value && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
                 </button>
               </li>
             ))}
@@ -298,22 +371,55 @@ export default function CheckoutPage() {
   const [email, setEmail]           = useState("");
   const [address, setAddress]       = useState("");
   const [apartment, setApartment]   = useState("");
-  const [city, setCity]             = useState("");
+  const [city, setCity]             = useState<DeliveryLocation>(DeliveryLocation.MENOUF);
   const [notes, setNotes]           = useState("");
   const [branch, setBranch]         = useState(BRANCHES[0].value);
-  const [loading, setLoading]       = useState(false);
+  const [isPending, startTransition] = useTransition();
   const [placed, setPlaced]         = useState(false);
+  const [orderNumber, setOrderNumber] = useState<number | null>(null);
 
   function handleSubmit() {
-    if (loading || placed) return;
-    setLoading(true);
+    if (isPending || placed) return;
 
-    // TODO: POST to /api/orders with form state + cart items
-    setTimeout(() => {
-      setLoading(false);
-      setPlaced(true);
+    // The Zustand cart is the source of truth for what's ordered; MOCK_ITEMS are a
+    // visual preview only and must never be placed.
+    if (cartItems.length === 0) {
+      toast.error("Your cart is empty.");
+      return;
+    }
+    if (!firstName.trim() || !phone.trim()) {
+      toast.error("Please add your name and phone number.");
+      return;
+    }
+
+    const addressLine = [address.trim(), apartment.trim()]
+      .filter(Boolean)
+      .join(", ");
+
+    startTransition(async () => {
+      // Send only variantId + quantity — every price is re-resolved server-side.
+      const res = await placeOrder({
+        items: cartItems.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
+        fulfillment:
+          mode === "delivery" ? FulfillmentMethod.DELIVERY : FulfillmentMethod.PICKUP,
+        deliveryCity: mode === "delivery" ? city : undefined,
+        addressLine:  mode === "delivery" ? addressLine : undefined,
+        pickupBranch: mode === "pickup" ? branch : undefined,
+        customerName: `${firstName} ${lastName}`.trim(),
+        customerPhone: phone,
+        orderNotes: notes.trim() || undefined,
+      });
+
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+
       clearCart();
-    }, 2200);
+      setOrderNumber(res.orderNumber);
+      setPlaced(true);
+      toast.success(`Order #${res.orderNumber} placed — thank you!`);
+    });
   }
 
   if (placed) {
@@ -331,17 +437,30 @@ export default function CheckoutPage() {
           <h1 className="font-serif text-4xl md:text-5xl font-medium tracking-tight text-stone-900 mb-4">
             Order Placed.
           </h1>
+          {orderNumber != null && (
+            <p className="font-sans text-sm font-semibold uppercase tracking-[0.2em] text-primary mb-3">
+              Order #{orderNumber}
+            </p>
+          )}
           <p className="font-sans text-base text-stone-500 leading-relaxed mb-8">
             Thank you for choosing Ali Baba. Your order is being prepared with
             care — we&apos;ll be in touch shortly.
           </p>
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2.5 rounded-full bg-stone-900 px-8 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-white hover:bg-stone-700 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Home
-          </Link>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Link
+              href="/my-orders"
+              className="inline-flex items-center gap-2.5 rounded-full bg-stone-900 px-8 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-white hover:bg-stone-700 transition-colors"
+            >
+              View My Orders
+            </Link>
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2.5 rounded-full border border-stone-200 px-8 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-stone-600 hover:border-stone-400 transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Home
+            </Link>
+          </div>
         </motion.div>
       </div>
     );
@@ -461,15 +580,8 @@ export default function CheckoutPage() {
                         />
                       </div>
                       <div>
-                        <FieldLabel htmlFor="city">City</FieldLabel>
-                        <Input
-                          id="city"
-                          type="text"
-                          autoComplete="address-level2"
-                          placeholder="Menouf"
-                          value={city}
-                          onChange={(e) => setCity(e.target.value)}
-                        />
+                        <FieldLabel htmlFor="city">Delivery City</FieldLabel>
+                        <CitySelect value={city} onChange={setCity} />
                       </div>
                     </div>
 
@@ -522,7 +634,7 @@ export default function CheckoutPage() {
                 <OrderSummary
                   items={items}
                   mode={mode}
-                  loading={loading}
+                  loading={isPending}
                   onSubmit={handleSubmit}
                 />
               </div>
@@ -535,7 +647,7 @@ export default function CheckoutPage() {
               <OrderSummary
                 items={items}
                 mode={mode}
-                loading={loading}
+                loading={isPending}
                 onSubmit={handleSubmit}
               />
             </div>

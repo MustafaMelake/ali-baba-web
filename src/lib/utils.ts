@@ -19,6 +19,20 @@ export function formatDate(date: Date) {
   }).format(date)
 }
 
+/** Humanized date + time for invoices — e.g. "21 June 2026 · 14:30". */
+export function formatDateTime(date: Date) {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+    .format(date)
+    .replace(",", " ·")
+}
+
 /** SCREAMING_SNAKE_CASE enum value -> "Title Case" — e.g. ORIENTAL_SWEETS -> "Oriental Sweets". */
 export function prettyLabel(value: string) {
   return value

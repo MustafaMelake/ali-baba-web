@@ -1,13 +1,14 @@
 import { prisma } from "@/lib/prisma";
+import { getWishlistedProductIds } from "@/lib/actions/wishlist";
 import type { ShopProduct } from "@/components/ProductCard";
 import ShopClient from "./ShopClient";
 
-// ISR: rebuild the catalogue at most once per hour (tune or remove as needed).
-export const revalidate = 3600;
+// Reads the per-user wishlist → must be dynamic (no shared ISR cache).
+export const dynamic = "force-dynamic";
 
 export default async function ShopPage() {
-  // Run both queries concurrently.
-  const [categories, products] = await Promise.all([
+  // Run all queries concurrently.
+  const [categories, products, wishlistedIds] = await Promise.all([
     prisma.category.findMany({
       where: { type: "SHOP" },
       orderBy: { name: "asc" },
@@ -21,12 +22,14 @@ export default async function ShopPage() {
       },
       orderBy: { createdAt: "desc" },
     }),
+    getWishlistedProductIds(),
   ]);
 
   const fetchedCategories = categories.map((c) => c.name);
 
   const mappedProducts: ShopProduct[] = products.map((product) => ({
     id: product.id,
+    variantId: product.variants[0]?.id ?? "", // starting (lowest) variant id
     name: product.name,
     slug: product.slug,
     category: product.category.name,
@@ -35,5 +38,11 @@ export default async function ShopPage() {
     tagline: product.description ?? undefined,
   }));
 
-  return <ShopClient categories={fetchedCategories} products={mappedProducts} />;
+  return (
+    <ShopClient
+      categories={fetchedCategories}
+      products={mappedProducts}
+      wishlistedIds={wishlistedIds}
+    />
+  );
 }

@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Minus, Plus, ShoppingBag, Check, Heart } from "lucide-react";
+import { Minus, Plus, ShoppingBag, Check } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
+import WishlistButton from "@/components/products/WishlistButton";
 
 export interface ProductForCart {
   id: string;
+  /** The purchasable unit this page adds to the cart (starting variant). */
+  variantId: string;
   name: string;
   price: number;
   images: string[];
@@ -15,8 +18,11 @@ export interface ProductForCart {
 
 export default function ProductAddToCart({
   product,
+  initialIsFavorited,
 }: {
   product: ProductForCart;
+  /** Server-resolved wishlist state for this product — hydration-safe seed. */
+  initialIsFavorited: boolean;
 }) {
   const [qty, setQty] = useState(1);
   const [added, setAdded] = useState(false);
@@ -26,6 +32,7 @@ export default function ProductAddToCart({
     for (let i = 0; i < qty; i++) {
       addItem({
         id: product.id,
+        variantId: product.variantId,
         name: product.name,
         price: product.price,
         image: product.images[0],
@@ -107,11 +114,12 @@ export default function ProductAddToCart({
         </AnimatePresence>
       </button>
 
-      {/* ─── Wishlist ───────────────────────────────────── */}
-      <button className="group flex w-full items-center justify-center gap-2 font-sans text-xs text-stone-400 hover:text-stone-700 transition-colors">
-        <Heart className="w-3.5 h-3.5 group-hover:fill-stone-300 transition-all" />
-        Save to Wishlist
-      </button>
+      {/* ─── Wishlist (live toggle) ─────────────────────── */}
+      <WishlistButton
+        variant="labeled"
+        productId={product.id}
+        initialIsFavorited={initialIsFavorited}
+      />
     </div>
   );
 }

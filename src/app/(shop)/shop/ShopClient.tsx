@@ -12,9 +12,18 @@ export interface ShopClientProps {
   /** Category names fetched from the DB (without the synthetic "All Collection"). */
   categories: string[];
   products: ShopProduct[];
+  /** Product ids in the current user's wishlist (empty for guests). */
+  wishlistedIds: string[];
 }
 
-export default function ShopClient({ categories, products }: ShopClientProps) {
+export default function ShopClient({
+  categories,
+  products,
+  wishlistedIds,
+}: ShopClientProps) {
+  // O(1) membership lookups when seeding each card's heart.
+  const favorited = new Set(wishlistedIds);
+
   // "All Collection" is always the first, synthetic filter; the rest come from data.
   const filters = [ALL, ...categories];
 
@@ -124,7 +133,10 @@ export default function ShopClient({ categories, products }: ShopClientProps) {
                 exit={{ opacity: 0, scale: 0.94 }}
                 transition={{ duration: 0.45, ease: EASE }}
               >
-                <ProductCard product={product} />
+                <ProductCard
+                  product={product}
+                  initialIsFavorited={favorited.has(product.id)}
+                />
               </motion.div>
             ))}
           </AnimatePresence>

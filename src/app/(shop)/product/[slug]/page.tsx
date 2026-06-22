@@ -8,6 +8,7 @@ import StarRating from "@/components/StarRating";
 import ReviewForm from "@/components/ReviewForm";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "@/lib/session";
+import { getWishlistedProductIds } from "@/lib/actions/wishlist";
 import { formatDate } from "@/lib/utils";
 
 // Rendered dynamically: the review panel is personalised to the signed-in user,
@@ -28,7 +29,7 @@ export default async function ProductPage({
 }) {
   const { slug } = await params;
 
-  const [product, session] = await Promise.all([
+  const [product, session, wishlistedIds] = await Promise.all([
     prisma.product.findUnique({
       where: { slug },
       include: {
@@ -42,14 +43,17 @@ export default async function ProductPage({
       },
     }),
     getServerSession(),
+    getWishlistedProductIds(),
   ]);
 
   if (!product) notFound();
 
   // Derived view-model (all real data, with safe fallbacks).
   const price = product.variants[0]?.price ?? 0;
+  const variantId = product.variants[0]?.id ?? ""; // starting (lowest) variant
   const images = product.images.length ? product.images : ["/placeholder.jpg"];
   const badge = product.isFeatured ? "Featured" : null;
+  const initialIsFavorited = wishlistedIds.includes(product.id);
 
   // Review aggregates computed server-side from the approved set.
   const reviews = product.reviews;
@@ -177,11 +181,13 @@ export default async function ProductPage({
           <ProductAddToCart
             product={{
               id: product.id,
+              variantId,
               name: product.name,
               price,
               images,
               category: product.category.name,
             }}
+            initialIsFavorited={initialIsFavorited}
           />
 
           {/* Bottom breathing room on mobile */}
