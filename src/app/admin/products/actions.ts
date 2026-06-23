@@ -103,14 +103,17 @@ export async function updateProduct(
       // the on-screen ordering.
       for (const [index, v] of data.variants.entries()) {
         const sku = v.sku?.trim() || null;
+        // Coalesce undefined/empty to an explicit null so ending a promotion
+        // (clearing the field) actually wipes a legacy discount in the DB.
+        const compareAtPrice = v.compareAtPrice ?? null;
         if (v.id && keptIds.has(v.id)) {
           await tx.productVariant.update({
             where: { id: v.id },
-            data: { name: v.name, price: v.price, sku, sortOrder: index },
+            data: { name: v.name, price: v.price, compareAtPrice, sku, sortOrder: index },
           });
         } else {
           await tx.productVariant.create({
-            data: { productId: id, name: v.name, price: v.price, sku, sortOrder: index },
+            data: { productId: id, name: v.name, price: v.price, compareAtPrice, sku, sortOrder: index },
           });
         }
       }
@@ -240,6 +243,8 @@ export async function createProduct(
           create: data.variants.map((v, index) => ({
             name: v.name,
             price: v.price,
+            // Empty/omitted → explicit null (no discount).
+            compareAtPrice: v.compareAtPrice ?? null,
             sku: v.sku?.trim() || null,
             sortOrder: index,
           })),

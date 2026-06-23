@@ -24,7 +24,13 @@ export default async function EditProductPage({
         category: { select: { id: true, name: true } },
         variants: {
           orderBy: { sortOrder: "asc" },
-          select: { id: true, name: true, price: true, sku: true },
+          select: {
+            id: true,
+            name: true,
+            price: true,
+            compareAtPrice: true,
+            sku: true,
+          },
         },
       },
     }),

@@ -14,18 +14,33 @@ const optionalText = (max: number) =>
 
 // A single variant on the edit form. `id` present → an existing row to update;
 // absent → a brand-new variant to create.
-export const variantInputSchema = z.object({
-  id: z.string().optional(),
-  name: z
-    .string()
-    .trim()
-    .min(1, "Variant name is required")
-    .max(80, "Variant name is too long"),
-  price: z
-    .number({ error: "Enter a valid price" })
-    .positive("Price must be greater than 0"),
-  sku: optionalText(64),
-});
+export const variantInputSchema = z
+  .object({
+    id: z.string().optional(),
+    name: z
+      .string()
+      .trim()
+      .min(1, "Variant name is required")
+      .max(80, "Variant name is too long"),
+    price: z
+      .number({ error: "Enter a valid price" })
+      .positive("Price must be greater than 0"),
+    // Optional "was" price for promotions. The client maps an empty input to
+    // `null`; a non-numeric input arrives as NaN and trips the type error.
+    // `null`/`undefined` both mean "no discount" and skip the positivity check.
+    compareAtPrice: z
+      .number({ error: "Enter a valid original price" })
+      .positive("Original price must be greater than 0")
+      .nullish(),
+    sku: optionalText(64),
+  })
+  // Business rule: a strike-through original price only makes sense ABOVE the
+  // selling price. Attaching the issue to `compareAtPrice` surfaces it inline
+  // on that exact input (path → `variants.<i>.compareAtPrice`).
+  .refine((v) => v.compareAtPrice == null || v.compareAtPrice > v.price, {
+    error: "Original price must be greater than the selling price.",
+    path: ["compareAtPrice"],
+  });
 
 export type VariantInput = z.infer<typeof variantInputSchema>;
 

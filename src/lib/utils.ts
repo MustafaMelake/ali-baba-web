@@ -33,6 +33,27 @@ export function formatDateTime(date: Date) {
     .replace(",", " ·")
 }
 
+/**
+ * Derives a variant's promotional/sale state from its raw form-string inputs.
+ * The rule mirrors the storefront (`compareAtPrice > price`): a "compare-at"
+ * (original) price only counts as a discount when it parses to a finite number
+ * STRICTLY greater than a positive selling price. Returns the percent-off used
+ * by the inline sale badge. Kept pure so both admin forms share one rule and
+ * can't drift from each other or from the storefront.
+ */
+export function deriveVariantDiscount(priceInput: string, compareAtInput: string) {
+  const price = Number(priceInput)
+  const compareAt = Number(compareAtInput)
+  const isOnSale =
+    compareAtInput.trim() !== "" &&
+    Number.isFinite(price) &&
+    price > 0 &&
+    Number.isFinite(compareAt) &&
+    compareAt > price
+  const percentOff = isOnSale ? Math.round((1 - price / compareAt) * 100) : 0
+  return { isOnSale, percentOff }
+}
+
 /** SCREAMING_SNAKE_CASE enum value -> "Title Case" — e.g. ORIENTAL_SWEETS -> "Oriental Sweets". */
 export function prettyLabel(value: string) {
   return value

@@ -2,12 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, X, ImagePlus, Check, Plus, Trash2 } from "lucide-react";
+import { Loader2, X, ImagePlus, Check, Plus, Trash2, Tag } from "lucide-react";
 import { z } from "zod";
 import { productInputSchema, fieldErrors } from "@/lib/validators";
 import { createProduct } from "@/app/admin/products/actions";
 import { UploadDropzone } from "@/lib/uploadthing";
-import { cn } from "@/lib/utils";
+import { cn, deriveVariantDiscount } from "@/lib/utils";
 
 export type SelectOption = { id: string; name: string };
 
@@ -15,6 +15,7 @@ type VariantRow = {
   key: string;
   name: string;
   price: string;
+  compareAtPrice: string;
   sku: string;
 };
 
@@ -59,7 +60,7 @@ function Field({
 let variantKeySeq = 0;
 function newVariantRow(): VariantRow {
   variantKeySeq += 1;
-  return { key: `new-${variantKeySeq}`, name: "", price: "", sku: "" };
+  return { key: `new-${variantKeySeq}`, name: "", price: "", compareAtPrice: "", sku: "" };
 }
 
 export default function NewProductForm({
@@ -127,6 +128,8 @@ export default function NewProductForm({
       variants: variants.map((v) => ({
         name: v.name,
         price: v.price === "" ? Number.NaN : Number(v.price),
+        // Empty → null (no promotion); otherwise a Float for the guard.
+        compareAtPrice: v.compareAtPrice.trim() === "" ? null : Number(v.compareAtPrice),
         sku: v.sku,
       })),
     };
@@ -356,83 +359,126 @@ export default function NewProductForm({
         )}
 
         <div className="mt-5 space-y-4">
-          {variants.map((variant, index) => (
-            <div
-              key={variant.key}
-              className="rounded-xl border border-stone-200/80 bg-stone-50/40 p-4"
-            >
-              <div className="mb-3 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wide text-stone-400">
-                  Variant {index + 1}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => removeVariant(variant.key)}
-                  disabled={variants.length === 1} // قفل الزرار لو مفيش غير خيار واحد متبقي
-                  aria-label={`Remove variant ${index + 1}`}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-stone-400"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+          {variants.map((variant, index) => {
+            // Live sale state derived straight from the row's own inputs — no
+            // parallel state, so the badge can never drift from the numbers.
+            const { isOnSale, percentOff } = deriveVariantDiscount(
+              variant.price,
+              variant.compareAtPrice,
+            );
+
+            return (
+              <div
+                key={variant.key}
+                className="rounded-xl border border-stone-200/80 bg-stone-50/40 p-4"
+              >
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-stone-400">
+                    Variant {index + 1}
+                    {isOnSale && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-emerald-600 ring-1 ring-emerald-500/20">
+                        <Tag className="h-3 w-3" />
+                        Sale -{percentOff}%
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeVariant(variant.key)}
+                    disabled={variants.length === 1} // قفل الزرار لو مفيش غير خيار واحد متبقي
+                    aria-label={`Remove variant ${index + 1}`}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-stone-400"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <Field
+                    label="Name"
+                    htmlFor={`variant-name-${variant.key}`}
+                    error={errors[`variants.${index}.name`]}
+                    required
+                  >
+                    <input
+                      id={`variant-name-${variant.key}`}
+                      value={variant.name}
+                      onChange={(e) =>
+                        updateVariant(variant.key, { name: e.target.value })
+                      }
+                      placeholder="1 Piece / 250g / Medium"
+                      className={inputClasses}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Price (EGP)"
+                    htmlFor={`variant-price-${variant.key}`}
+                    error={errors[`variants.${index}.price`]}
+                    required
+                  >
+                    <input
+                      id={`variant-price-${variant.key}`}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={variant.price}
+                      onChange={(e) =>
+                        updateVariant(variant.key, { price: e.target.value })
+                      }
+                      placeholder="185"
+                      className={cn(inputClasses, "tabular-nums")}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Compare-At Price"
+                    htmlFor={`variant-compare-${variant.key}`}
+                    error={errors[`variants.${index}.compareAtPrice`]}
+                  >
+                    <input
+                      id={`variant-compare-${variant.key}`}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={variant.compareAtPrice}
+                      onChange={(e) =>
+                        updateVariant(variant.key, { compareAtPrice: e.target.value })
+                      }
+                      placeholder="240"
+                      className={cn(
+                        inputClasses,
+                        "tabular-nums",
+                        isOnSale &&
+                          "border-emerald-400 focus:border-emerald-500 focus:ring-emerald-500/20",
+                      )}
+                    />
+                    <p className="text-xs text-stone-400">
+                      Original price for a strike-through. Leave empty for none.
+                    </p>
+                  </Field>
+
+                  <Field
+                    label="SKU (optional)"
+                    htmlFor={`variant-sku-${variant.key}`}
+                    error={errors[`variants.${index}.sku`]}
+                  >
+                    <input
+                      id={`variant-sku-${variant.key}`}
+                      value={variant.sku}
+                      onChange={(e) =>
+                        updateVariant(variant.key, { sku: e.target.value })
+                      }
+                      placeholder="MILLE-001"
+                      className={cn(inputClasses, "font-mono text-[13px]")}
+                    />
+                  </Field>
+                </div>
               </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field
-                  label="Name"
-                  htmlFor={`variant-name-${variant.key}`}
-                  error={errors[`variants.${index}.name`]}
-                  required
-                >
-                  <input
-                    id={`variant-name-${variant.key}`}
-                    value={variant.name}
-                    onChange={(e) =>
-                      updateVariant(variant.key, { name: e.target.value })
-                    }
-                    placeholder="1 Piece / 250g / Medium"
-                    className={inputClasses}
-                  />
-                </Field>
-
-                <Field
-                  label="Price (EGP)"
-                  htmlFor={`variant-price-${variant.key}`}
-                  error={errors[`variants.${index}.price`]}
-                  required
-                >
-                  <input
-                    id={`variant-price-${variant.key}`}
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    inputMode="decimal"
-                    value={variant.price}
-                    onChange={(e) =>
-                      updateVariant(variant.key, { price: e.target.value })
-                    }
-                    placeholder="185"
-                    className={inputClasses}
-                  />
-                </Field>
-
-                <Field
-                  label="SKU (optional)"
-                  htmlFor={`variant-sku-${variant.key}`}
-                  error={errors[`variants.${index}.sku`]}
-                >
-                  <input
-                    id={`variant-sku-${variant.key}`}
-                    value={variant.sku}
-                    onChange={(e) =>
-                      updateVariant(variant.key, { sku: e.target.value })
-                    }
-                    placeholder="MILLE-001"
-                    className={cn(inputClasses, "font-mono text-[13px]")}
-                  />
-                </Field>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
