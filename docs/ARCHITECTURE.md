@@ -2,7 +2,9 @@
 
 **Stack:** Next.js 16 (App Router) · React 19 · Tailwind CSS v4 · Prisma 7 · PostgreSQL (Neon) · Better Auth
 
-This document is a hand-off reference for the e-commerce admin dashboard. It covers system architecture, the relational data model, the three core modules (Analytics, Products, Reviews), and the cross-cutting error-handling/UX conventions that make the surface production-grade.
+This document is a hand-off reference for the e-commerce admin dashboard and the platform infrastructure it shares with the storefront. It covers system architecture, the relational data model, the three core admin modules (Analytics, Products, Reviews), the cross-cutting error-handling/UX conventions that make the surface production-grade, and — in §7 — the platform-wide **routing, authentication, and edge-proxy topology** (Next.js 16 `src/proxy.ts`, Better Auth, and the dynamic `[slug]` routes) that both the admin console and the customer storefront sit on top of.
+
+> **Companion docs.** [`HOW_IT_WORKS.md`](./HOW_IT_WORKS.md) is the end-to-end platform walkthrough (storefront + checkout + admin); [`STOREFRONT_ARCHITECTURE.md`](./STOREFRONT_ARCHITECTURE.md) is the customer-facing client-side reference (PDP variant islands, cart integrity, the login/Suspense flow). This file owns the admin internals and the shared infrastructure layer.
 
 ---
 
@@ -233,3 +235,79 @@ The body is uniformly `try { ... } catch (err) { return { success: false, error:
 - **Inline `framer-motion` delete confirmation** — [`ProductRowActions.tsx`](../src/components/admin/ProductRowActions.tsx) and [`ReviewActions.tsx`](../src/components/admin/ReviewActions.tsx) both replace a destructive button with an inline "Delete? ✓ ✕" control via `AnimatePresence`/`motion.div` (width/opacity transition), rather than a modal — destructive actions stay one click away but require a deliberate second click, with no context-switching dialog.
 - **Fractional star rendering** — [`StarRating.tsx`](../src/components/StarRating.tsx) is a zero-hook, server-renderable component: a grey 5-star row sits underneath, and an identical amber 5-star row is absolutely positioned on top and clipped with `width: {pct}%` (`pct = (rating / 5) * 100`), producing a precisely partial-filled star (e.g. 4.3/5) with two `<span>` layers and no canvas/SVG math.
 - **Immediate feedback via `sonner`** — every mutation pairs its `useTransition` callback with a `toast.success` / `toast.error` (and, for the archived-variant case, `toast.warning`), so the admin gets confirmation or a specific failure reason the instant a transition resolves, without waiting on a page navigation.
+
+---
+
+## 7. Platform Infrastructure — Edge Proxy, Authentication & Routing Topology
+
+Everything above lives under `/admin`, but the admin console and the public storefront share one routing, auth, and edge-gating substrate. This section documents that substrate as it exists in the codebase today — there are no legacy `middleware.ts` or hand-written static category routes anywhere in the tree.
+
+### 7.1 Routing topology (App Router, two route groups)
+
+The App Router is organized into two route groups that never bleed into each other's URL space:
+
+| Group | Purpose | Auth posture |
+|---|---|---|
+| `src/app/(shop)/**` | Customer storefront (catalog, PDP, cart, checkout, `/my-orders`, `/wishlist`, `/login`) | Public by default; account routes gated by the edge proxy **and** an in-page session check |
+| `src/app/admin/**` | Staff console | Every page server-reads the session; mutations call `requireAdmin()` |
+
+Two **dynamic segment** routes carry all per-entity rendering — there are no hardcoded per-item route files:
+
+- [`src/app/(shop)/product/[slug]/page.tsx`](../src/app/(shop)/product/[slug]/page.tsx) — product detail, resolved by `Product.slug` (`@unique`, indexed).
+- [`src/app/(shop)/category/[slug]/page.tsx`](../src/app/(shop)/category/[slug]/page.tsx) — **the single** category landing route, resolved by `Category.slug` (`@unique`). It replaced the previous five hand-written `category/<core-slug>/page.tsx` files; one route now serves every core *and* standard category. See §7.4.
+
+### 7.2 The Edge Proxy (`src/proxy.ts`) — Next.js 16's renamed middleware
+
+Next.js 16 renames the project-root request interceptor from `middleware` to **`proxy`**. This is not a stylistic choice — it's the framework convention for this version: Next resolves `PROXY_FILENAME = "proxy"` with the location regexp `(?:src/)?proxy` (verified in `next@16.2.9`'s `dist/lib/constants.js`). The file therefore lives at [`src/proxy.ts`](../src/proxy.ts), exports a `proxy(request)` function and a `config.matcher`, and **must not** be named `middleware.ts` on this version.
+
+```ts
+// src/proxy.ts
+import { getSessionCookie } from "better-auth/cookies";
+
+export function proxy(request: NextRequest) {
+  const sessionCookie = getSessionCookie(request);
+  if (!sessionCookie) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("redirect", request.nextUrl.pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: ["/my-orders", "/my-orders/:path*", "/wishlist", "/wishlist/:path*"],
+};
+```
+
+Three properties define its contract:
+
+1. **Optimistic, not authoritative.** `getSessionCookie` (from `better-auth/cookies`) only confirms a Better Auth session cookie is *present* — it parses the cookie string, it does **not** validate the session against Postgres. Database validation needs the Node runtime and Prisma, which cannot execute on the Edge. The proxy's job is to turn "a developer added a new account page and forgot the guard" from a leaked render into a cheap redirect — not to be the security boundary.
+2. **Edge-safe imports only.** The file imports `next/server` and `better-auth/cookies` and nothing else. Importing `@/lib/prisma`, `@/lib/auth`, or any Node-only module here would break the Edge runtime build. Keep it that way.
+3. **Explicit matcher, base path + sub-paths.** Each protected root is listed both bare (`/my-orders`) and wildcarded (`/my-orders/:path*`) so the base URL is always covered regardless of `path-to-regexp` zero-segment edge cases. On a miss it redirects to `/login?redirect=<original-pathname>`, preserving the intended destination for post-login return.
+
+**Defense in depth — the proxy never stands alone.** Because the proxy only checks cookie presence, the real session validation still happens inside each protected page: [`/wishlist`](../src/app/(shop)/wishlist/page.tsx) and [`/my-orders`](../src/app/(shop)/my-orders/page.tsx) both run `const session = await getServerSession(); if (!session) redirect("/login");` at the top of the Server Component. The proxy is the *first, cheap, edge-level* gate; `getServerSession()` remains the *source of truth*. A cookie that is present but expired/invalid sails through the proxy and is correctly rejected by the page. (Note: the in-page guard redirects to a bare `/login` without a `?redirect=` param, so the return-path round-trip is a property of the proxy path specifically.)
+
+### 7.3 Authentication stack (Better Auth)
+
+| Concern | Where | Notes |
+|---|---|---|
+| Server config | [`src/lib/auth.ts`](../src/lib/auth.ts) | `betterAuth` + `prismaAdapter(prisma, { provider: "postgresql" })`; email+password (`autoSignIn`, `minPasswordLength: 8`); 7-day sessions refreshed daily; `nextCookies()` is the **last** plugin so it can set cookies on responses |
+| `role` field | `src/lib/auth.ts` `user.additionalFields` | Declared `{ type: "string", input: false, defaultValue: "USER" }` — `input: false` means a client **cannot** set its own role at signup; promotion to `ADMIN` is a direct DB write only |
+| Server session read | [`src/lib/session.ts`](../src/lib/session.ts) | `getServerSession()` is wrapped in React `cache()` so a layout and a page in the same request hit the auth layer once; `requireAdmin()` throws on anonymous/non-admin callers |
+| Client session | [`src/lib/auth-client.ts`](../src/lib/auth-client.ts) | `createAuthClient` + `inferAdditionalFields<typeof auth>()`, so `session.user.role` is typed on the client with no manual augmentation; exports `signIn` / `signUp` / `signOut` / `useSession` / `getSession` |
+
+The hard rule the whole app depends on: **session helpers are read through `@/lib/session` (server) or `@/lib/auth-client` (client) — never imported from `better-auth` directly** outside those two files (and the edge proxy's cookie helper). This keeps the `cache()` dedupe and the typed `role` field consistent everywhere.
+
+**The login flow** (full UX in [`STOREFRONT_ARCHITECTURE.md` §4.6](./STOREFRONT_ARCHITECTURE.md)) is structurally relevant here: [`/login/page.tsx`](../src/app/(shop)/login/page.tsx) is a Server Component whose only job is to be a `<Suspense>` boundary around [`LoginClient.tsx`](../src/app/(shop)/login/LoginClient.tsx). The boundary is mandatory because `LoginClient` reads `useSearchParams()` (to recover the proxy's `?redirect=` intent), and Next.js requires any search-params reader to sit under Suspense or the whole route bails out to client-side rendering at build time. `LoginClient` runs the redirect target through a strict `sanitizeRedirect()` open-redirect guard (rejects anything not starting with a single `/`, including the protocol-relative `//host` trick) before calling `router.push(redirectTo)` on a successful `signIn.email`.
+
+### 7.4 Dynamic category routing + request-level `cache()` dedupe
+
+[`src/app/(shop)/category/[slug]/page.tsx`](../src/app/(shop)/category/[slug]/page.tsx) is the canonical example of the request-dedupe pattern that keeps Postgres round-trips minimal on routes that need the same row twice. Both `generateMetadata` (for the `<title>`/OG tags) and the page component itself need the `Category` row for the requested slug. Naively that's two identical `findUnique` queries per request. Wrapping the lookup in React's `cache()` collapses them into one:
+
+```ts
+const getCategoryBySlug = cache((slug: string) =>
+  prisma.category.findUnique({ where: { slug } }),
+);
+```
+
+`generateMetadata` and `CategoryPage` both call `getCategoryBySlug(slug)`; within a single request React serves the second call from the memoized result — **one** Postgres round-trip, not two. A miss renders `notFound()` (HTTP 404) from the page and a `"Category Not Found"` title from the metadata. Products are then filtered by the resolved, indexed `categoryId` FK rather than re-deriving from `identifier`, so the same route works identically for core categories (which carry a `CategoryIdentifier`) and standard ones (which don't). This is the same `cache()` discipline used for `getServerSession()` in §7.3 — memoize per-request reads that more than one part of the render tree needs.
