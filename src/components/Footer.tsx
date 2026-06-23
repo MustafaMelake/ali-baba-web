@@ -11,10 +11,10 @@ const NAV_GROUPS = [
   {
     heading: "The Collection",
     links: [
-      { label: "Oriental Sweets", href: "/category/oriental" },
-      { label: "Modern Pastry", href: "/category/modern" },
-      { label: "Bespoke Cakes", href: "/category/cakes" },
-      { label: "Luxury Beverages", href: "/category/beverages" },
+      { label: "Oriental Sweets", href: "/category/oriental-sweets" },
+      { label: "Modern Pastry", href: "/category/western-sweets" },
+      { label: "Bespoke Cakes", href: "/category/eid-sweets" },
+      { label: "Luxury Beverages", href: "/category/bakery" },
     ],
   },
   {

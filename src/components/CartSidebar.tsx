@@ -86,7 +86,7 @@ function CartLineItem({
 
           {/* Remove */}
           <button
-            onClick={() => removeItem(item.id)}
+            onClick={() => removeItem(item.variantId)}
             aria-label={`Remove ${item.name}`}
             className="shrink-0 p-1 -mt-0.5 text-stone-300 hover:text-stone-600 transition-colors"
           >
@@ -99,7 +99,7 @@ function CartLineItem({
           {/* Stepper */}
           <div className="flex items-center gap-3 border border-stone-200 rounded-full px-3 py-1.5">
             <button
-              onClick={() => updateQuantity(item.id, item.quantity - 1)}
+              onClick={() => updateQuantity(item.variantId, item.quantity - 1)}
               aria-label="Decrease quantity"
               className="text-stone-400 hover:text-stone-800 transition-colors"
             >
@@ -109,7 +109,7 @@ function CartLineItem({
               {item.quantity}
             </span>
             <button
-              onClick={() => updateQuantity(item.id, item.quantity + 1)}
+              onClick={() => updateQuantity(item.variantId, item.quantity + 1)}
               aria-label="Increase quantity"
               className="text-stone-400 hover:text-stone-800 transition-colors"
             >
@@ -216,7 +216,7 @@ export default function CartSidebar() {
                   <motion.ul layout className="divide-y-0">
                     <AnimatePresence initial={false}>
                       {items.map((item) => (
-                        <CartLineItem key={item.id} item={item} />
+                        <CartLineItem key={item.variantId} item={item} />
                       ))}
                     </AnimatePresence>
                   </motion.ul>

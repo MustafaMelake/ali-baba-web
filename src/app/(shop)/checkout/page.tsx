@@ -26,9 +26,9 @@ const DELIVERY_CITIES = Object.values(DeliveryLocation);
 
 // Fallback items shown when the cart is empty (design preview / mock)
 const MOCK_ITEMS = [
-  { id: "m1", name: "Kunafa Royale",           category: "Oriental Sweets",  price: 320, quantity: 1, image: "/cake1.jpg" },
-  { id: "m2", name: "Pistachio Mille-Feuille", category: "Modern Pastry",    price: 185, quantity: 2, image: "/cake2.jpg" },
-  { id: "m3", name: "Arabic Qahwa Set",        category: "Luxury Beverages", price: 95,  quantity: 1, image: "/our-story1.png" },
+  { id: "m1", variantId: "mv1", name: "Kunafa Royale",           category: "Oriental Sweets",  price: 320, quantity: 1, image: "/cake1.jpg" },
+  { id: "m2", variantId: "mv2", name: "Pistachio Mille-Feuille", category: "Modern Pastry",    price: 185, quantity: 2, image: "/cake2.jpg" },
+  { id: "m3", variantId: "mv3", name: "Arabic Qahwa Set",        category: "Luxury Beverages", price: 95,  quantity: 1, image: "/our-story1.png" },
 ];
 
 // ─── Sub-components ───────────────────────────────────────────────
@@ -259,7 +259,7 @@ function OrderSummary({
       {/* Item list */}
       <ul className="space-y-5 mb-7">
         {items.map((item) => (
-          <li key={item.id} className="flex items-center gap-4">
+          <li key={item.variantId} className="flex items-center gap-4">
             <div className="relative w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-stone-200">
               <Image src={item.image} alt={item.name} fill className="object-cover" sizes="56px" />
               {item.quantity > 1 && (

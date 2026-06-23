@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronRight, MessageSquareQuote } from "lucide-react";
 import ProductGallery from "@/components/ProductGallery";
-import ProductAddToCart from "@/components/ProductAddToCart";
+import ProductPurchasePanel from "@/components/products/ProductPurchasePanel";
 import { LogIn } from "lucide-react";
 import StarRating from "@/components/StarRating";
 import ReviewForm from "@/components/ReviewForm";
@@ -49,11 +49,20 @@ export default async function ProductPage({
   if (!product) notFound();
 
   // Derived view-model (all real data, with safe fallbacks).
-  const price = product.variants[0]?.price ?? 0;
-  const variantId = product.variants[0]?.id ?? ""; // starting (lowest) variant
   const images = product.images.length ? product.images : ["/placeholder.jpg"];
   const badge = product.isFeatured ? "Featured" : null;
   const initialIsFavorited = wishlistedIds.includes(product.id);
+
+  // The full variant set drives the client selector (price / availability /
+  // Add-to-Cart). Ordered price-asc by the query, so the first available one is
+  // the panel's default selection.
+  const variants = product.variants.map((v) => ({
+    id: v.id,
+    name: v.name,
+    price: v.price,
+    isAvailable: v.isAvailable,
+    compareAtPrice: v.compareAtPrice,
+  }));
 
   // Review aggregates computed server-side from the approved set.
   const reviews = product.reviews;
@@ -126,16 +135,8 @@ export default async function ProductPage({
             {product.name}
           </h1>
 
-          {/* Price */}
-          <div className="mt-7 flex items-baseline gap-3">
-            <span className="font-serif text-4xl font-medium text-stone-900 tracking-tight">
-              {price.toLocaleString("en-EG")}
-            </span>
-            <span className="font-sans text-sm text-stone-500">ج.م</span>
-          </div>
-
           {/* Rating summary */}
-          <div className="mt-4 flex items-center gap-2.5">
+          <div className="mt-5 flex items-center gap-2.5">
             <StarRating value={averageRating} size={16} />
             {reviewCount > 0 ? (
               <>
@@ -159,6 +160,24 @@ export default async function ProductPage({
             )}
           </div>
 
+          {/* ── Purchase island (client) — price + variant selector + cart ──
+              The displayed price reflects the *selected* variant, so it lives in
+              the client panel, not in this Server Component. A static server-rendered
+              price would silently disagree with the pills the moment a customer
+              chooses a non-default variant. */}
+          <div className="mt-7">
+            <ProductPurchasePanel
+              product={{
+                id: product.id,
+                name: product.name,
+                images,
+                category: product.category.name,
+              }}
+              variants={variants}
+              initialIsFavorited={initialIsFavorited}
+            />
+          </div>
+
           {/* Description (real field — only render when present) */}
           {product.description && (
             <>
@@ -173,22 +192,6 @@ export default async function ProductPage({
               </div>
             </>
           )}
-
-          {/* Divider */}
-          <div className="my-8 h-px bg-stone-100" />
-
-          {/* ── Cart island (client component) ─────────── */}
-          <ProductAddToCart
-            product={{
-              id: product.id,
-              variantId,
-              name: product.name,
-              price,
-              images,
-              category: product.category.name,
-            }}
-            initialIsFavorited={initialIsFavorited}
-          />
 
           {/* Bottom breathing room on mobile */}
           <div className="h-10 lg:h-0" />
