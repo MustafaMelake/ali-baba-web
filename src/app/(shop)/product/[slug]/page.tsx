@@ -9,6 +9,7 @@ import ReviewForm from "@/components/ReviewForm";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "@/lib/session";
 import { getWishlistedProductIds } from "@/lib/actions/wishlist";
+import { hasUserReviewedProduct } from "@/lib/actions/reviews";
 import { formatDate } from "@/lib/utils";
 
 // Rendered dynamically: the review panel is personalised to the signed-in user,
@@ -52,6 +53,12 @@ export default async function ProductPage({
   const images = product.images.length ? product.images : ["/placeholder.jpg"];
   const badge = product.isFeatured ? "Featured" : null;
   const initialIsFavorited = wishlistedIds.includes(product.id);
+
+  // Pre-emptive guard for the submission form: a user may review a product only
+  // once. Checked only for signed-in users (guests see the login gate anyway).
+  const hasReviewed = session
+    ? await hasUserReviewedProduct(product.id)
+    : false;
 
   // The full variant set drives the client selector (price / availability /
   // Add-to-Cart). Ordered price-asc by the query, so the first available one is
@@ -279,7 +286,10 @@ export default async function ProductPage({
             {/* Submission form (authenticated users only) */}
             <div className="lg:sticky lg:top-24 lg:self-start">
               {session ? (
-                <ReviewForm productId={product.id} />
+                <ReviewForm
+                  productId={product.id}
+                  hasExistingReview={hasReviewed}
+                />
               ) : (
                 <div className="rounded-2xl border border-stone-200/80 bg-stone-50/40 p-6 md:p-8 text-center">
                   <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">

@@ -45,6 +45,38 @@ function prismaErrorCode(err: unknown): string | undefined {
 }
 
 /**
+ * Has the *current* user already reviewed this product?
+ *
+ * A user may review a product only once (`@@unique([userId, productId])`), so
+ * this is the pre-emptive guard that lets the page hide the submission form
+ * before a duplicate submit ever hits the DB (the same constraint that would
+ * otherwise raise a P2002). Returns `false` for guests and on any error, so the
+ * caller can treat a `true` result as a hard "hide the form" signal and never
+ * accidentally suppress the form for someone who hasn't reviewed.
+ */
+export async function hasUserReviewedProduct(
+  productId: string,
+): Promise<boolean> {
+  if (!productId) return false;
+
+  const session = await getServerSession();
+  if (!session) return false;
+
+  try {
+    const existing = await prisma.review.findUnique({
+      where: {
+        userId_productId: { userId: session.user.id, productId },
+      },
+      select: { id: true },
+    });
+    return existing !== null;
+  } catch (err) {
+    console.error("hasUserReviewedProduct failed:", err);
+    return false;
+  }
+}
+
+/**
  * Creates a customer review for a product. Authenticated users only — the
  * reviewer's id and name come from the session, never the client. The review is
  * always created with `isApproved: false` so it stays hidden until an admin
