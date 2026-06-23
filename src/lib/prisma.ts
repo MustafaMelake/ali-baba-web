@@ -1,7 +1,8 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 
-const connectionString = process.env.DATABASE_URL;
+const connectionString =
+  process.env.DATABASE_URL || "https://ali-baba-web-theta.vercel.app";
 
 if (!connectionString) {
   throw new Error("DATABASE_URL is not set. Add it to your .env file.");
