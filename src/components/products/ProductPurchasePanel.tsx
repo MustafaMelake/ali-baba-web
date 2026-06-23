@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Minus, Plus, ShoppingBag, Check } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
+import { useSession } from "@/lib/auth-client";
 import WishlistButton from "@/components/products/WishlistButton";
 import VariantSelector, {
   type SelectableVariant,
@@ -45,6 +46,8 @@ export default function ProductPurchasePanel({
   const [added, setAdded] = useState(false);
 
   const addItem = useCartStore((s) => s.addItem);
+  // When logged in, each add also persists to the DB (cross-device cart).
+  const isLoggedIn = !!useSession().data?.user;
 
   const activeVariant =
     variants.find((v) => v.id === selectedVariantId) ?? defaultVariant;
@@ -59,14 +62,17 @@ export default function ProductPurchasePanel({
   function handleAdd() {
     if (!activeVariant || !canPurchase) return;
     for (let i = 0; i < qty; i++) {
-      addItem({
-        id: product.id,
-        variantId: activeVariant.id, // the selected variant — never variants[0]
-        name: product.name,
-        price: activeVariant.price,
-        image: product.images[0],
-        category: product.category,
-      });
+      addItem(
+        {
+          id: product.id,
+          variantId: activeVariant.id, // the selected variant — never variants[0]
+          name: product.name,
+          price: activeVariant.price,
+          image: product.images[0],
+          category: product.category,
+        },
+        isLoggedIn,
+      );
     }
     setAdded(true);
     setTimeout(() => setAdded(false), 2500);

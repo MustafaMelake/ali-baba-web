@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Cormorant_Garamond, Geist } from "next/font/google"; // استخدمنا خط فاخر للـ Serif
 import { Toaster } from "sonner";
+import CartSyncProvider from "@/components/providers/CartSyncProvider";
 import "./globals.css";
 
 // خط فاخر للـ Headlines
@@ -48,7 +49,7 @@ export default function RootLayout({
       className={`${luxuryFont.variable} ${geistSans.variable} h-full antialiased scroll-smooth`}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground font-sans">
-        {children}
+        <CartSyncProvider>{children}</CartSyncProvider>
         <Toaster richColors position="top-center" />
       </body>
     </html>

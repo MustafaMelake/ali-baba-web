@@ -7,7 +7,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Loader2, ArrowLeft, Check, Truck, Store } from "lucide-react";
 import { toast } from "sonner";
 import { useCartStore } from "@/lib/cart-store";
+import { useSession } from "@/lib/auth-client";
 import { placeOrder } from "@/lib/actions/orders";
+import { clearDbCartAction } from "@/lib/actions/cart";
 import { DeliveryLocation, FulfillmentMethod } from "@/generated/prisma/enums";
 import { prettyLabel } from "@/lib/utils";
 
@@ -357,6 +359,7 @@ function OrderSummary({
 export default function CheckoutPage() {
   const cartItems = useCartStore((s) => s.items);
   const clearCart = useCartStore((s) => s.clearCart);
+  const isLoggedIn = !!useSession().data?.user;
 
   // Use real cart if populated, otherwise fall back to mock items for visual preview
   const items = cartItems.length > 0
@@ -415,7 +418,10 @@ export default function CheckoutPage() {
         return;
       }
 
+      // The order now owns these items — empty the cart everywhere. Locally
+      // first (instant UI), then the DB when logged in so it doesn't re-hydrate.
       clearCart();
+      if (isLoggedIn) void clearDbCartAction();
       setOrderNumber(res.orderNumber);
       setPlaced(true);
       toast.success(`Order #${res.orderNumber} placed — thank you!`);

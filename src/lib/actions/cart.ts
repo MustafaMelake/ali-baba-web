@@ -1,0 +1,266 @@
+"use server";
+
+import { prisma } from "@/lib/prisma";
+// Session comes from our cached server-side wrapper (not better-auth directly).
+import { getServerSession } from "@/lib/session";
+
+/**
+ * Cart synchronization Server Actions.
+ *
+ * The DB (`CartItem`) tracks ONLY identity + intent: `{ userId, variantId,
+ * quantity }`. Prices, names and images are NEVER stored here — they are always
+ * re-resolved from the live catalogue (`ProductVariant` → `Product`) on read,
+ * so a promo or price change is reflected immediately and the client can never
+ * dictate a price. This mirrors how `placeOrder` re-prices at checkout.
+ */
+
+// ── Shared types ──────────────────────────────────────────────────────────
+
+/** Minimal line the client ships up (guest cart / optimistic mutation). */
+export interface LocalCartLine {
+  variantId: string;
+  quantity: number;
+}
+
+/**
+ * A fully-hydrated cart line returned to the client. Intentionally
+ * structurally identical to the Zustand `CartItem` so the store can adopt it
+ * as the source of truth with no remapping:
+ *   id        → parent product id (UI/links only, never the merge key)
+ *   variantId → canonical line identity (the merge key)
+ */
+export interface DbCartItem {
+  id: string;
+  variantId: string;
+  name: string;
+  price: number;
+  image: string;
+  quantity: number;
+  category?: string;
+}
+
+export type CartActionResult<T = null> =
+  | { success: true; data: T }
+  | { success: false; error: string };
+
+// ── Constants & helpers ─────────────────────────────────────────────────────
+
+/** Hard ceiling per line — keeps a single line from being abused into millions. */
+const MAX_QUANTITY = 99;
+
+const PLACEHOLDER_IMAGE = "/placeholder.jpg";
+
+/** Reads a Prisma known-request error code without importing the error class. */
+function prismaErrorCode(err: unknown): string | undefined {
+  if (typeof err === "object" && err !== null && "code" in err) {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return undefined;
+}
+
+/** Clamp to a whole number in [0, MAX_QUANTITY]; non-finite input → 0. */
+function clampQuantity(quantity: number): number {
+  if (!Number.isFinite(quantity)) return 0;
+  return Math.max(0, Math.min(MAX_QUANTITY, Math.floor(quantity)));
+}
+
+/**
+ * Normalises a raw local cart: drops blank ids and non-positive quantities,
+ * clamps each quantity, and de-duplicates by `variantId` (summing) so a
+ * malformed payload can't smuggle two rows for the same variant into the loop.
+ */
+function sanitizeLocalLines(localItems: LocalCartLine[]): LocalCartLine[] {
+  const byVariant = new Map<string, number>();
+
+  for (const item of localItems ?? []) {
+    const variantId = item?.variantId?.trim();
+    if (!variantId) continue;
+
+    const qty = clampQuantity(item.quantity);
+    if (qty < 1) continue;
+
+    byVariant.set(
+      variantId,
+      Math.min(MAX_QUANTITY, (byVariant.get(variantId) ?? 0) + qty),
+    );
+  }
+
+  return [...byVariant].map(([variantId, quantity]) => ({ variantId, quantity }));
+}
+
+// ── 1. Merge: guest cart → DB (sum on conflict) ─────────────────────────────
+
+/**
+ * Merges a guest's local cart into the authenticated user's persisted cart.
+ *
+ * Runs in a single transaction so the merge is all-or-nothing. For each local
+ * line we UPSERT: when a `(userId, variantId)` row already exists its quantity
+ * is **incremented** by the local quantity (the required "sum" semantics);
+ * otherwise a new row is created. Variants that no longer exist in the catalogue
+ * are skipped up-front (rather than triggering a mid-loop FK error that would
+ * abort the whole merge).
+ */
+export async function mergeCartAction(
+  localItems: LocalCartLine[],
+): Promise<CartActionResult> {
+  const session = await getServerSession();
+  if (!session) return { success: false, error: "Please sign in to save your cart." };
+  const userId = session.user.id;
+
+  const lines = sanitizeLocalLines(localItems);
+  // Nothing valid to merge is a success, not an error (e.g. empty guest cart).
+  if (lines.length === 0) return { success: true, data: null };
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Validate all referenced variants in one query so unknown/stale ids are
+      // filtered out instead of throwing a P2003 partway through the loop.
+      const known = await tx.productVariant.findMany({
+        where: { id: { in: lines.map((l) => l.variantId) } },
+        select: { id: true },
+      });
+      const validIds = new Set(known.map((v) => v.id));
+
+      for (const line of lines) {
+        if (!validIds.has(line.variantId)) continue;
+
+        await tx.cartItem.upsert({
+          where: { userId_variantId: { userId, variantId: line.variantId } },
+          // Existing row → SUM (DB quantity + local quantity).
+          update: { quantity: { increment: line.quantity } },
+          // Missing row → create fresh.
+          create: { userId, variantId: line.variantId, quantity: line.quantity },
+        });
+      }
+    });
+
+    return { success: true, data: null };
+  } catch (err) {
+    console.error("mergeCartAction failed:", err);
+    return { success: false, error: "Could not merge your cart. Please try again." };
+  }
+}
+
+// ── 2. Sync a single line (optimistic mutation persistence) ─────────────────
+
+/**
+ * Persists one cart line for the logged-in user.
+ *  - `SET`    → upsert the row to the EXACT `quantity` (idempotent; a late-
+ *               arriving SET simply overwrites, which sidesteps increment races).
+ *  - `DELETE` → remove the row.
+ *  - `quantity < 1` is always treated as a delete, regardless of `actionType`.
+ *
+ * Uses `deleteMany` for removals so a no-op delete (row already gone) is silent
+ * rather than a P2025 throw.
+ */
+export async function syncCartItemAction(
+  variantId: string,
+  quantity: number,
+  actionType: "SET" | "DELETE",
+): Promise<CartActionResult> {
+  const session = await getServerSession();
+  if (!session) return { success: false, error: "Please sign in to save your cart." };
+  const userId = session.user.id;
+
+  const id = variantId?.trim();
+  if (!id) return { success: false, error: "Missing variant." };
+
+  const qty = clampQuantity(quantity);
+
+  try {
+    if (actionType === "DELETE" || qty < 1) {
+      await prisma.cartItem.deleteMany({ where: { userId, variantId: id } });
+      return { success: true, data: null };
+    }
+
+    await prisma.cartItem.upsert({
+      where: { userId_variantId: { userId, variantId: id } },
+      update: { quantity: qty },
+      create: { userId, variantId: id, quantity: qty },
+    });
+
+    return { success: true, data: null };
+  } catch (err) {
+    // FK violation → the variant was deleted from the catalogue.
+    if (prismaErrorCode(err) === "P2003") {
+      return { success: false, error: "That item is no longer available." };
+    }
+    console.error("syncCartItemAction failed:", err);
+    return { success: false, error: "Could not sync your cart. Please try again." };
+  }
+}
+
+// ── 3. Read the DB cart, hydrated with live catalogue data ──────────────────
+
+/**
+ * Returns the authenticated user's cart, each line joined to its variant and
+ * parent product so the client receives live `name`, `price`, `image` and the
+ * parent `productId`. Prices are read fresh from the catalogue here — the cart
+ * table itself never stores them.
+ *
+ * (Cart rows cascade-delete with their variant, so orphan lines can't exist;
+ * the optional-chaining guards below are belt-and-braces only.)
+ */
+export async function getDbCartAction(): Promise<CartActionResult<DbCartItem[]>> {
+  const session = await getServerSession();
+  if (!session) return { success: false, error: "Please sign in to view your cart." };
+
+  try {
+    const rows = await prisma.cartItem.findMany({
+      where: { userId: session.user.id },
+      orderBy: { createdAt: "asc" }, // stable, predictable line order
+      include: {
+        variant: {
+          include: {
+            product: {
+              include: { category: { select: { name: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    const data: DbCartItem[] = rows
+      .filter((row) => row.variant?.product)
+      .map((row) => {
+        const { variant } = row;
+        const { product } = variant;
+        return {
+          id: product.id, // parent product id — for UI/links
+          variantId: row.variantId, // canonical line identity
+          name: product.name, // live name (parity with client adds)
+          price: variant.price, // live price from the catalogue
+          image: product.images[0] ?? PLACEHOLDER_IMAGE,
+          quantity: row.quantity,
+          category: product.category?.name,
+        };
+      });
+
+    return { success: true, data };
+  } catch (err) {
+    console.error("getDbCartAction failed:", err);
+    return { success: false, error: "Could not load your cart. Please try again." };
+  }
+}
+
+// ── 4. Clear the whole DB cart (intentional empty: checkout / "Clear cart") ──
+
+/**
+ * Wipes every cart line for the logged-in user. This is for *intentional*
+ * emptying (a placed order, or the explicit "Clear cart" action) — NOT logout.
+ * Logout must only clear the local store and leave the saved cart intact for
+ * the next sign-in / other devices.
+ */
+export async function clearDbCartAction(): Promise<CartActionResult> {
+  const session = await getServerSession();
+  if (!session) return { success: false, error: "Please sign in to manage your cart." };
+
+  try {
+    await prisma.cartItem.deleteMany({ where: { userId: session.user.id } });
+    return { success: true, data: null };
+  } catch (err) {
+    console.error("clearDbCartAction failed:", err);
+    return { success: false, error: "Could not clear your cart. Please try again." };
+  }
+}

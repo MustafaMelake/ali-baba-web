@@ -6,6 +6,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Check, ArrowUpRight } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
+import { useSession } from "@/lib/auth-client";
 import WishlistButton from "@/components/products/WishlistButton";
 
 export interface ShopProduct {
@@ -29,20 +30,25 @@ export default function ProductCard({
   initialIsFavorited: boolean;
 }) {
   const addItem = useCartStore((s) => s.addItem);
+  // When logged in, mutations also persist to the DB (cross-device cart).
+  const isLoggedIn = !!useSession().data?.user;
   const [added, setAdded] = useState(false);
 
   // Detail route lives at (shop)/product/[slug] → /product/<slug>
   const href = `/product/${product.slug}`;
 
   function quickAdd() {
-    addItem({
-      id: product.id,
-      variantId: product.variantId,
-      name: product.name,
-      price: product.price,
-      image: product.image,
-      category: product.category,
-    });
+    addItem(
+      {
+        id: product.id,
+        variantId: product.variantId,
+        name: product.name,
+        price: product.price,
+        image: product.image,
+        category: product.category,
+      },
+      isLoggedIn,
+    );
     setAdded(true);
     setTimeout(() => setAdded(false), 1800);
   }

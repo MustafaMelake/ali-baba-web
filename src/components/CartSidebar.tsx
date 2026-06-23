@@ -6,6 +6,8 @@ import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Minus, Plus, ArrowRight, ShoppingBag } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
+import { useSession } from "@/lib/auth-client";
+import { clearDbCartAction } from "@/lib/actions/cart";
 
 const EASE: [number, number, number, number] = [0.32, 0.72, 0, 1];
 
@@ -49,6 +51,7 @@ function CartLineItem({
   item: ReturnType<typeof useCartStore.getState>["items"][number];
 }) {
   const { updateQuantity, removeItem } = useCartStore();
+  const isLoggedIn = !!useSession().data?.user;
 
   return (
     <motion.li
@@ -86,7 +89,7 @@ function CartLineItem({
 
           {/* Remove */}
           <button
-            onClick={() => removeItem(item.variantId)}
+            onClick={() => removeItem(item.variantId, isLoggedIn)}
             aria-label={`Remove ${item.name}`}
             className="shrink-0 p-1 -mt-0.5 text-stone-300 hover:text-stone-600 transition-colors"
           >
@@ -99,7 +102,9 @@ function CartLineItem({
           {/* Stepper */}
           <div className="flex items-center gap-3 border border-stone-200 rounded-full px-3 py-1.5">
             <button
-              onClick={() => updateQuantity(item.variantId, item.quantity - 1)}
+              onClick={() =>
+                updateQuantity(item.variantId, item.quantity - 1, isLoggedIn)
+              }
               aria-label="Decrease quantity"
               className="text-stone-400 hover:text-stone-800 transition-colors"
             >
@@ -109,7 +114,9 @@ function CartLineItem({
               {item.quantity}
             </span>
             <button
-              onClick={() => updateQuantity(item.variantId, item.quantity + 1)}
+              onClick={() =>
+                updateQuantity(item.variantId, item.quantity + 1, isLoggedIn)
+              }
               aria-label="Increase quantity"
               className="text-stone-400 hover:text-stone-800 transition-colors"
             >
@@ -131,9 +138,17 @@ function CartLineItem({
 export default function CartSidebar() {
   const { isOpen, closeCart, items, clearCart, totalItems, totalPrice } =
     useCartStore();
+  const isLoggedIn = !!useSession().data?.user;
 
   const count = totalItems();
   const total = totalPrice();
+
+  // Intentional empty: wipe local immediately, and the DB too when logged in
+  // (so the cleared cart doesn't re-hydrate from the server on next load).
+  function handleClear() {
+    clearCart();
+    if (isLoggedIn) void clearDbCartAction();
+  }
 
   // Close on Escape
   useEffect(() => {
@@ -249,7 +264,7 @@ export default function CartSidebar() {
 
                   {/* Clear */}
                   <button
-                    onClick={clearCart}
+                    onClick={handleClear}
                     className="mt-4 w-full text-center font-sans text-xs text-stone-400 hover:text-stone-600 transition-colors"
                   >
                     Clear cart
