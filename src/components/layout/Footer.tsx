@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { unstable_cache } from "next/cache";
-import { ArrowRight } from "lucide-react";
 import { FaInstagram, FaFacebook, FaTwitter } from "react-icons/fa";
 import { prisma } from "@/lib/prisma";
 import { CategoryType } from "@/generated/prisma/enums";
+import NewsletterForm from "./NewsletterForm";
 
 /**
  * Footer — a React Server Component.
@@ -99,14 +99,6 @@ async function getCollectionLinks(): Promise<FooterLink[]> {
   }
 }
 
-// ── Newsletter (progressively-enhanced Server Action — no client JS) ──────────
-async function subscribeToNewsletter(formData: FormData) {
-  "use server";
-  const email = String(formData.get("email") ?? "").trim();
-  if (!email) return;
-  // TODO: wire to newsletter provider (e.g. persist or call the ESP API).
-}
-
 // ── Component ────────────────────────────────────────────────────────────────
 export default async function Footer() {
   const collectionLinks = await getCollectionLinks();
@@ -150,27 +142,8 @@ export default async function Footer() {
               delivered quietly to your inbox.
             </p>
 
-            {/* Ultra-minimal underline form — posts to a Server Action */}
-            <form
-              action={subscribeToNewsletter}
-              className="flex items-center gap-3 border-b border-white/20 pb-3 focus-within:border-white/45 transition-colors duration-300"
-            >
-              <input
-                type="email"
-                name="email"
-                required
-                placeholder="Your email address"
-                aria-label="Your email address"
-                className="bg-transparent flex-1 text-sm font-sans text-white/80 placeholder:text-white/20 outline-none caret-primary"
-              />
-              <button
-                type="submit"
-                aria-label="Subscribe to newsletter"
-                className="shrink-0 text-white/35 hover:text-white transition-colors duration-200"
-              >
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </form>
+            {/* Ultra-minimal underline form — isolated client island */}
+            <NewsletterForm />
           </div>
 
           {/* Nav link groups */}

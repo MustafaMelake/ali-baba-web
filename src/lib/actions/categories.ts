@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
 import { CategoryIdentifier } from "@/generated/prisma/enums";
@@ -131,6 +131,7 @@ export async function createCategory(
 
     revalidatePath("/"); // homepage CategorySlider
     revalidatePath("/admin/categories");
+    updateTag("categories"); // purge the tagged Footer cache (read-your-own-writes)
 
     return transferredFrom ? { success: true, id, transferredFrom } : { success: true, id };
   } catch (err) {
@@ -199,6 +200,7 @@ export async function updateCategory(
     revalidatePath("/"); // homepage CategorySlider
     revalidatePath("/admin/categories");
     revalidatePath(`/category/${slug}`);
+    updateTag("categories"); // purge the tagged Footer cache (read-your-own-writes)
 
     return transferredFrom ? { success: true, transferredFrom } : { success: true };
   } catch (err) {
@@ -244,6 +246,7 @@ export async function deleteCategory(id: string): Promise<DeleteCategoryResult> 
 
     revalidatePath("/"); // homepage CategorySlider
     revalidatePath("/admin/categories");
+    updateTag("categories"); // purge the tagged Footer cache (read-your-own-writes)
 
     return { success: true };
   } catch (err) {

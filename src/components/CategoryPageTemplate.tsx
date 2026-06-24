@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import Navbar from "@/components/Navbar";
-import Footer from "@/components/Footer";
+import Footer from "@/components/layout/Footer";
 import ProductCard, { type ShopProduct } from "@/components/ProductCard";
 import { getWishlistedProductIds } from "@/lib/actions/wishlist";
 
