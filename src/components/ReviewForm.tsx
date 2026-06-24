@@ -54,23 +54,22 @@ export default function ReviewForm({
 
   const active = hover || rating;
 
-  // Already reviewed → suppress the form and show a calm "received" note. Kept
-  // after the hooks above so the Rules of Hooks hold regardless of this branch.
+  // Already reviewed → suppress the form and show a calm "received" note.
   if (hasExistingReview) {
     return (
       <div
         dir="rtl"
         lang="ar"
         role="status"
-        className="rounded-2xl border border-blue-200/70 bg-blue-50 p-6 md:p-8 text-center"
+        className="flex h-full min-h-[320px] flex-col items-center justify-center rounded-2xl border border-stone-200/80 bg-stone-50/40 p-6 text-center md:p-8"
       >
-        <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-100 text-blue-600">
-          <CheckCircle2 className="h-6 w-6" />
+        <span className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-stone-200/50 text-stone-700">
+          <CheckCircle2 className="h-6 w-6" strokeWidth={1.5} />
         </span>
-        <p className="mt-4 font-sans text-base font-semibold leading-relaxed text-blue-800">
+        <h3 className="font-serif text-xl font-medium tracking-tight text-stone-900">
           شكراً لك، تقييمك قيد المراجعة الآن
-        </p>
-        <p className="mt-1.5 font-sans text-sm text-blue-700/70">
+        </h3>
+        <p className="mt-2 font-sans text-sm text-stone-500">
           سيظهر تقييمك بمجرد اعتماده من فريقنا.
         </p>
       </div>
@@ -95,7 +94,10 @@ export default function ReviewForm({
         <span className="mb-2 block font-sans text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-500">
           Your rating
         </span>
-        <div className="flex items-center gap-1" onMouseLeave={() => setHover(0)}>
+        <div
+          className="flex items-center gap-1"
+          onMouseLeave={() => setHover(0)}
+        >
           {Array.from({ length: 5 }).map((_, i) => {
             const star = i + 1;
             return (
@@ -113,7 +115,7 @@ export default function ReviewForm({
                     "h-7 w-7 transition-colors",
                     star <= active
                       ? "fill-amber-400 text-amber-400"
-                      : "fill-stone-200 text-stone-200",
+                      : "fill-stone-200 text-stone-200"
                   )}
                   strokeWidth={0}
                 />
