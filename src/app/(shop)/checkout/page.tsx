@@ -1,12 +1,19 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useSyncExternalStore, useTransition } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Loader2, ArrowLeft, Check, Truck, Store } from "lucide-react";
+import {
+  ChevronDown,
+  Loader2,
+  ArrowLeft,
+  Check,
+  Truck,
+  Store,
+} from "lucide-react";
 import { toast } from "sonner";
-import { useCartStore } from "@/lib/cart-store";
+import { useCartStore, type CartItem } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { placeOrder } from "@/lib/actions/orders";
 import { clearDbCartAction } from "@/lib/actions/cart";
@@ -15,27 +22,30 @@ import { prettyLabel } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
-const DELIVERY_FEE  = 35;
-const TAX_RATE      = 0.14; // 14% VAT
-const BRANCHES      = [
+const DELIVERY_FEE = 35;
+const TAX_RATE = 0.14; // 14% VAT
+const BRANCHES = [
   { value: "menouf", label: "Menouf Boutique", sublabel: "فرع منوف" },
-  { value: "beba",   label: "Beba Café",        sublabel: "بيبا كافيه"  },
+  { value: "beba", label: "Beba Café", sublabel: "بيبا كافيه" },
 ];
 
 // Cities we deliver to — values mirror the Prisma `DeliveryLocation` enum exactly,
 // so the selected value drops straight into placeOrder()'s `deliveryCity` field.
 const DELIVERY_CITIES = Object.values(DeliveryLocation);
 
-// Fallback items shown when the cart is empty (design preview / mock)
-const MOCK_ITEMS = [
-  { id: "m1", variantId: "mv1", name: "Kunafa Royale",           category: "Oriental Sweets",  price: 320, quantity: 1, image: "/cake1.jpg" },
-  { id: "m2", variantId: "mv2", name: "Pistachio Mille-Feuille", category: "Modern Pastry",    price: 185, quantity: 2, image: "/cake2.jpg" },
-  { id: "m3", variantId: "mv3", name: "Arabic Qahwa Set",        category: "Luxury Beverages", price: 95,  quantity: 1, image: "/our-story1.png" },
-];
+// A cart line, normalized for display — `category` is always a string so the
+// summary never has to guard against `undefined`.
+type CheckoutItem = Omit<CartItem, "category"> & { category: string };
 
 // ─── Sub-components ───────────────────────────────────────────────
 
-function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
+function FieldLabel({
+  htmlFor,
+  children,
+}: {
+  htmlFor: string;
+  children: React.ReactNode;
+}) {
   return (
     <label
       htmlFor={htmlFor}
@@ -80,7 +90,13 @@ function Divider() {
 // ─── Fulfillment toggle ───────────────────────────────────────────
 type Mode = "delivery" | "pickup";
 
-function FulfillmentToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => void }) {
+function FulfillmentToggle({
+  mode,
+  onChange,
+}: {
+  mode: Mode;
+  onChange: (m: Mode) => void;
+}) {
   return (
     <div className="relative flex rounded-full border border-stone-200 bg-stone-50 p-1 w-full max-w-xs">
       {/* Sliding background */}
@@ -88,7 +104,10 @@ function FulfillmentToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode)
         layout
         layoutId="checkout-fulfillment-pill"
         className="absolute top-1 bottom-1 rounded-full bg-stone-900 shadow-sm"
-        style={{ width: "calc(50% - 4px)", left: mode === "delivery" ? 4 : "calc(50%)" }}
+        style={{
+          width: "calc(50% - 4px)",
+          left: mode === "delivery" ? 4 : "calc(50%)",
+        }}
         transition={{ type: "spring", stiffness: 420, damping: 36 }}
       />
 
@@ -100,7 +119,11 @@ function FulfillmentToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode)
             mode === m ? "text-white" : "text-stone-500 hover:text-stone-700"
           }`}
         >
-          {m === "delivery" ? <Truck className="w-3.5 h-3.5" /> : <Store className="w-3.5 h-3.5" />}
+          {m === "delivery" ? (
+            <Truck className="w-3.5 h-3.5" />
+          ) : (
+            <Store className="w-3.5 h-3.5" />
+          )}
           {m === "delivery" ? "Delivery" : "Pickup"}
         </button>
       ))}
@@ -127,8 +150,12 @@ function BranchSelect({
         className="w-full flex items-center justify-between border-b border-stone-300 pb-3 text-left focus:outline-none focus:border-primary transition-colors group"
       >
         <span className="flex flex-col">
-          <span className="font-sans text-sm font-medium text-stone-900">{selected.label}</span>
-          <span className="font-sans text-xs text-stone-400 mt-0.5" dir="rtl">{selected.sublabel}</span>
+          <span className="font-sans text-sm font-medium text-stone-900">
+            {selected.label}
+          </span>
+          <span className="font-sans text-xs text-stone-400 mt-0.5" dir="rtl">
+            {selected.sublabel}
+          </span>
         </span>
         <ChevronDown
           className="w-4 h-4 text-stone-400 group-hover:text-stone-700 transition-all duration-200"
@@ -152,14 +179,26 @@ function BranchSelect({
                   type="button"
                   role="option"
                   aria-selected={b.value === value}
-                  onClick={() => { onChange(b.value); setOpen(false); }}
+                  onClick={() => {
+                    onChange(b.value);
+                    setOpen(false);
+                  }}
                   className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-stone-50 transition-colors text-left"
                 >
                   <span className="flex flex-col">
-                    <span className="font-sans text-sm font-medium text-stone-900">{b.label}</span>
-                    <span className="font-sans text-xs text-stone-400" dir="rtl">{b.sublabel}</span>
+                    <span className="font-sans text-sm font-medium text-stone-900">
+                      {b.label}
+                    </span>
+                    <span
+                      className="font-sans text-xs text-stone-400"
+                      dir="rtl"
+                    >
+                      {b.sublabel}
+                    </span>
                   </span>
-                  {b.value === value && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                  {b.value === value && (
+                    <Check className="w-3.5 h-3.5 text-primary shrink-0" />
+                  )}
                 </button>
               </li>
             ))}
@@ -224,7 +263,9 @@ function CitySelect({
                   <span className="font-sans text-sm font-medium text-stone-900">
                     {prettyLabel(c)}
                   </span>
-                  {c === value && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                  {c === value && (
+                    <Check className="w-3.5 h-3.5 text-primary shrink-0" />
+                  )}
                 </button>
               </li>
             ))}
@@ -242,15 +283,15 @@ function OrderSummary({
   loading,
   onSubmit,
 }: {
-  items: typeof MOCK_ITEMS;
+  items: CheckoutItem[];
   mode: Mode;
   loading: boolean;
   onSubmit: () => void;
 }) {
-  const subtotal  = items.reduce((s, i) => s + i.price * i.quantity, 0);
-  const delivery  = mode === "pickup" ? 0 : DELIVERY_FEE;
-  const tax       = Math.round(subtotal * TAX_RATE);
-  const total     = subtotal + delivery + tax;
+  const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
+  const delivery = mode === "pickup" ? 0 : DELIVERY_FEE;
+  const tax = Math.round(subtotal * TAX_RATE);
+  const total = subtotal + delivery + tax;
 
   return (
     <div className="bg-stone-50 rounded-2xl p-6 md:p-8 border border-stone-100">
@@ -263,7 +304,13 @@ function OrderSummary({
         {items.map((item) => (
           <li key={item.variantId} className="flex items-center gap-4">
             <div className="relative w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-stone-200">
-              <Image src={item.image} alt={item.name} fill className="object-cover" sizes="56px" />
+              <Image
+                src={item.image}
+                alt={item.name}
+                fill
+                className="object-cover"
+                sizes="56px"
+              />
               {item.quantity > 1 && (
                 <span className="absolute top-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-stone-900 text-[9px] font-bold text-white">
                   {item.quantity}
@@ -271,12 +318,18 @@ function OrderSummary({
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-sans text-sm font-medium text-stone-900 truncate">{item.name}</p>
-              <p className="font-sans text-xs text-stone-400">{item.category}</p>
+              <p className="font-sans text-sm font-medium text-stone-900 truncate">
+                {item.name}
+              </p>
+              <p className="font-sans text-xs text-stone-400">
+                {item.category}
+              </p>
             </div>
             <span className="shrink-0 font-sans text-sm font-semibold text-stone-900 tabular-nums">
               {(item.price * item.quantity).toLocaleString("en-EG")}
-              <span className="font-normal text-stone-400 text-xs ml-0.5">ج.م</span>
+              <span className="font-normal text-stone-400 text-xs ml-0.5">
+                ج.م
+              </span>
             </span>
           </li>
         ))}
@@ -285,14 +338,20 @@ function OrderSummary({
       {/* Totals */}
       <div className="border-t border-stone-200 pt-5 space-y-3">
         {[
-          { label: "Subtotal",    value: subtotal },
-          { label: mode === "pickup" ? "Pickup" : "Delivery", value: delivery, free: mode === "pickup" },
-          { label: "VAT (14%)",   value: tax },
+          { label: "Subtotal", value: subtotal },
+          {
+            label: mode === "pickup" ? "Pickup" : "Delivery",
+            value: delivery,
+            free: mode === "pickup",
+          },
+          { label: "VAT (14%)", value: tax },
         ].map(({ label, value, free }) => (
           <div key={label} className="flex justify-between items-center">
             <span className="font-sans text-sm text-stone-500">{label}</span>
             {free ? (
-              <span className="font-sans text-sm font-semibold text-primary">Free</span>
+              <span className="font-sans text-sm font-semibold text-primary">
+                Free
+              </span>
             ) : (
               <span className="font-sans text-sm text-stone-700 tabular-nums">
                 {value.toLocaleString("en-EG")}
@@ -303,10 +362,14 @@ function OrderSummary({
         ))}
 
         <div className="border-t border-stone-200 pt-4 flex justify-between items-baseline">
-          <span className="font-serif text-xl font-medium text-stone-900">Total</span>
+          <span className="font-serif text-xl font-medium text-stone-900">
+            Total
+          </span>
           <span className="font-serif text-2xl font-medium text-stone-900 tabular-nums">
             {total.toLocaleString("en-EG")}
-            <span className="font-sans font-normal text-sm text-stone-500 ml-1">ج.م</span>
+            <span className="font-sans font-normal text-sm text-stone-500 ml-1">
+              ج.م
+            </span>
           </span>
         </div>
       </div>
@@ -355,37 +418,81 @@ function OrderSummary({
   );
 }
 
+// ─── Empty cart state ─────────────────────────────────────────────
+function EmptyCart() {
+  return (
+    <div className="min-h-screen bg-[#FAFAFA] pt-16 md:pt-20 flex items-center justify-center px-6">
+      <motion.div
+        className="text-center max-w-md"
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.6, ease: EASE }}
+      >
+        <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-8">
+          <Store className="w-8 h-8 text-primary" strokeWidth={1.75} />
+        </div>
+        <h1 className="font-serif text-4xl md:text-5xl font-medium tracking-tight text-stone-900 mb-4">
+          Your Cart is Empty
+        </h1>
+        <p className="font-sans text-base text-stone-500 leading-relaxed mb-8">
+          Looks like you haven&apos;t added anything yet. Explore our collection
+          and find something you&apos;ll love.
+        </p>
+        <Link
+          href="/shop"
+          className="inline-flex items-center gap-2.5 rounded-full bg-stone-900 px-8 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-white hover:bg-stone-700 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Return to Shop
+        </Link>
+      </motion.div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────
 export default function CheckoutPage() {
   const cartItems = useCartStore((s) => s.items);
   const clearCart = useCartStore((s) => s.clearCart);
   const isLoggedIn = !!useSession().data?.user;
 
-  // Use real cart if populated, otherwise fall back to mock items for visual preview
-  const items = cartItems.length > 0
-    ? cartItems.map((i) => ({ ...i, category: i.category ?? "" }))
-    : MOCK_ITEMS;
+  // The cart is persisted to localStorage and only rehydrates after mount, so the
+  // first client render always sees an empty `items`. Track Zustand's hydration so
+  // we don't flash "Your Cart is Empty" to a customer who actually has one. The
+  // server snapshot is `false`, keeping SSR and the first client render identical.
+  const hydrated = useSyncExternalStore(
+    useCartStore.persist.onFinishHydration,
+    () => useCartStore.persist.hasHydrated(),
+    () => false,
+  );
+
+  // The Zustand cart is the single source of truth — no mock fallback. Normalize
+  // each line so `category` is always a string for the summary.
+  const items: CheckoutItem[] = cartItems.map((i) => ({
+    ...i,
+    category: i.category ?? "",
+  }));
 
   // Form state
-  const [mode, setMode]             = useState<Mode>("delivery");
-  const [firstName, setFirstName]   = useState("");
-  const [lastName, setLastName]     = useState("");
-  const [phone, setPhone]           = useState("");
-  const [email, setEmail]           = useState("");
-  const [address, setAddress]       = useState("");
-  const [apartment, setApartment]   = useState("");
-  const [city, setCity]             = useState<DeliveryLocation>(DeliveryLocation.MENOUF);
-  const [notes, setNotes]           = useState("");
-  const [branch, setBranch]         = useState(BRANCHES[0].value);
+  const [mode, setMode] = useState<Mode>("delivery");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [address, setAddress] = useState("");
+  const [apartment, setApartment] = useState("");
+  const [city, setCity] = useState<DeliveryLocation>(DeliveryLocation.MENOUF);
+  const [notes, setNotes] = useState("");
+  const [branch, setBranch] = useState(BRANCHES[0].value);
   const [isPending, startTransition] = useTransition();
-  const [placed, setPlaced]         = useState(false);
+  const [placed, setPlaced] = useState(false);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
 
   function handleSubmit() {
     if (isPending || placed) return;
 
-    // The Zustand cart is the source of truth for what's ordered; MOCK_ITEMS are a
-    // visual preview only and must never be placed.
+    // The Zustand cart is the source of truth for what's ordered — guard against a
+    // race where the cart emptied between render and submit.
     if (cartItems.length === 0) {
       toast.error("Your cart is empty.");
       return;
@@ -402,11 +509,16 @@ export default function CheckoutPage() {
     startTransition(async () => {
       // Send only variantId + quantity — every price is re-resolved server-side.
       const res = await placeOrder({
-        items: cartItems.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
+        items: cartItems.map((i) => ({
+          variantId: i.variantId,
+          quantity: i.quantity,
+        })),
         fulfillment:
-          mode === "delivery" ? FulfillmentMethod.DELIVERY : FulfillmentMethod.PICKUP,
+          mode === "delivery"
+            ? FulfillmentMethod.DELIVERY
+            : FulfillmentMethod.PICKUP,
         deliveryCity: mode === "delivery" ? city : undefined,
-        addressLine:  mode === "delivery" ? addressLine : undefined,
+        addressLine: mode === "delivery" ? addressLine : undefined,
         pickupBranch: mode === "pickup" ? branch : undefined,
         customerName: `${firstName} ${lastName}`.trim(),
         customerPhone: phone,
@@ -426,6 +538,17 @@ export default function CheckoutPage() {
       setPlaced(true);
       toast.success(`Order #${res.orderNumber} placed — thank you!`);
     });
+  }
+
+  // Hold the background until the cart has rehydrated — prevents an empty-cart
+  // flash for customers who already have items, and keeps SSR/CSR markup in sync.
+  if (!hydrated) {
+    return <div className="min-h-screen bg-[#FAFAFA]" />;
+  }
+
+  // Empty cart (and no order in flight) → premium empty state, never the form.
+  if (!placed && items.length === 0) {
+    return <EmptyCart />;
   }
 
   if (placed) {
@@ -475,20 +598,20 @@ export default function CheckoutPage() {
   return (
     <div className="min-h-screen bg-[#FAFAFA] pt-16 md:pt-20">
       <div className="max-w-7xl mx-auto px-6 md:px-10 lg:px-14 py-10 md:py-14">
-
         {/* Breadcrumb */}
         <div className="mb-10 flex items-center gap-2">
-          <Link href="/shop" className="group flex items-center gap-1.5 font-sans text-xs uppercase tracking-[0.2em] text-stone-400 hover:text-stone-700 transition-colors">
+          <Link
+            href="/shop"
+            className="group flex items-center gap-1.5 font-sans text-xs uppercase tracking-[0.2em] text-stone-400 hover:text-stone-700 transition-colors"
+          >
             <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
             Back to Shop
           </Link>
         </div>
 
         <div className="lg:grid lg:grid-cols-12 lg:gap-12 xl:gap-16">
-
           {/* ── Left: Form ──────────────────────────────── */}
           <div className="lg:col-span-7 space-y-0">
-
             {/* 01 — Contact */}
             <section>
               <SectionHeading>Contact Information</SectionHeading>
@@ -576,7 +699,9 @@ export default function CheckoutPage() {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                       <div>
-                        <FieldLabel htmlFor="apartment">Apartment / Floor</FieldLabel>
+                        <FieldLabel htmlFor="apartment">
+                          Apartment / Floor
+                        </FieldLabel>
                         <Input
                           id="apartment"
                           type="text"
@@ -615,8 +740,11 @@ export default function CheckoutPage() {
 
                     <p className="mt-4 font-sans text-[13px] text-stone-400 leading-relaxed">
                       Your order will be ready within{" "}
-                      <span className="font-medium text-stone-600">30 – 45 minutes</span>.
-                      You&apos;ll receive an SMS notification when it&apos;s ready for collection.
+                      <span className="font-medium text-stone-600">
+                        30 – 45 minutes
+                      </span>
+                      . You&apos;ll receive an SMS notification when it&apos;s
+                      ready for collection.
                     </p>
                   </motion.div>
                 )}
@@ -631,8 +759,8 @@ export default function CheckoutPage() {
               <p className="font-sans text-sm text-stone-500 leading-relaxed max-w-md">
                 Please review your selection in the summary panel. All items are
                 made fresh to order — cancellations must be made within{" "}
-                <span className="font-medium text-stone-700">15 minutes</span> of
-                placing your order.
+                <span className="font-medium text-stone-700">15 minutes</span>{" "}
+                of placing your order.
               </p>
 
               {/* Mobile-only CTA (above the sticky summary on small screens) */}
@@ -658,7 +786,6 @@ export default function CheckoutPage() {
               />
             </div>
           </div>
-
         </div>
       </div>
     </div>

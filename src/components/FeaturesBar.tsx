@@ -47,7 +47,7 @@ export default function FeaturesBar() {
   };
 
   return (
-    <section className="py-24 px-6 md:px-12 lg:px-20 bg-[#FAFAFA]">
+    <section id="faq" className="py-24 px-6 md:px-12 lg:px-20 bg-[#FAFAFA]">
       {/* حقن كود السكيما في الصفحة عشان عناكب جوجل تقرأه */}
       <script
         type="application/ld+json"
