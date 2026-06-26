@@ -2,21 +2,16 @@ import { Users } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireAdminPage } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
-import type { UserRole } from "@/generated/prisma/enums";
 import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
-import Pill from "@/components/admin/Pill";
+import UserRoleEditor from "@/components/admin/UserRoleEditor";
 
 export const metadata = {
   title: "Users | Admin",
 };
 
-// USER → subtle blue, MANAGER → amber, ADMIN → distinct turquoise (brand primary).
-const ROLE_STYLES: Record<UserRole, string> = {
-  USER: "bg-blue-50 text-blue-700 ring-blue-600/10",
-  MANAGER: "bg-amber-50 text-amber-700 ring-amber-600/20",
-  ADMIN: "bg-primary/10 text-primary ring-primary/20",
-};
+// Roles mutate in place from this page — always show live data.
+export const dynamic = "force-dynamic";
 
 function initials(name: string) {
   return (
@@ -30,19 +25,36 @@ function initials(name: string) {
 }
 
 export default async function AdminUsersPage() {
-  await requireAdminPage();
+  // ADMIN-only; also gives us the caller's id so they can't edit their own role.
+  const session = await requireAdminPage();
 
-  const users = await prisma.user.findMany({
-    orderBy: { createdAt: "desc" },
-    select: { id: true, name: true, email: true, role: true, createdAt: true },
-  });
+  const [users, branches] = await Promise.all([
+    prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        branchId: true,
+        branch: { select: { name: true } },
+      },
+    }),
+    // Only active branches are assignable from the dropdown.
+    prisma.branch.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+  ]);
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
       <PageHeader
         eyebrow="People"
         title="Users"
-        description="Everyone with an account, newest first."
+        description="Manage accounts and roles. Assign a manager to the branch they oversee."
       />
 
       <div className="overflow-hidden rounded-2xl border border-stone-200/70 bg-white shadow-sm">
@@ -60,7 +72,7 @@ export default async function AdminUsersPage() {
                   <th className="px-6 py-3.5 font-semibold">Name</th>
                   <th className="px-6 py-3.5 font-semibold">Email</th>
                   <th className="px-6 py-3.5 font-semibold">Joined</th>
-                  <th className="px-6 py-3.5 font-semibold">Role</th>
+                  <th className="px-6 py-3.5 font-semibold">Role &amp; Branch</th>
                 </tr>
               </thead>
               <tbody>
@@ -84,7 +96,17 @@ export default async function AdminUsersPage() {
                       {formatDate(user.createdAt)}
                     </td>
                     <td className="px-6 py-4">
-                      <Pill className={ROLE_STYLES[user.role]}>{user.role}</Pill>
+                      <UserRoleEditor
+                        user={{
+                          id: user.id,
+                          name: user.name,
+                          role: user.role,
+                          branchId: user.branchId,
+                          branchName: user.branch?.name ?? null,
+                        }}
+                        branches={branches}
+                        isSelf={session.user.id === user.id}
+                      />
                     </td>
                   </tr>
                 ))}
