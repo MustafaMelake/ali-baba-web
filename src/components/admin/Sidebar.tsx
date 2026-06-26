@@ -68,12 +68,26 @@ function Brand() {
   );
 }
 
-function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+/** Routes a MANAGER may see — everything else is ADMIN-only. */
+const MANAGER_HREFS = new Set(["/admin", "/admin/orders"]);
+
+function NavLinks({
+  role,
+  onNavigate,
+}: {
+  role: string;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
+  // Managers are scoped to their branch's dashboard + orders; admins see all.
+  const items =
+    role === "ADMIN"
+      ? NAV_ITEMS
+      : NAV_ITEMS.filter((item) => MANAGER_HREFS.has(item.href));
 
   return (
     <nav className="flex flex-1 flex-col gap-1">
-      {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+      {items.map(({ href, label, icon: Icon }) => {
         const active = isActive(pathname, href);
         return (
           <Link
@@ -117,7 +131,7 @@ function BackToStore({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-export default function Sidebar() {
+export default function Sidebar({ role }: { role: string }) {
   const { mobileNavOpen, closeMobileNav } = useAdminUi();
 
   // Lock body scroll + close on Escape while the mobile drawer is open.
@@ -142,7 +156,7 @@ export default function Sidebar() {
           <Brand />
         </div>
         <div className="mt-8 flex flex-1 flex-col">
-          <NavLinks />
+          <NavLinks role={role} />
           <div className="mt-auto border-t border-stone-200/70 pt-3">
             <BackToStore />
           </div>
@@ -181,7 +195,7 @@ export default function Sidebar() {
                 </button>
               </div>
               <div className="mt-8 flex flex-1 flex-col">
-                <NavLinks onNavigate={closeMobileNav} />
+                <NavLinks role={role} onNavigate={closeMobileNav} />
                 <div className="mt-auto border-t border-stone-200/70 pt-3">
                   <BackToStore onNavigate={closeMobileNav} />
                 </div>

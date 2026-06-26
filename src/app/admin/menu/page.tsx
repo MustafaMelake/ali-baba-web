@@ -1,5 +1,6 @@
 import { Coffee } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/session";
 import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
 import CreateMenuCategoryButton from "@/components/admin/menu/CreateMenuCategoryButton";
@@ -10,6 +11,8 @@ export const metadata = {
 };
 
 export default async function AdminMenuPage() {
+  await requireAdminPage();
+
   const categories = await prisma.menuCategory.findMany({
     orderBy: { order: "asc" },
     select: {

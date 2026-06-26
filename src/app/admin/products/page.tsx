@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ImageIcon, Package, Plus } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/session";
 import { formatEGP } from "@/lib/utils";
 import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
@@ -12,6 +13,8 @@ export const metadata = {
 };
 
 export default async function AdminProductsPage() {
+  await requireAdminPage();
+
   // Prices live on ProductVariant, not Product — pull them to derive a "from"
   // price; category name comes from the relation.
   const products = await prisma.product.findMany({

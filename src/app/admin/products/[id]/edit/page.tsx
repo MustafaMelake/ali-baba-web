@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/session";
 import PageHeader from "@/components/admin/PageHeader";
 import EditProductForm from "@/components/admin/EditProductForm";
 
@@ -14,6 +15,8 @@ export default async function EditProductPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireAdminPage();
+
   const { id } = await params;
 
   // Product (with its variants) + the relational select options, in parallel.

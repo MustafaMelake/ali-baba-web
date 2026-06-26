@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/prisma";
 // السيشن من الـ wrapper المخصص (مش من better-auth مباشرة).
-import { getServerSession, requireAdmin } from "@/lib/session";
+import { getServerSession, requireDashboardAccess } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import {
   DeliveryLocation,
@@ -20,6 +20,12 @@ export interface CheckoutPayload {
   deliveryCity?: DeliveryLocation;
   addressLine?: string;
   pickupBranch?: string;
+  /**
+   * The fulfilling Branch's id, stamped onto the order for Branch-Manager RBAC.
+   * The checkout client must send this (pickup → the chosen branch; delivery →
+   * the routing branch). `pickupBranch` stays as the free-text display label.
+   */
+  branchId?: string;
   customerName: string;
   customerPhone: string;
   orderNotes?: string;
@@ -106,6 +112,9 @@ export async function placeOrder(
           deliveryCity: payload.deliveryCity,
           addressLine: payload.addressLine,
           pickupBranch: payload.pickupBranch,
+          // Stamp the fulfilling branch so dashboards can scope by it. Nullable:
+          // a missing branchId leaves the order unassigned (ADMIN-only view).
+          branchId: payload.branchId ?? null,
           customerName: payload.customerName.trim(),
           customerPhone: payload.customerPhone.trim(),
           orderNotes: payload.orderNotes,
@@ -143,16 +152,20 @@ function prismaErrorCode(err: unknown): string | undefined {
 }
 
 /**
- * Admin: move an order along its lifecycle. Guarded by `requireAdmin` (the UI
- * never exposes this to non-admins, so a thrown guard here means a direct hit).
+ * Move an order along its lifecycle.
+ *   - ADMIN   → any order.
+ *   - MANAGER → only orders belonging to their OWN branch (branchId match);
+ *     anything else (other branch, or an unassigned order) is unauthorized.
  * Revalidates the orders board AND the dashboard so revenue / counters re-sync.
  */
 export async function updateOrderStatus(
   orderId: string,
   status: OrderStatus,
 ): Promise<{ success: boolean; error?: string }> {
+  // ADMIN or MANAGER only; role + branch resolved live from the DB.
+  let scope;
   try {
-    await requireAdmin();
+    scope = await requireDashboardAccess();
   } catch {
     return { success: false, error: "Unauthorized." };
   }
@@ -161,6 +174,23 @@ export async function updateOrderStatus(
   // Defensive: never trust a status that isn't a real enum member.
   if (!Object.values(OrderStatus).includes(status)) {
     return { success: false, error: "Invalid order status." };
+  }
+
+  // A MANAGER may only touch orders fulfilled by their own branch.
+  if (scope.role === "MANAGER") {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { branchId: true },
+    });
+    if (!order) {
+      return { success: false, error: "That order no longer exists." };
+    }
+    if (order.branchId !== scope.branchId) {
+      return {
+        success: false,
+        error: "Unauthorized: that order belongs to another branch.",
+      };
+    }
   }
 
   try {

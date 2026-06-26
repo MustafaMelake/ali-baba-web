@@ -11,8 +11,12 @@ export const metadata = {
  * Authoritative authorization gate for the ENTIRE /admin/* surface.
  * Enforced on the server — never trust the client.
  *
- *   - not signed in        -> /login
- *   - signed in, not ADMIN -> /
+ *   - not signed in                 -> /login
+ *   - signed in, not ADMIN/MANAGER  -> /
+ *
+ * This is only the COARSE role gate. A MANAGER is admitted here, but every
+ * dashboard loader (getDashboardStats / getOrders) re-checks the role + resolves
+ * the branch scope from the DB, so a manager only ever sees their own branch.
  *
  * Layout shell:
  *   A single flex ROW locked to the viewport height. The Sidebar is a real
@@ -34,11 +38,13 @@ export default async function AdminLayout({
   const session = await getServerSession();
 
   if (!session) redirect("/login");
-  if (session.user.role !== "ADMIN") redirect("/");
+  if (session.user.role !== "ADMIN" && session.user.role !== "MANAGER") {
+    redirect("/");
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#FAFAFA]">
-      <Sidebar />
+      <Sidebar role={session.user.role} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopHeader user={session.user} />

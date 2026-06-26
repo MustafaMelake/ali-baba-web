@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { useCartStore, type CartItem } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { placeOrder } from "@/lib/actions/orders";
+import { getActiveBranches } from "@/lib/actions/branches";
 import { clearDbCartAction } from "@/lib/actions/cart";
 import { DeliveryLocation, FulfillmentMethod } from "@/generated/prisma/enums";
 import { prettyLabel } from "@/lib/utils";
@@ -24,10 +25,21 @@ const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
 const DELIVERY_FEE = 35;
 const TAX_RATE = 0.14; // 14% VAT
-const BRANCHES = [
-  { value: "menouf", label: "Menouf Boutique", sublabel: "فرع منوف" },
-  { value: "beba", label: "Beba Café", sublabel: "بيبا كافيه" },
-];
+
+// Arabic sublabels are presentational only (not stored on the Branch model),
+// keyed by branch slug. Seeded branches keep their bilingual label; any other
+// branch simply shows its name.
+const BRANCH_SUBLABELS: Record<string, string> = {
+  menouf: "فرع منوف",
+  beba: "بيبا كافيه",
+};
+
+type BranchOption = {
+  id: string;
+  slug: string;
+  name: string;
+  sublabel?: string;
+};
 
 // Cities we deliver to — values mirror the Prisma `DeliveryLocation` enum exactly,
 // so the selected value drops straight into placeOrder()'s `deliveryCity` field.
@@ -132,15 +144,28 @@ function FulfillmentToggle({
 }
 
 // ─── Branch dropdown ──────────────────────────────────────────────
+// Driven by the live Branch table (ids resolved server-side), so the value it
+// emits is a real `branchId` ready to stamp onto the order.
 function BranchSelect({
+  branches,
   value,
   onChange,
 }: {
+  branches: BranchOption[];
   value: string;
   onChange: (v: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const selected = BRANCHES.find((b) => b.value === value) ?? BRANCHES[0];
+
+  if (branches.length === 0) {
+    return (
+      <p className="border-b border-stone-200 pb-3 font-sans text-sm text-stone-400">
+        No branches are available for pickup right now.
+      </p>
+    );
+  }
+
+  const selected = branches.find((b) => b.id === value) ?? branches[0];
 
   return (
     <div className="relative">
@@ -151,11 +176,13 @@ function BranchSelect({
       >
         <span className="flex flex-col">
           <span className="font-sans text-sm font-medium text-stone-900">
-            {selected.label}
+            {selected.name}
           </span>
-          <span className="font-sans text-xs text-stone-400 mt-0.5" dir="rtl">
-            {selected.sublabel}
-          </span>
+          {selected.sublabel && (
+            <span className="font-sans text-xs text-stone-400 mt-0.5" dir="rtl">
+              {selected.sublabel}
+            </span>
+          )}
         </span>
         <ChevronDown
           className="w-4 h-4 text-stone-400 group-hover:text-stone-700 transition-all duration-200"
@@ -173,30 +200,32 @@ function BranchSelect({
             exit={{ opacity: 0, y: -8, scale: 0.98 }}
             transition={{ duration: 0.2, ease: EASE }}
           >
-            {BRANCHES.map((b) => (
-              <li key={b.value}>
+            {branches.map((b) => (
+              <li key={b.id}>
                 <button
                   type="button"
                   role="option"
-                  aria-selected={b.value === value}
+                  aria-selected={b.id === value}
                   onClick={() => {
-                    onChange(b.value);
+                    onChange(b.id);
                     setOpen(false);
                   }}
                   className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-stone-50 transition-colors text-left"
                 >
                   <span className="flex flex-col">
                     <span className="font-sans text-sm font-medium text-stone-900">
-                      {b.label}
+                      {b.name}
                     </span>
-                    <span
-                      className="font-sans text-xs text-stone-400"
-                      dir="rtl"
-                    >
-                      {b.sublabel}
-                    </span>
+                    {b.sublabel && (
+                      <span
+                        className="font-sans text-xs text-stone-400"
+                        dir="rtl"
+                      >
+                        {b.sublabel}
+                      </span>
+                    )}
                   </span>
-                  {b.value === value && (
+                  {b.id === value && (
                     <Check className="w-3.5 h-3.5 text-primary shrink-0" />
                   )}
                 </button>
@@ -483,10 +512,33 @@ export default function CheckoutPage() {
   const [apartment, setApartment] = useState("");
   const [city, setCity] = useState<DeliveryLocation>(DeliveryLocation.MENOUF);
   const [notes, setNotes] = useState("");
-  const [branch, setBranch] = useState(BRANCHES[0].value);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [branchId, setBranchId] = useState("");
   const [isPending, startTransition] = useTransition();
   const [placed, setPlaced] = useState(false);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
+
+  // Load active branches for the pickup selector and resolve real ids — the
+  // order stores branchId (for Branch-Manager RBAC), not just a free-text label.
+  useEffect(() => {
+    let alive = true;
+    getActiveBranches()
+      .then((rows) => {
+        if (!alive) return;
+        const opts: BranchOption[] = rows.map((b) => ({
+          ...b,
+          sublabel: BRANCH_SUBLABELS[b.slug],
+        }));
+        setBranches(opts);
+        setBranchId((cur) => cur || opts[0]?.id || "");
+      })
+      .catch(() => {
+        /* leave the selector empty; pickup still works without a stored branch */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   function handleSubmit() {
     if (isPending || placed) return;
@@ -506,6 +558,11 @@ export default function CheckoutPage() {
       .filter(Boolean)
       .join(", ");
 
+    // Resolve the chosen pickup branch once — used for both the RBAC branchId
+    // and the human-readable label persisted on the order.
+    const selectedBranch =
+      mode === "pickup" ? branches.find((b) => b.id === branchId) : undefined;
+
     startTransition(async () => {
       // Send only variantId + quantity — every price is re-resolved server-side.
       const res = await placeOrder({
@@ -519,7 +576,9 @@ export default function CheckoutPage() {
             : FulfillmentMethod.PICKUP,
         deliveryCity: mode === "delivery" ? city : undefined,
         addressLine: mode === "delivery" ? addressLine : undefined,
-        pickupBranch: mode === "pickup" ? branch : undefined,
+        // Stamp the real branch id (RBAC) + keep the readable name as the label.
+        branchId: selectedBranch?.id,
+        pickupBranch: selectedBranch?.name,
         customerName: `${firstName} ${lastName}`.trim(),
         customerPhone: phone,
         orderNotes: notes.trim() || undefined,
@@ -736,7 +795,11 @@ export default function CheckoutPage() {
                     transition={{ duration: 0.3, ease: EASE }}
                   >
                     <FieldLabel htmlFor="branch">Choose Your Branch</FieldLabel>
-                    <BranchSelect value={branch} onChange={setBranch} />
+                    <BranchSelect
+                      branches={branches}
+                      value={branchId}
+                      onChange={setBranchId}
+                    />
 
                     <p className="mt-4 font-sans text-[13px] text-stone-400 leading-relaxed">
                       Your order will be ready within{" "}

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { MessageSquareQuote, Clock } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
 import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
@@ -16,6 +17,8 @@ export const metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function AdminReviewsPage() {
+  await requireAdminPage();
+
   // Pending (isApproved: false) first, then newest approved.
   const reviews = await prisma.review.findMany({
     orderBy: [{ isApproved: "asc" }, { createdAt: "desc" }],

@@ -1,4 +1,5 @@
 import { Store } from "lucide-react";
+import { requireAdminPage } from "@/lib/session";
 import PageHeader from "@/components/admin/PageHeader";
 
 export const metadata = {
@@ -31,7 +32,9 @@ function Field({
   );
 }
 
-export default function AdminSettingsPage() {
+export default async function AdminSettingsPage() {
+  await requireAdminPage();
+
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <PageHeader

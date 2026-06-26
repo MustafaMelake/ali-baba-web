@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/session";
 import PageHeader from "@/components/admin/PageHeader";
 import NewProductForm from "@/components/admin/NewProductForm";
 
@@ -9,6 +10,8 @@ export const metadata = {
 };
 
 export default async function NewProductPage() {
+  await requireAdminPage();
+
   // Relational select options come straight from the DB.
   const [categories, menuPages] = await Promise.all([
     prisma.category.findMany({

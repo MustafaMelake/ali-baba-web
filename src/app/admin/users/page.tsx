@@ -1,5 +1,6 @@
 import { Users } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
 import type { UserRole } from "@/generated/prisma/enums";
 import PageHeader from "@/components/admin/PageHeader";
@@ -10,9 +11,10 @@ export const metadata = {
   title: "Users | Admin",
 };
 
-// USER → subtle blue, ADMIN → distinct turquoise (brand primary).
+// USER → subtle blue, MANAGER → amber, ADMIN → distinct turquoise (brand primary).
 const ROLE_STYLES: Record<UserRole, string> = {
   USER: "bg-blue-50 text-blue-700 ring-blue-600/10",
+  MANAGER: "bg-amber-50 text-amber-700 ring-amber-600/20",
   ADMIN: "bg-primary/10 text-primary ring-primary/20",
 };
 
@@ -28,6 +30,8 @@ function initials(name: string) {
 }
 
 export default async function AdminUsersPage() {
+  await requireAdminPage();
+
   const users = await prisma.user.findMany({
     orderBy: { createdAt: "desc" },
     select: { id: true, name: true, email: true, role: true, createdAt: true },

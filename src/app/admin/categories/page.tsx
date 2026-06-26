@@ -1,5 +1,6 @@
 import { Boxes, ImageIcon, Tags } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { requireAdminPage } from "@/lib/session";
 import { CategoryIdentifier } from "@/generated/prisma/enums";
 import { prettyLabel } from "@/lib/utils";
 import PageHeader from "@/components/admin/PageHeader";
@@ -13,6 +14,8 @@ export const metadata = {
 };
 
 export default async function AdminCategoriesPage() {
+  await requireAdminPage();
+
   // Every category, core and standard alike, with a live product count.
   const categories = await prisma.category.findMany({
     orderBy: { createdAt: "desc" },

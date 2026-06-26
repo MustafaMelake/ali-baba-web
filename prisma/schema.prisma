@@ -23,6 +23,7 @@ generator client {
 enum UserRole {
   USER
   ADMIN
+  MANAGER // Branch Manager — scoped to a single Branch via User.branchId.
 }
 
 /// Which storefront a category / menu page belongs to.
@@ -78,6 +79,14 @@ model User {
   emailVerified Boolean  @default(false)
   image         String?
   role          UserRole @default(USER)
+
+  // Branch assignment.
+  // OPTIONAL at the schema level by necessity: USER/ADMIN have no branch.
+  // The rule "a MANAGER must have a branchId" is conditional and CANNOT be
+  // expressed in Prisma — enforce it in app logic (and/or the DB CHECK
+  // constraint described in the migration note).
+  branchId      String?
+  branch        Branch?  @relation(fields: [branchId], references: [id], onDelete: Restrict)
 
   // Auth relations
   sessions Session[]
@@ -135,6 +144,34 @@ model Verification {
   updatedAt  DateTime @updatedAt
 
   @@index([identifier])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Branches (physical locations / boutiques)
+// A Branch can have one or more staff users assigned to it; a "Branch Manager"
+// is a User whose role == MANAGER and whose branchId points at this row.
+// NOTE: Order.pickupBranch is still a free-text string — migrating it to a
+// Branch relation is intentionally out of scope here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Branch {
+  id       String  @id @default(cuid())
+  name     String  @unique
+  /// URL-safe identifier (mirrors Category.slug), e.g. "menouf", "beba".
+  slug     String  @unique
+  address  String?
+  phone    String?
+  /// Soft on/off switch for the location without deleting it.
+  isActive Boolean @default(true)
+
+  /// Users assigned to this branch (typically role == MANAGER).
+  managers User[]
+
+  /// Orders fulfilled by this branch (see Order.branchId).
+  orders   Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -323,6 +360,13 @@ model Order {
   addressLine  String?
   pickupBranch String?
 
+  // Fulfilling branch — the unit of Branch-Manager RBAC. Nullable because
+  // legacy orders predate branch assignment; unassigned orders are visible to
+  // ADMIN only (a MANAGER's queries are filtered to their own branchId).
+  // Stamped at checkout in placeOrder().
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
   customerName  String
   customerPhone String
   orderNotes    String?
@@ -333,6 +377,7 @@ model Order {
   @@index([userId])
   @@index([status])
   @@index([createdAt])
+  @@index([branchId])
 }
 
 model OrderItem {
