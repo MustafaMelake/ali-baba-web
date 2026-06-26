@@ -12,6 +12,7 @@ import {
   Coffee,
   Star,
   Users,
+  Building2,
   Settings,
   Store,
   X,
@@ -38,6 +39,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/admin/menu", label: "Café Menu", icon: Coffee },
   { href: "/admin/reviews", label: "Reviews", icon: Star },
   { href: "/admin/users", label: "Users", icon: Users },
+  { href: "/admin/branches", label: "Branches", icon: Building2 },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ];
 
