@@ -19,7 +19,8 @@ type SessionUser = {
   name: string;
   email: string;
   image?: string | null;
-  // Inferred as `string` by Better Auth; the DB enum constrains it to USER/ADMIN.
+  // Inferred as `string` by Better Auth; the DB enum constrains it to
+  // USER / MANAGER / ADMIN.
   role: string;
 };
 
@@ -69,6 +70,10 @@ export default function UserMenu({ user }: { user: SessionUser }) {
   }
 
   const isAdmin = user.role === "ADMIN";
+  const isManager = user.role === "MANAGER";
+  // ADMIN or MANAGER may reach the dashboard; USERs and guests never see it.
+  // (UI visibility only — server gates enforce the real access boundary.)
+  const isStaff = isAdmin || isManager;
 
   return (
     <div ref={ref} className="relative">
@@ -115,9 +120,9 @@ export default function UserMenu({ user }: { user: SessionUser }) {
                 {user.name}
               </p>
               <p className="truncate text-xs text-stone-400">{user.email}</p>
-              {isAdmin && (
+              {isStaff && (
                 <span className="mt-1.5 inline-block rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                  Admin
+                  {isAdmin ? "Admin" : "Manager"}
                 </span>
               )}
             </div>
@@ -141,7 +146,7 @@ export default function UserMenu({ user }: { user: SessionUser }) {
                 <Heart className="h-4 w-4" />
                 Wishlist
               </Link>
-              {isAdmin && (
+              {isStaff && (
                 <Link
                   href="/admin"
                   role="menuitem"
@@ -149,7 +154,7 @@ export default function UserMenu({ user }: { user: SessionUser }) {
                   className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 hover:text-primary"
                 >
                   <LayoutDashboard className="h-4 w-4" />
-                  Admin Dashboard
+                  Dashboard
                 </Link>
               )}
               <button

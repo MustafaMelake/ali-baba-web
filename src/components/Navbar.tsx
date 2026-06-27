@@ -44,7 +44,10 @@ export default function Navbar() {
   // Reactive session — re-renders on login/logout without a full page reload.
   const { data: session, isPending } = useSession();
   const user = session?.user;
-  const isAdmin = user?.role === "ADMIN";
+  // Staff = ADMIN or MANAGER. Drives the dashboard link, which is hidden from
+  // regular USERs and guests. (UI visibility only — real access is enforced
+  // server-side by the /admin gate + the dashboard actions.)
+  const isStaff = user?.role === "ADMIN" || user?.role === "MANAGER";
 
   async function handleMobileSignOut() {
     await signOut();
@@ -297,14 +300,14 @@ export default function Navbar() {
                       Wishlist
                     </Link>
 
-                    {isAdmin && (
+                    {isStaff && (
                       <Link
                         href="/admin"
                         onClick={() => setMobileOpen(false)}
                         className="flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-white transition-colors hover:bg-primary/90"
                       >
                         <LayoutDashboard className="h-4 w-4" />
-                        Admin Dashboard
+                        Dashboard
                       </Link>
                     )}
 
