@@ -42,6 +42,7 @@ export default async function MyOrdersPage({
     },
     orderBy: { createdAt: "desc" },
     include: {
+      branch: { select: { name: true } },
       items: {
         select: {
           id: true,
@@ -69,6 +70,7 @@ export default async function MyOrdersPage({
     deliveryCity: order.deliveryCity,
     addressLine: order.addressLine,
     pickupBranch: order.pickupBranch,
+    branchName: order.branch?.name ?? null,
     subtotal: order.subtotal,
     vat: Math.max(0, order.totalAmount - order.subtotal - order.deliveryFee),
     deliveryFee: order.deliveryFee,

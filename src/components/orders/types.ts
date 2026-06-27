@@ -38,6 +38,9 @@ export type OrderView = {
   deliveryCity: DeliveryLocation | null;
   addressLine: string | null;
   pickupBranch: string | null;
+  /** Name of the assigned Branch — the delivery area / fulfilling branch — or
+   *  null when unassigned (routed to central / Super Admin). */
+  branchName: string | null;
 
   // Financials (raw EGP). `vat` is the residual total − subtotal − delivery so
   // the receipt always reconciles to the canonical `totalAmount`.

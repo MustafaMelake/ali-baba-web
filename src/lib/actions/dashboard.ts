@@ -316,7 +316,7 @@ export async function getOrders(
       lineTotal: it.unitPrice * it.quantity,
     })),
     userEmail: order.user?.email ?? null,
-    assignedBranchName: order.branch?.name ?? null,
+    branchName: order.branch?.name ?? null,
   }));
 
   return { orders: view, counts };

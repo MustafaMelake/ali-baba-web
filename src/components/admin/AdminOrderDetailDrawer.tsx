@@ -229,9 +229,9 @@ export default function AdminOrderDetailDrawer({
                   icon={<Building2 className="h-4 w-4" />}
                   label="Assigned to"
                 >
-                  {order.assignedBranchName ? (
+                  {order.branchName ? (
                     <span className="font-medium text-stone-900">
-                      {order.assignedBranchName}
+                      {order.branchName}
                     </span>
                   ) : (
                     <span className="font-medium text-amber-600">

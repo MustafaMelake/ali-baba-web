@@ -18,8 +18,7 @@ import { useSession } from "@/lib/auth-client";
 import { placeOrder } from "@/lib/actions/orders";
 import { getActiveBranches } from "@/lib/actions/branches";
 import { clearDbCartAction } from "@/lib/actions/cart";
-import { DeliveryLocation, FulfillmentMethod } from "@/generated/prisma/enums";
-import { prettyLabel } from "@/lib/utils";
+import { FulfillmentMethod } from "@/generated/prisma/enums";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
@@ -41,35 +40,14 @@ type BranchOption = {
   sublabel?: string;
 };
 
-// ─── Delivery → branch routing ────────────────────────────────────
-// Configurable map deciding which branch fulfils delivery to each city. Keyed by
-// the Prisma `DeliveryLocation` enum, valued by a Branch `slug`. Cities omitted
-// here — or whose mapped branch is inactive/missing — route to no branch, so the
-// order surfaces to the Super Admin. Edit this to match your real branch slugs.
-const CITY_TO_BRANCH_SLUG_MAP: Partial<Record<DeliveryLocation, string>> = {
-  [DeliveryLocation.MENOUF]: "menouf",
-  [DeliveryLocation.SADAT]: "el-sadat",
-  [DeliveryLocation.SARS]: "sirs",
-  // TITA, BARHEEM, AL_HAMOUL: no dedicated branch yet → Super Admin.
+// Synthetic "no specific branch" option appended to the delivery-area list.
+// Selecting it sends branchId = null, so the order routes to the Super Admin.
+const OTHER_AREAS_OPTION: BranchOption = {
+  id: "__other__",
+  slug: "__other__",
+  name: "Other Areas",
+  sublabel: "مناطق أخرى",
 };
-
-/**
- * Resolve the auto-routed branch id for a delivery city from the ACTIVE branches
- * we fetched. Returns `undefined` when the city is unmapped, or when its mapped
- * branch isn't currently active (so it falls back to the Super Admin).
- */
-function resolveDeliveryBranchId(
-  city: DeliveryLocation,
-  branches: BranchOption[],
-): string | undefined {
-  const slug = CITY_TO_BRANCH_SLUG_MAP[city];
-  if (!slug) return undefined;
-  return branches.find((b) => b.slug === slug)?.id;
-}
-
-// Cities we deliver to — values mirror the Prisma `DeliveryLocation` enum exactly,
-// so the selected value drops straight into placeOrder()'s `deliveryCity` field.
-const DELIVERY_CITIES = Object.values(DeliveryLocation);
 
 // A cart line, normalized for display — `category` is always a string so the
 // summary never has to guard against `undefined`.
@@ -252,73 +230,6 @@ function BranchSelect({
                     )}
                   </span>
                   {b.id === value && (
-                    <Check className="w-3.5 h-3.5 text-primary shrink-0" />
-                  )}
-                </button>
-              </li>
-            ))}
-          </motion.ul>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-// ─── City dropdown (strictly bound to the DeliveryLocation enum) ──
-function CitySelect({
-  value,
-  onChange,
-}: {
-  value: DeliveryLocation;
-  onChange: (v: DeliveryLocation) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className="w-full flex items-center justify-between border-b border-stone-300 pb-3 text-left focus:outline-none focus:border-primary transition-colors group"
-      >
-        <span className="font-sans text-sm font-medium text-stone-900">
-          {prettyLabel(value)}
-        </span>
-        <ChevronDown
-          className="w-4 h-4 text-stone-400 group-hover:text-stone-700 transition-all duration-200"
-          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
-        />
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.ul
-            role="listbox"
-            className="absolute top-full left-0 right-0 z-20 mt-1.5 bg-white rounded-xl border border-stone-200 shadow-[0_8px_32px_rgba(0,0,0,0.1)] overflow-hidden"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.2, ease: EASE }}
-          >
-            {DELIVERY_CITIES.map((c) => (
-              <li key={c}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={c === value}
-                  onClick={() => {
-                    onChange(c);
-                    setOpen(false);
-                  }}
-                  className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-stone-50 transition-colors text-left"
-                >
-                  {/* Friendly text shown; the bound value stays the UPPERCASE enum. */}
-                  <span className="font-sans text-sm font-medium text-stone-900">
-                    {prettyLabel(c)}
-                  </span>
-                  {c === value && (
                     <Check className="w-3.5 h-3.5 text-primary shrink-0" />
                   )}
                 </button>
@@ -536,10 +447,10 @@ export default function CheckoutPage() {
   const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
   const [apartment, setApartment] = useState("");
-  const [city, setCity] = useState<DeliveryLocation>(DeliveryLocation.MENOUF);
   const [notes, setNotes] = useState("");
   const [branches, setBranches] = useState<BranchOption[]>([]);
-  const [branchId, setBranchId] = useState("");
+  const [branchId, setBranchId] = useState(""); // pickup: chosen branch id
+  const [deliveryAreaId, setDeliveryAreaId] = useState(""); // delivery: branch id, or OTHER_AREAS_OPTION.id
   const [isPending, startTransition] = useTransition();
   const [placed, setPlaced] = useState(false);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
@@ -557,6 +468,7 @@ export default function CheckoutPage() {
         }));
         setBranches(opts);
         setBranchId((cur) => cur || opts[0]?.id || "");
+        setDeliveryAreaId((cur) => cur || opts[0]?.id || OTHER_AREAS_OPTION.id);
       })
       .catch(() => {
         /* leave the selector empty; pickup still works without a stored branch */
@@ -584,17 +496,18 @@ export default function CheckoutPage() {
       .filter(Boolean)
       .join(", ");
 
-    // Resolve the fulfilling branch:
-    //   pickup   → the branch the customer chose.
-    //   delivery → auto-routed from the city via CITY_TO_BRANCH_SLUG_MAP.
-    // Either can be undefined (no pickup pick / unmapped city / inactive branch)
-    // → the order stays unassigned and surfaces to the Super Admin.
+    // Resolve the fulfilling branch DIRECTLY from the user's selection:
+    //   pickup   → the branch they chose.
+    //   delivery → the area-branch they chose, or null for "Other Areas".
+    // A null result leaves the order unassigned → it surfaces to the Super Admin.
     const pickupSelection =
       mode === "pickup" ? branches.find((b) => b.id === branchId) : undefined;
-    const resolvedBranchId =
+    const resolvedBranchId: string | null =
       mode === "pickup"
-        ? pickupSelection?.id
-        : resolveDeliveryBranchId(city, branches);
+        ? pickupSelection?.id ?? null
+        : deliveryAreaId === OTHER_AREAS_OPTION.id
+          ? null
+          : deliveryAreaId || null;
 
     startTransition(async () => {
       // Send only variantId + quantity — every price is re-resolved server-side.
@@ -607,9 +520,8 @@ export default function CheckoutPage() {
           mode === "delivery"
             ? FulfillmentMethod.DELIVERY
             : FulfillmentMethod.PICKUP,
-        deliveryCity: mode === "delivery" ? city : undefined,
         addressLine: mode === "delivery" ? addressLine : undefined,
-        // Stamp the resolved branch id (pickup choice OR delivery auto-route).
+        // The branch IS the delivery area now (no DeliveryLocation enum).
         // pickupBranch keeps the readable label for pickup orders only.
         branchId: resolvedBranchId,
         pickupBranch: pickupSelection?.name,
@@ -804,8 +716,12 @@ export default function CheckoutPage() {
                         />
                       </div>
                       <div>
-                        <FieldLabel htmlFor="city">Delivery City</FieldLabel>
-                        <CitySelect value={city} onChange={setCity} />
+                        <FieldLabel htmlFor="area">Delivery Area</FieldLabel>
+                        <BranchSelect
+                          branches={[...branches, OTHER_AREAS_OPTION]}
+                          value={deliveryAreaId}
+                          onChange={setDeliveryAreaId}
+                        />
                       </div>
                     </div>
 

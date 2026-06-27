@@ -127,6 +127,11 @@ export default function OrderDetailModal({
 
                 {isDelivery ? (
                   <>
+                    {order.branchName && (
+                      <InfoRow icon={<MapPin className="h-4 w-4" />} label="Area">
+                        {order.branchName}
+                      </InfoRow>
+                    )}
                     {order.deliveryCity && (
                       <InfoRow icon={<MapPin className="h-4 w-4" />} label="City">
                         {prettyLabel(order.deliveryCity)}

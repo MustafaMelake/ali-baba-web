@@ -4,11 +4,7 @@ import { prisma } from "@/lib/prisma";
 // السيشن من الـ wrapper المخصص (مش من better-auth مباشرة).
 import { getServerSession, requireDashboardAccess } from "@/lib/session";
 import { revalidatePath } from "next/cache";
-import {
-  DeliveryLocation,
-  FulfillmentMethod,
-  OrderStatus,
-} from "@/generated/prisma/enums";
+import { FulfillmentMethod, OrderStatus } from "@/generated/prisma/enums";
 
 // التسعير لازم يطابق ملخص الـ checkout بالظبط: توصيل 35 + ضريبة 14%.
 const DELIVERY_FEE = 35;
@@ -17,15 +13,14 @@ const VAT_RATE = 0.14;
 export interface CheckoutPayload {
   items: { variantId: string; quantity: number }[];
   fulfillment: FulfillmentMethod;
-  deliveryCity?: DeliveryLocation;
   addressLine?: string;
   pickupBranch?: string;
   /**
-   * The fulfilling Branch's id, stamped onto the order for Branch-Manager RBAC.
-   * The checkout client must send this (pickup → the chosen branch; delivery →
-   * the routing branch). `pickupBranch` stays as the free-text display label.
+   * The fulfilling Branch's id, resolved directly from the checkout selection
+   * (pickup branch, or delivery area-branch). `null` / omitted → unassigned →
+   * the Super Admin. `pickupBranch` stays the free-text label for pickup orders.
    */
-  branchId?: string;
+  branchId?: string | null;
   customerName: string;
   customerPhone: string;
   orderNotes?: string;
@@ -121,7 +116,6 @@ export async function placeOrder(
           totalAmount,
           fulfillment: payload.fulfillment,
           status: OrderStatus.PENDING,
-          deliveryCity: payload.deliveryCity,
           addressLine: payload.addressLine,
           pickupBranch: payload.pickupBranch,
           // Resolved + validated above: a real active branch, or null.
