@@ -13,6 +13,7 @@ import {
   MapPin,
   Truck,
   Store,
+  Building2,
   Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -223,6 +224,22 @@ export default function AdminOrderDetailDrawer({
 
               {/* Fulfillment logistics */}
               <Section title="Fulfillment">
+                {/* Branch routing — which manager owns this order. */}
+                <InfoRow
+                  icon={<Building2 className="h-4 w-4" />}
+                  label="Assigned to"
+                >
+                  {order.assignedBranchName ? (
+                    <span className="font-medium text-stone-900">
+                      {order.assignedBranchName}
+                    </span>
+                  ) : (
+                    <span className="font-medium text-amber-600">
+                      Central Administration · unassigned
+                    </span>
+                  )}
+                </InfoRow>
+
                 <InfoRow
                   icon={
                     order.fulfillment === FulfillmentMethod.DELIVERY ? (

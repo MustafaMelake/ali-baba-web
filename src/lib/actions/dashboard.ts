@@ -254,6 +254,7 @@ export async function getOrders(
       take: 50,
       include: {
         user: { select: { email: true } },
+        branch: { select: { name: true } },
         items: {
           select: {
             id: true,
@@ -315,6 +316,7 @@ export async function getOrders(
       lineTotal: it.unitPrice * it.quantity,
     })),
     userEmail: order.user?.email ?? null,
+    assignedBranchName: order.branch?.name ?? null,
   }));
 
   return { orders: view, counts };

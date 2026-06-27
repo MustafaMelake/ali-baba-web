@@ -50,6 +50,18 @@ export async function placeOrder(
   }
 
   try {
+    // Defensive branch resolution: only stamp a REAL, ACTIVE branch (the pickup
+    // choice or the delivery auto-route). A stale / invalid / inactive id falls
+    // back to null so the order never fails — it just surfaces to the Super Admin.
+    let branchId: string | null = null;
+    if (payload.branchId) {
+      const branch = await prisma.branch.findFirst({
+        where: { id: payload.branchId, isActive: true },
+        select: { id: true },
+      });
+      branchId = branch?.id ?? null;
+    }
+
     // Transaction يضمن تماسك الداتا: إمّا الأوردر بكل سطوره يتعمل، أو لا شيء.
     const newOrder = await prisma.$transaction(async (tx) => {
       let subtotal = 0;
@@ -112,9 +124,8 @@ export async function placeOrder(
           deliveryCity: payload.deliveryCity,
           addressLine: payload.addressLine,
           pickupBranch: payload.pickupBranch,
-          // Stamp the fulfilling branch so dashboards can scope by it. Nullable:
-          // a missing branchId leaves the order unassigned (ADMIN-only view).
-          branchId: payload.branchId ?? null,
+          // Resolved + validated above: a real active branch, or null.
+          branchId,
           customerName: payload.customerName.trim(),
           customerPhone: payload.customerPhone.trim(),
           orderNotes: payload.orderNotes,

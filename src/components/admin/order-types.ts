@@ -6,4 +6,7 @@ import type { OrderView } from "@/components/orders/types";
  */
 export type AdminOrderView = OrderView & {
   userEmail: string | null;
+  /** Name of the Branch this order is routed to, or null when unassigned
+   *  (central / Super-Admin handled). */
+  assignedBranchName: string | null;
 };

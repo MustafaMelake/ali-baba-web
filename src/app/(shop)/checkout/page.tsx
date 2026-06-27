@@ -41,6 +41,32 @@ type BranchOption = {
   sublabel?: string;
 };
 
+// ─── Delivery → branch routing ────────────────────────────────────
+// Configurable map deciding which branch fulfils delivery to each city. Keyed by
+// the Prisma `DeliveryLocation` enum, valued by a Branch `slug`. Cities omitted
+// here — or whose mapped branch is inactive/missing — route to no branch, so the
+// order surfaces to the Super Admin. Edit this to match your real branch slugs.
+const CITY_TO_BRANCH_SLUG_MAP: Partial<Record<DeliveryLocation, string>> = {
+  [DeliveryLocation.MENOUF]: "menouf",
+  [DeliveryLocation.SADAT]: "el-sadat",
+  [DeliveryLocation.SARS]: "sirs",
+  // TITA, BARHEEM, AL_HAMOUL: no dedicated branch yet → Super Admin.
+};
+
+/**
+ * Resolve the auto-routed branch id for a delivery city from the ACTIVE branches
+ * we fetched. Returns `undefined` when the city is unmapped, or when its mapped
+ * branch isn't currently active (so it falls back to the Super Admin).
+ */
+function resolveDeliveryBranchId(
+  city: DeliveryLocation,
+  branches: BranchOption[],
+): string | undefined {
+  const slug = CITY_TO_BRANCH_SLUG_MAP[city];
+  if (!slug) return undefined;
+  return branches.find((b) => b.slug === slug)?.id;
+}
+
 // Cities we deliver to — values mirror the Prisma `DeliveryLocation` enum exactly,
 // so the selected value drops straight into placeOrder()'s `deliveryCity` field.
 const DELIVERY_CITIES = Object.values(DeliveryLocation);
@@ -558,10 +584,17 @@ export default function CheckoutPage() {
       .filter(Boolean)
       .join(", ");
 
-    // Resolve the chosen pickup branch once — used for both the RBAC branchId
-    // and the human-readable label persisted on the order.
-    const selectedBranch =
+    // Resolve the fulfilling branch:
+    //   pickup   → the branch the customer chose.
+    //   delivery → auto-routed from the city via CITY_TO_BRANCH_SLUG_MAP.
+    // Either can be undefined (no pickup pick / unmapped city / inactive branch)
+    // → the order stays unassigned and surfaces to the Super Admin.
+    const pickupSelection =
       mode === "pickup" ? branches.find((b) => b.id === branchId) : undefined;
+    const resolvedBranchId =
+      mode === "pickup"
+        ? pickupSelection?.id
+        : resolveDeliveryBranchId(city, branches);
 
     startTransition(async () => {
       // Send only variantId + quantity — every price is re-resolved server-side.
@@ -576,9 +609,10 @@ export default function CheckoutPage() {
             : FulfillmentMethod.PICKUP,
         deliveryCity: mode === "delivery" ? city : undefined,
         addressLine: mode === "delivery" ? addressLine : undefined,
-        // Stamp the real branch id (RBAC) + keep the readable name as the label.
-        branchId: selectedBranch?.id,
-        pickupBranch: selectedBranch?.name,
+        // Stamp the resolved branch id (pickup choice OR delivery auto-route).
+        // pickupBranch keeps the readable label for pickup orders only.
+        branchId: resolvedBranchId,
+        pickupBranch: pickupSelection?.name,
         customerName: `${firstName} ${lastName}`.trim(),
         customerPhone: phone,
         orderNotes: notes.trim() || undefined,
