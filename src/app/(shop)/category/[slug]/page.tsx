@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import CategoryPageTemplate from "@/components/CategoryPageTemplate";
+import { livePromotionWhere, PROMOTION_SELECT_FIELDS } from "@/lib/discounts";
 
 // CategoryPageTemplate seeds per-user wishlist state, so this page must render
 // per-request (never from a shared ISR cache that would leak one user's hearts).
@@ -56,13 +57,29 @@ export default async function CategoryPage({
   // Unknown slug → render the nearest not-found UI (HTTP 404).
   if (!category) notFound();
 
+  // One instant drives every promotion filter this request.
+  const now = new Date();
+
   // Filter by the resolved FK (indexed) rather than re-deriving from identifier;
-  // works identically for core (identifier set) and standard categories.
+  // works identically for core (identifier set) and standard categories. Live
+  // promotions are joined at category / product / variant level for the Discount
+  // Engine (see CategoryPageTemplate).
   const products = await prisma.product.findMany({
     where: { isAvailable: true, categoryId: category.id },
     include: {
-      category: true,
-      variants: { orderBy: { price: "asc" } }, // [0] = starting (lowest) price
+      category: {
+        select: {
+          name: true,
+          promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        },
+      },
+      promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+      variants: {
+        orderBy: { price: "asc" }, // [0] = starting (lowest) price
+        include: {
+          promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        },
+      },
     },
     orderBy: { createdAt: "desc" },
   });

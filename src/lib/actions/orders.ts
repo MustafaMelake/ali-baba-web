@@ -5,6 +5,12 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession, requireDashboardAccess } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { FulfillmentMethod, OrderStatus } from "@/generated/prisma/enums";
+import {
+  gatherPromotions,
+  livePromotionWhere,
+  PROMOTION_SELECT_FIELDS,
+  resolvePrice,
+} from "@/lib/discounts";
 
 // التسعير لازم يطابق ملخص الـ checkout بالظبط: توصيل 35 + ضريبة 14%.
 const DELIVERY_FEE = 35;
@@ -57,6 +63,11 @@ export async function placeOrder(
       branchId = branch?.id ?? null;
     }
 
+    // One instant for the whole order: every promotion (variant/product/category
+    // level) is filtered AND evaluated against the same `now`, so a promo can't
+    // expire mid-loop and price two lines inconsistently.
+    const now = new Date();
+
     // Transaction يضمن تماسك الداتا: إمّا الأوردر بكل سطوره يتعمل، أو لا شيء.
     const newOrder = await prisma.$transaction(async (tx) => {
       let subtotal = 0;
@@ -69,13 +80,31 @@ export async function placeOrder(
       }[] = [];
 
       // الأسعار تتقري من قاعدة البيانات مباشرة (الـ Source of Truth) — لا نثق
-      // بأي سعر جاي من العميل، نمنع التلاعب بالأسعار.
+      // بأي سعر جاي من العميل، نمنع التلاعب بالأسعار. الخصم كمان بيتحسب هنا على
+      // السيرفر فقط (Discount Engine) فالعميل يتحاسب على السعر النهائي بالظبط.
       for (const item of payload.items) {
         const quantity = Math.max(1, Math.floor(item.quantity));
 
         const dbVariant = await tx.productVariant.findUnique({
           where: { id: item.variantId },
-          include: { product: { select: { name: true, isAvailable: true } } },
+          include: {
+            // Promotions that target the variant itself…
+            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+            product: {
+              select: {
+                name: true,
+                isAvailable: true,
+                // …its parent product…
+                promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+                // …or that product's category.
+                category: {
+                  select: {
+                    promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+                  },
+                },
+              },
+            },
+          },
         });
 
         if (
@@ -88,14 +117,23 @@ export async function placeOrder(
           );
         }
 
-        subtotal += dbVariant.price * quantity;
+        // Apply the best live discount server-side. `resolvePrice` re-checks
+        // liveness defensively even though the query already filtered to live rows.
+        const promotions = gatherPromotions(
+          dbVariant.promotions,
+          dbVariant.product.promotions,
+          dbVariant.product.category?.promotions,
+        );
+        const { finalPrice } = resolvePrice(dbVariant.price, promotions, now);
 
-        // Snapshot لبيانات السطر وقت الشراء (الاسم/الـ variant/السعر).
+        subtotal += finalPrice * quantity;
+
+        // Snapshot لبيانات السطر وقت الشراء (الاسم/الـ variant/السعر النهائي بعد الخصم).
         orderItemsData.push({
           variantId: dbVariant.id,
           productName: dbVariant.product.name,
           variantName: dbVariant.name,
-          unitPrice: dbVariant.price,
+          unitPrice: finalPrice,
           quantity,
         });
       }

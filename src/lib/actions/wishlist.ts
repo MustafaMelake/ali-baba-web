@@ -4,6 +4,12 @@ import { prisma } from "@/lib/prisma";
 // السيشن بتتجاب من الـ wrapper المخصص عندنا (مش من better-auth مباشرة).
 import { getServerSession } from "@/lib/session";
 import { revalidatePath } from "next/cache";
+import {
+  gatherPromotions,
+  livePromotionWhere,
+  PROMOTION_SELECT_FIELDS,
+  resolvePrice,
+} from "@/lib/discounts";
 
 export type ToggleWishlistResult =
   | { success: true; added: boolean }
@@ -15,7 +21,10 @@ export type WishlistProduct = {
   slug: string;
   image: string;
   category: string;
+  /** Final (possibly discounted) starting price. */
   price: number;
+  /** Undiscounted "was" price — set only when a live promotion applies. */
+  compareAtPrice: number | null;
 };
 
 export type GetWishlistResult =
@@ -84,6 +93,9 @@ export async function getWishlistItems(): Promise<GetWishlistResult> {
   const session = await getServerSession();
   if (!session) return { success: false, error: "Unauthorized" };
 
+  // One instant drives every promotion filter + evaluation this request.
+  const now = new Date();
+
   try {
     const items = await prisma.wishlistItem.findMany({
       where: { userId: session.user.id },
@@ -91,25 +103,48 @@ export async function getWishlistItems(): Promise<GetWishlistResult> {
       include: {
         product: {
           include: {
-            category: { select: { name: true } },
+            category: {
+              select: {
+                name: true,
+                promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+              },
+            },
+            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
             variants: {
               where: { isAvailable: true },
               orderBy: { price: "asc" }, // [0] = starting price
-              select: { price: true },
+              select: {
+                id: true,
+                price: true,
+                promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+              },
             },
           },
         },
       },
     });
 
-    const data: WishlistProduct[] = items.map(({ product }) => ({
-      id: product.id,
-      name: product.name,
-      slug: product.slug,
-      image: product.images[0] ?? "/placeholder.jpg",
-      category: product.category.name,
-      price: product.variants[0]?.price ?? 0,
-    }));
+    const data: WishlistProduct[] = items.map(({ product }) => {
+      const starting = product.variants[0];
+      const priced = resolvePrice(
+        starting?.price ?? 0,
+        gatherPromotions(
+          starting?.promotions,
+          product.promotions,
+          product.category.promotions,
+        ),
+        now,
+      );
+      return {
+        id: product.id,
+        name: product.name,
+        slug: product.slug,
+        image: product.images[0] ?? "/placeholder.jpg",
+        category: product.category.name,
+        price: priced.finalPrice,
+        compareAtPrice: priced.hasDiscount ? priced.basePrice : null,
+      };
+    });
 
     return { success: true, data };
   } catch (err) {

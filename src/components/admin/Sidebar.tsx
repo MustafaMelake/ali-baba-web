@@ -39,7 +39,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/admin/orders", label: "Orders", icon: ShoppingBag },
   { href: "/admin/products", label: "Products", icon: Package },
   { href: "/admin/categories", label: "Categories", icon: Tags },
-  { href: "/admin/promotions", label: "Promotions / العروض", icon: BadgePercent },
+  { href: "/admin/promotions", label: "Promotions", icon: BadgePercent },
   { href: "/admin/menu", label: "Café Menu", icon: Coffee },
   { href: "/admin/reviews", label: "Reviews", icon: Star },
   { href: "/admin/users", label: "Users", icon: Users },

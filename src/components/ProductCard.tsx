@@ -16,7 +16,14 @@ export interface ShopProduct {
   name: string;
   slug: string;
   category: string;
+  /** Final (possibly discounted) starting price — what quick-add charges. */
   price: number;
+  /**
+   * The undiscounted "was" price, shown struck-through. Set only when an active
+   * promotion lowered `price`; null/undefined otherwise (no sale). See
+   * src/lib/discounts.ts.
+   */
+  compareAtPrice?: number | null;
   image: string;
   tagline?: string;
 }
@@ -36,6 +43,13 @@ export default function ProductCard({
 
   // Detail route lives at (shop)/product/[slug] → /product/<slug>
   const href = `/product/${product.slug}`;
+
+  // A promotion is on when the "was" price is strictly above the selling price.
+  const onSale =
+    product.compareAtPrice != null && product.compareAtPrice > product.price;
+  const percentOff = onSale
+    ? Math.round((1 - product.price / product.compareAtPrice!) * 100)
+    : 0;
 
   function quickAdd() {
     addItem(
@@ -70,6 +84,13 @@ export default function ProductCard({
           {/* Subtle veil that deepens on hover for text legibility */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-60 group-hover:opacity-90 transition-opacity duration-500" />
         </Link>
+
+        {/* Sale badge — only while a promotion is live */}
+        {onSale && (
+          <div className="absolute top-3 left-3 z-10 rounded-full bg-primary px-2.5 py-1 font-sans text-[11px] font-bold tracking-wide text-white shadow-sm">
+            -{percentOff}%
+          </div>
+        )}
 
         {/* Wishlist heart — sibling over the image, always visible */}
         <div className="absolute top-3 right-3 z-10">
@@ -132,11 +153,21 @@ export default function ProductCard({
 
         {/* Price + Discover */}
         <div className="mt-4 flex items-center justify-between border-t border-stone-100 pt-3.5">
-          <span className="font-serif text-lg font-medium text-stone-900">
-            {product.price.toLocaleString("en-EG")}
-            <span className="ml-1 font-sans text-xs font-normal text-stone-400">
-              ج.م
+          <span className="flex items-baseline gap-2">
+            <span className="font-serif text-lg font-medium text-stone-900">
+              {product.price.toLocaleString("en-EG")}
+              <span className="ml-1 font-sans text-xs font-normal text-stone-400">
+                ج.م
+              </span>
             </span>
+            {onSale && (
+              <span
+                className="font-sans text-xs tabular-nums text-stone-400 line-through"
+                aria-label={`Original price ${product.compareAtPrice!.toLocaleString("en-EG")} EGP`}
+              >
+                {product.compareAtPrice!.toLocaleString("en-EG")}
+              </span>
+            )}
           </span>
 
           <Link

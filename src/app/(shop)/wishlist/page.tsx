@@ -50,6 +50,12 @@ export default async function WishlistPage() {
           <div className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-3 lg:grid-cols-4">
             {items.map((product) => {
               const href = `/product/${product.slug}`;
+              const onSale =
+                product.compareAtPrice != null &&
+                product.compareAtPrice > product.price;
+              const percentOff = onSale
+                ? Math.round((1 - product.price / product.compareAtPrice!) * 100)
+                : 0;
               return (
                 <article key={product.id} className="group flex flex-col">
                   {/* Image */}
@@ -64,6 +70,13 @@ export default async function WishlistPage() {
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/15 via-transparent to-transparent opacity-60 transition-opacity duration-500 group-hover:opacity-90" />
                     </Link>
+
+                    {/* Sale badge — only while a promotion is live */}
+                    {onSale && (
+                      <div className="absolute left-3.5 top-3.5 z-10 rounded-full bg-primary px-2.5 py-1 font-sans text-[11px] font-bold tracking-wide text-white shadow-sm">
+                        -{percentOff}%
+                      </div>
+                    )}
 
                     {/* Heart — pre-favorited; un-favoriting removes it on revalidate */}
                     <div className="absolute right-3.5 top-3.5 z-10">
@@ -83,11 +96,18 @@ export default async function WishlistPage() {
                     </Link>
 
                     <div className="mt-4 flex items-center justify-between border-t border-stone-100 pt-3.5">
-                      <span className="font-serif text-lg font-medium text-stone-900">
-                        {product.price.toLocaleString("en-EG")}
-                        <span className="ml-1 font-sans text-xs font-normal text-stone-400">
-                          ج.م
+                      <span className="flex items-baseline gap-2">
+                        <span className="font-serif text-lg font-medium text-stone-900">
+                          {product.price.toLocaleString("en-EG")}
+                          <span className="ml-1 font-sans text-xs font-normal text-stone-400">
+                            ج.م
+                          </span>
                         </span>
+                        {onSale && (
+                          <span className="font-sans text-xs tabular-nums text-stone-400 line-through">
+                            {product.compareAtPrice!.toLocaleString("en-EG")}
+                          </span>
+                        )}
                       </span>
                       <Link
                         href={href}

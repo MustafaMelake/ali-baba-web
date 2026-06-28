@@ -11,6 +11,12 @@ import { getServerSession } from "@/lib/session";
 import { getWishlistedProductIds } from "@/lib/actions/wishlist";
 import { hasUserReviewedProduct } from "@/lib/actions/reviews";
 import { formatDate } from "@/lib/utils";
+import {
+  gatherPromotions,
+  livePromotionWhere,
+  PROMOTION_SELECT_FIELDS,
+  resolvePrice,
+} from "@/lib/discounts";
 
 // Rendered dynamically: the review panel is personalised to the signed-in user,
 // which requires reading the session (cookies/headers) per request.
@@ -30,12 +36,30 @@ export default async function ProductPage({
 }) {
   const { slug } = await params;
 
+  // One instant drives every promotion filter + evaluation this request.
+  const now = new Date();
+
   const [product, session, wishlistedIds] = await Promise.all([
     prisma.product.findUnique({
       where: { slug },
       include: {
-        category: true,
-        variants: { orderBy: { price: "asc" } },
+        // Category needs name + slug for the breadcrumb, plus its live promotions.
+        category: {
+          select: {
+            name: true,
+            slug: true,
+            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+          },
+        },
+        // Product-level live promotions.
+        promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        variants: {
+          orderBy: { price: "asc" },
+          include: {
+            // Variant-level live promotions.
+            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+          },
+        },
         // Only moderated (approved) reviews are ever surfaced publicly.
         reviews: {
           where: { isApproved: true },
@@ -62,14 +86,24 @@ export default async function ProductPage({
 
   // The full variant set drives the client selector (price / availability /
   // Add-to-Cart). Ordered price-asc by the query, so the first available one is
-  // the panel's default selection.
-  const variants = product.variants.map((v) => ({
-    id: v.id,
-    name: v.name,
-    price: v.price,
-    isAvailable: v.isAvailable,
-    compareAtPrice: v.compareAtPrice,
-  }));
+  // the panel's default selection. Each variant is priced through the Discount
+  // Engine: when a live promotion applies, `price` becomes the discounted amount
+  // and the original is surfaced as `compareAtPrice` (struck-through in the panel).
+  // With no promotion, the manual `compareAtPrice` field is preserved as-is.
+  const variants = product.variants.map((v) => {
+    const priced = resolvePrice(
+      v.price,
+      gatherPromotions(v.promotions, product.promotions, product.category.promotions),
+      now,
+    );
+    return {
+      id: v.id,
+      name: v.name,
+      price: priced.finalPrice,
+      isAvailable: v.isAvailable,
+      compareAtPrice: priced.hasDiscount ? priced.basePrice : v.compareAtPrice,
+    };
+  });
 
   // Review aggregates computed server-side from the approved set.
   const reviews = product.reviews;

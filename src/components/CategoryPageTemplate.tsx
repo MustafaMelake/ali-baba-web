@@ -4,6 +4,11 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/layout/Footer";
 import ProductCard, { type ShopProduct } from "@/components/ProductCard";
 import { getWishlistedProductIds } from "@/lib/actions/wishlist";
+import {
+  gatherPromotions,
+  resolvePrice,
+  type PromotionLike,
+} from "@/lib/discounts";
 
 /**
  * The shape this template needs from a fetched Product. It is intentionally a
@@ -13,6 +18,9 @@ import { getWishlistedProductIds } from "@/lib/actions/wishlist";
  *
  * `variants` is expected to be ordered ascending by price so `variants[0]` is
  * the starting (lowest) price.
+ *
+ * The optional `promotions` lists (variant / product / category level) feed the
+ * Discount Engine — include only LIVE rows from the query (see livePromotionWhere).
  */
 export interface CategoryProduct {
   id: string;
@@ -20,8 +28,9 @@ export interface CategoryProduct {
   slug: string;
   description: string | null;
   images: string[];
-  category: { name: string };
-  variants: { id: string; price: number }[];
+  category: { name: string; promotions?: PromotionLike[] };
+  variants: { id: string; price: number; promotions?: PromotionLike[] }[];
+  promotions?: PromotionLike[];
 }
 
 export interface CategoryPageTemplateProps {
@@ -122,13 +131,24 @@ export default async function CategoryPageTemplate({
           ) : (
             <div className="grid grid-cols-1 gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {products.map((product) => {
+                // Discount the starting (lowest-base-price) variant for the card.
+                const starting = product.variants[0];
+                const priced = resolvePrice(
+                  starting?.price ?? 0,
+                  gatherPromotions(
+                    starting?.promotions,
+                    product.promotions,
+                    product.category.promotions,
+                  ),
+                );
                 const card: ShopProduct = {
                   id: product.id,
-                  variantId: product.variants[0]?.id ?? "",
+                  variantId: starting?.id ?? "",
                   name: product.name,
                   slug: product.slug,
                   category: product.category.name,
-                  price: product.variants[0]?.price ?? 0,
+                  price: priced.finalPrice,
+                  compareAtPrice: priced.hasDiscount ? priced.basePrice : null,
                   image: product.images[0] ?? "/placeholder.jpg",
                   tagline: product.description ?? undefined,
                 };

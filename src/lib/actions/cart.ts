@@ -3,6 +3,12 @@
 import { prisma } from "@/lib/prisma";
 // Session comes from our cached server-side wrapper (not better-auth directly).
 import { getServerSession } from "@/lib/session";
+import {
+  gatherPromotions,
+  livePromotionWhere,
+  PROMOTION_SELECT_FIELDS,
+  resolvePrice,
+} from "@/lib/discounts";
 
 /**
  * Cart synchronization Server Actions.
@@ -206,6 +212,9 @@ export async function getDbCartAction(): Promise<CartActionResult<DbCartItem[]>>
   const session = await getServerSession();
   if (!session) return { success: false, error: "Please sign in to view your cart." };
 
+  // Single instant: every promotion level is filtered + evaluated against it.
+  const now = new Date();
+
   try {
     const rows = await prisma.cartItem.findMany({
       where: { userId: session.user.id },
@@ -213,8 +222,20 @@ export async function getDbCartAction(): Promise<CartActionResult<DbCartItem[]>>
       include: {
         variant: {
           include: {
+            // Variant-level promotions…
+            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
             product: {
-              include: { category: { select: { name: true } } },
+              include: {
+                // …product-level…
+                promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+                // …and category-level (plus the name for display).
+                category: {
+                  select: {
+                    name: true,
+                    promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+                  },
+                },
+              },
             },
           },
         },
@@ -226,11 +247,19 @@ export async function getDbCartAction(): Promise<CartActionResult<DbCartItem[]>>
       .map((row) => {
         const { variant } = row;
         const { product } = variant;
+        // Display the discounted unit price so the cart/checkout match what
+        // `placeOrder` will bill. The cart table itself still stores no price.
+        const promotions = gatherPromotions(
+          variant.promotions,
+          product.promotions,
+          product.category?.promotions,
+        );
+        const { finalPrice } = resolvePrice(variant.price, promotions, now);
         return {
           id: product.id, // parent product id — for UI/links
           variantId: row.variantId, // canonical line identity
           name: product.name, // live name (parity with client adds)
-          price: variant.price, // live price from the catalogue
+          price: finalPrice, // live, discounted price from the catalogue
           image: product.images[0] ?? PLACEHOLDER_IMAGE,
           quantity: row.quantity,
           category: product.category?.name,
