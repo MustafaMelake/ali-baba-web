@@ -66,6 +66,12 @@ enum DeliveryLocation {
   AL_HAMOUL
 }
 
+/// How a Promotion's `value` is applied to a price.
+enum DiscountType {
+  PERCENTAGE // `value` is a percent off (e.g. 15 → 15% off)
+  FIXED_AMOUNT // `value` is an absolute amount off (store currency)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Better Auth — standard models
 // Field names & types must match what Better Auth's prismaAdapter expects.
@@ -201,9 +207,13 @@ model Category {
   /// slider. NULL for ordinary categories. @unique → one row per enum value.
   identifier CategoryIdentifier? @unique
 
-  products  Product[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  products Product[]
+
+  /// Promotions targeting this whole category (Discount Engine).
+  promotions Promotion[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model MenuPage {
@@ -244,6 +254,9 @@ model Product {
   variants ProductVariant[]
   reviews  Review[]
 
+  /// Promotions targeting this specific product (Discount Engine).
+  promotions Promotion[]
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   wishlistItems WishlistItem[]
@@ -268,6 +281,9 @@ model ProductVariant {
 
   cartItems  CartItem[]
   orderItems OrderItem[]
+
+  /// Promotions targeting this specific variant (Discount Engine).
+  promotions Promotion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -442,4 +458,37 @@ model MenuItem {
 
   @@index([categoryId])
   @@index([order])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Discount Engine — Promotions
+//
+// A Promotion applies a discount (PERCENTAGE or FIXED_AMOUNT) over the time
+// window [startDate, endDate]. It can target any mix of whole Categories,
+// individual Products, and specific ProductVariants through implicit
+// many-to-many join tables (Prisma manages _CategoryToPromotion,
+// _ProductToPromotion and _ProductVariantToPromotion automatically).
+//
+// Discount math, overlap/precedence rules, and "is this promotion live right
+// now" checks are enforced in app logic — the schema only stores the targets.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Promotion {
+  id        String       @id @default(cuid())
+  name      String
+  type      DiscountType
+  value     Float
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean      @default(true)
+
+  // Targets — a promotion may link to any combination of the three.
+  categories Category[]
+  products   Product[]
+  variants   ProductVariant[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
 }
