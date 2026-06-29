@@ -3,7 +3,7 @@
 **Stack:** Next.js 16.2 (App Router) · React 19.2 · Tailwind CSS v4 · Prisma 7 · PostgreSQL (Neon) · Better Auth 1.6 · Zustand 5
 
 **Audience:** front-end engineers building or extending the customer-facing storefront (`src/app/(shop)/**`).
-**Scope:** this is the client-side companion to [`ARCHITECTURE.md`](./ARCHITECTURE.md) (admin internals + the shared edge-proxy/auth infrastructure) and [`HOW_IT_WORKS.md`](./HOW_IT_WORKS.md) (full-platform walkthrough). It owns the ground those two only summarize: **homepage catalog structure, dynamic category routing, the product detail page's variant islands, the café menu renderer, the authenticated login/redirect flow, navbar RBAC, and cart integrity.** Every contract below is read directly from `prisma/schema.prisma` and the current `(shop)` route group — nothing here is aspirational unless explicitly tagged `GAP`.
+**Scope:** this is the client-side companion to [`ARCHITECTURE.md`](./ARCHITECTURE.md) (admin internals + the shared edge-proxy/auth infrastructure) and [`HOW_IT_WORKS.md`](./HOW_IT_WORKS.md) (full-platform walkthrough). It owns the ground those two only summarize: **homepage catalog structure, dynamic category routing, the product detail page's variant islands, storefront discount rendering, the café menu renderer, the authenticated login/redirect flow, navbar RBAC, the DB-synced cart, and the branch-driven checkout.** Every contract below is read directly from `prisma/schema.prisma` and the current `(shop)` route group — nothing here is aspirational unless explicitly tagged `GAP`.
 
 **Status tags used throughout:**
 
@@ -14,6 +14,8 @@
 | `HARDENING` | Works, but a concrete improvement is recommended before scaling. |
 
 > **Refactor note.** The four items this document previously tracked as blocking work — the PDP variant selector, the `variantId`-keyed cart, centralized route protection, and collapsing the five static category routes into one — have all shipped. They are documented below as `BUILT`, and the old `GAP`/`BUG` write-ups are preserved only as historical context where it explains *why* the current shape is what it is.
+>
+> **Latest wave (this revision).** Three large changes have since landed and are the focus of this update: (1) the **Discount Engine** is wired into every storefront price node — product cards, the PDP variant islands, the cart preview, and `placeOrder` all price through one shared resolver ([`src/lib/discounts.ts`](../src/lib/discounts.ts)); (2) the cart is **no longer local-only** — a logged-in customer gets a DB-backed, cross-device cart (`CartItem`) bridged by [`CartSyncProvider`](../src/components/providers/CartSyncProvider.tsx); and (3) the checkout's delivery/pickup selector is **driven by the live `Branch` table**, replacing the legacy static `DeliveryLocation` enum. The previously-documented "promotions are schema-ready but not shipped" and "the cart never writes to `CartItem`" statements were the most out-of-date claims in this file and have been rewritten below.
 
 ---
 
@@ -68,17 +70,23 @@ Each slider card links to `/category/${category.slug}` — i.e. straight into th
 A standard category (`identifier === null`, `type: "SHOP"`) doesn't get its own slider slot, but it **does** get a landing page through the same dynamic route as the core categories (§1.3). It also surfaces in the **`/shop` catalog directory** ([`page.tsx`](../src/app/(shop)/shop/page.tsx) + [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx)):
 
 ```ts
+const now = new Date();   // one instant drives every promotion filter this request
+
 const [categories, products] = await Promise.all([
   prisma.category.findMany({ where: { type: "SHOP" }, orderBy: { name: "asc" }, select: { name: true } }),
   prisma.product.findMany({
     where: { isAvailable: true, category: { type: "SHOP" } },
-    include: { category: true, variants: { orderBy: { price: "asc" } } },
+    include: {
+      category: { select: { name: true, promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
+      promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+      variants: { orderBy: { price: "asc" }, include: { promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
+    },
     orderBy: { createdAt: "desc" },
   }),
 ]);
 ```
 
-This fetches **every** SHOP category name and **every** available SHOP product, in two queries, once, server-side. Filtering by category afterward (`"All Collection"` pill + one pill per category name) happens **entirely client-side**:
+This fetches **every** SHOP category name and **every** available SHOP product, in two queries, once, server-side. Each product's **starting (lowest-base-price) variant is priced through the Discount Engine** before it reaches the client — see §2.5 — so the card already carries its discounted `price` and a struck-through `compareAtPrice`. Filtering by category afterward (`"All Collection"` pill + one pill per category name) happens **entirely client-side**:
 
 ```ts
 const filtered = active === ALL ? products : products.filter((p) => p.category === active);
@@ -111,9 +119,14 @@ export default async function CategoryPage({ params }) {
   const category = await getCategoryBySlug(slug);
   if (!category) notFound();                       // unknown slug → HTTP 404
 
+  const now = new Date();
   const products = await prisma.product.findMany({
     where: { isAvailable: true, categoryId: category.id },   // resolved, indexed FK
-    include: { category: true, variants: { orderBy: { price: "asc" } } },
+    include: {
+      category: { select: { name: true, promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
+      promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+      variants: { orderBy: { price: "asc" }, include: { promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -125,9 +138,9 @@ Three properties to preserve:
 
 1. **React `cache()` deduplicates the category lookup.** `generateMetadata` (for SEO) and `CategoryPage` both call `getCategoryBySlug(slug)`. Without `cache()` that's two identical `findUnique` round-trips per request; with it, the second call is served from React's per-request memo — **one** Postgres round-trip. This is the same discipline `getServerSession()` uses in [`src/lib/session.ts`](../src/lib/session.ts). Any future code path that needs the category row again in the same request should reuse `getCategoryBySlug`, not issue a fresh query.
 2. **Filtering by `categoryId`, not `identifier`.** Once the row is resolved, products are filtered by the indexed FK. This is why the same route works for standard categories (which have no `identifier`) exactly as it does for core ones — there's no enum branch.
-3. **`force-dynamic` is mandatory.** `CategoryPageTemplate` seeds per-user wishlist hearts (§4.4); rendering from a shared ISR cache would leak one user's hearts to the next visitor.
+3. **`force-dynamic` is mandatory.** `CategoryPageTemplate` seeds per-user wishlist hearts (§4.4) and prices each card through the Discount Engine against a per-request `now`; rendering from a shared ISR cache would leak one user's hearts to the next visitor and could serve a stale promotion window.
 
-**Footer coupling caveat — `HARDENING`.** [`Footer.tsx`](../src/components/Footer.tsx) links into this route with hrefs that use real database slugs (`/category/oriental-sweets`, `/category/western-sweets`, `/category/eid-sweets`, `/category/bakery`). But it is a **hardcoded constant array**, with two consequences worth knowing:
+**Footer coupling caveat — `HARDENING`.** [`Footer.tsx`](../src/components/layout/Footer.tsx) links into this route with hrefs that use real database slugs (`/category/oriental-sweets`, `/category/western-sweets`, `/category/eid-sweets`, `/category/bakery`). But it is a **hardcoded constant array**, with two consequences worth knowing:
 
 - The link **labels** are editorial marketing copy that don't mirror the category names — "Modern Pastry" → `western-sweets`, "Bespoke Cakes" → `eid-sweets`, "Luxury Beverages" → `bakery`. And `moulid-sweets` is intentionally not linked.
 - Because slugs are derived from the category `name` ([`slugify`](../src/lib/actions/categories.ts)), **renaming a core category in the admin changes its slug and silently 404s the matching footer link.** The links are correct today; they are not self-healing. If the footer ever needs to be authoritative, drive it from `prisma.category.findMany({ where: { identifier: { not: null } } })` the way the homepage slider does.
@@ -135,26 +148,37 @@ Three properties to preserve:
 | Entry point | Source | Shows |
 |---|---|---|
 | Homepage slider | `Category.findMany({ identifier: { not: null } })`, enum order | The configured core categories (0–5 cards) |
-| `/shop` | `Category` (type SHOP, all) + `Product` (type SHOP, available) | Full catalog, client-filtered by category pill |
+| `/shop` | `Category` (type SHOP, all) + `Product` (type SHOP, available) | Full catalog, discount-priced, client-filtered by category pill |
 | `/category/[slug]` | `getCategoryBySlug(slug)` → products by `categoryId` | **Any** category's landing page (core or standard), one route |
 
 ---
 
 ## 2. Product Detail Page (PDP) & Dynamic Variants — `BUILT`
 
-The PDP previously locked onto the cheapest variant and never let a customer choose another. It now fully supports multi-variant selection through a pair of client islands. This was the storefront's highest-leverage gap; it is closed.
+The PDP previously locked onto the cheapest variant and never let a customer choose another. It now fully supports multi-variant selection through a pair of client islands, and every variant is **priced through the Discount Engine** before it reaches the client (§2.5). This was the storefront's highest-leverage gap; it is closed.
 
 ### 2.1 Server shell — [`(shop)/product/[slug]/page.tsx`](../src/app/(shop)/product/[slug]/page.tsx)
 
-The page is a `force-dynamic` Server Component (the review panel and wishlist heart are personalized to the session). It fetches everything it needs in one `Promise.all` and projects the **full** variant set into a client view-model:
+The page is a `force-dynamic` Server Component (the review panel and wishlist heart are personalized to the session). It fetches everything it needs in one `Promise.all` — including **live promotions at all three targeting levels** (variant / product / category) — and projects a **discount-resolved** view-model into the client island:
 
 ```ts
+const now = new Date();   // one instant filters AND evaluates every promotion this request
+
 const [product, session, wishlistedIds] = await Promise.all([
   prisma.product.findUnique({
     where: { slug },
     include: {
-      category: true,
-      variants: { orderBy: { price: "asc" } },                 // [0] = lowest price
+      category: {
+        select: {
+          name: true, slug: true,
+          promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        },
+      },
+      promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+      variants: {
+        orderBy: { price: "asc" },                                   // [0] = lowest price
+        include: { promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } },
+      },
       reviews: { where: { isApproved: true }, orderBy: { createdAt: "desc" } },
     },
   }),
@@ -163,10 +187,24 @@ const [product, session, wishlistedIds] = await Promise.all([
 ]);
 if (!product) notFound();
 
-const variants = product.variants.map((v) => ({
-  id: v.id, name: v.name, price: v.price,
-  isAvailable: v.isAvailable, compareAtPrice: v.compareAtPrice,
-}));
+// Each variant is priced through the Discount Engine. When a live promo applies,
+// `price` becomes the discounted amount and the original base price is surfaced as
+// `compareAtPrice` (struck-through). With no promo, the MANUAL compareAtPrice column
+// is preserved as the fallback strikethrough.
+const variants = product.variants.map((v) => {
+  const priced = resolvePrice(
+    v.price,
+    gatherPromotions(v.promotions, product.promotions, product.category.promotions),
+    now,
+  );
+  return {
+    id: v.id,
+    name: v.name,
+    price: priced.finalPrice,
+    isAvailable: v.isAvailable,
+    compareAtPrice: priced.hasDiscount ? priced.basePrice : v.compareAtPrice,
+  };
+});
 ```
 
 It passes `variants` (plus minimal product identity and `initialIsFavorited`) to [`ProductPurchasePanel`](../src/components/products/ProductPurchasePanel.tsx). **The price is intentionally not rendered in the Server Component** — it reflects the *selected* variant, so it lives in the client island. A static server-rendered price would silently disagree with the pills the moment a customer chooses a non-default variant.
@@ -179,10 +217,11 @@ model ProductVariant {
   productId      String
   name           String           // free text, e.g. "Half Kilo", "1 Piece / 250g"
   sku            String? @unique
-  price          Float
-  compareAtPrice Float?           // strikethrough "was" price — schema-ready, null until promos ship
+  price          Float            // the catalogue base price (the Discount Engine reads from this)
+  compareAtPrice Float?           // optional MANUAL strikethrough "was" price (admin-set)
   isAvailable    Boolean @default(true)
   sortOrder      Int     @default(0)
+  promotions     Promotion[]      // variant-level Discount Engine targets
 }
 ```
 
@@ -190,28 +229,29 @@ Three shape facts the islands honor:
 
 1. **Variants are a flat list, not a size × color matrix.** `name` is one free-text string per row — there's no `size`/`color`/`flavor` column. The selector is therefore a **single-axis** pill list over `variants[]`, each pill labeled with the full `name`. True independent axes would be a schema change (a `VariantOption` join model); the UI does not simulate it by parsing `name` strings.
 2. **Images live on `Product`, not `ProductVariant`.** Switching the selected variant updates **price, availability, and the Add-to-Cart payload** — it does *not* swap the photo gallery, because there's nothing per-variant to swap to.
-3. **`compareAtPrice` exists but is `null` today** (neither product form exposes it yet). It is rendered **defensively** on the PDP so the storefront needs no second pass the day admin promotion support ships.
+3. **There are now TWO independent sources of a strikethrough price.** A live `Promotion` (the Discount Engine, §2.5) discounts the live `price` and surfaces the catalogue base price as the "was" figure. Separately, `compareAtPrice` is a **manual** per-variant column that the admin product forms *do* now expose ([`NewProductForm`](../src/components/admin/NewProductForm.tsx) / [`EditProductForm`](../src/components/admin/EditProductForm.tsx), "Compare-At Price"). On the PDP the engine wins when a promo is live; the manual `compareAtPrice` is only the fallback when no promotion applies. (The earlier note here — "`compareAtPrice` exists but is `null` today; neither product form exposes it" — is obsolete on both counts.)
 
 ### 2.3 [`ProductPurchasePanel.tsx`](../src/components/products/ProductPurchasePanel.tsx) — the client island
 
 This is the `"use client"` island that groups **price + variant selector + quantity stepper + CTA + wishlist** into one coherent purchase surface. Its defining property is a **single source of truth**:
 
 ```ts
-// Default to the cheapest AVAILABLE variant (variants arrive price-asc).
+// Default to the cheapest AVAILABLE variant (variants arrive price-asc, already discounted).
 const defaultVariant = variants.find((v) => v.isAvailable) ?? variants[0];
 const [selectedVariantId, setSelectedVariantId] = useState(defaultVariant?.id ?? "");
 
 // Everything is DERIVED from the selected id — never stored in parallel state.
 const activeVariant = variants.find((v) => v.id === selectedVariantId) ?? defaultVariant;
 const canPurchase   = !!activeVariant?.isAvailable;
-const unitPrice     = activeVariant?.price ?? 0;
+const unitPrice     = activeVariant?.price ?? 0;                       // already the discounted price
 const showCompareAt = activeVariant?.compareAtPrice != null && activeVariant.compareAtPrice > unitPrice;
 ```
 
+- **The panel renders the price; it does not compute the discount.** Discount math is done server-side in the page shell (§2.1) and arrives as the variant's `price` (discounted) + `compareAtPrice` (the "was"). The island stays purely presentational — `PurchaseVariant.compareAtPrice` is now *fed by the Discount Engine or the manual column*, no longer a `null` placeholder waiting on a future feature.
 - **No drift by construction.** Price, sold-out state, line total, and the cart payload are all computed from `activeVariant`. There is no second `useState` holding "the current price" that a fast double-click could desync from the selected pill — the bug class that parallel state invites simply can't occur here.
 - **`tabular-nums` on every numeric node — a free CLS win.** The hero price (`font-serif … tabular-nums`), the `compareAtPrice` strikethrough, the quantity readout, and the CTA's line total all use fixed-width digits, so changing variant from `60` to `450`, or a discount appearing/disappearing, never reflows the surrounding layout.
 - **Accessible compare-at pricing.** When `compareAtPrice > price`, the original is shown struck-through beside the sale price with `aria-label={`Original price ${…} EGP`}`, so a screen reader announces it as a former price rather than a bare number. The CTA likewise carries a dynamic `aria-label` describing the quantity and line total (or "Selected option is sold out").
-- **Add-to-Cart sends the *selected* variant.** `handleAdd` calls `addItem({ id: product.id, variantId: activeVariant.id, … })` — `activeVariant.id`, never `variants[0].id`. This is the value that lands in lockstep with the cart's `variantId` keying (§5). A sold-out active variant disables the stepper and CTA outright.
+- **Add-to-Cart sends the *selected* variant — and the price the customer saw.** `handleAdd` calls `addItem({ id: product.id, variantId: activeVariant.id, price: activeVariant.price, … }, isLoggedIn)` — `activeVariant.id`, never `variants[0].id`, and `activeVariant.price` is the **discounted** unit price. This lands in lockstep with the cart's `variantId` keying (§5.2). When the customer is logged in, the same add is mirrored to the DB cart (§5.4). A sold-out active variant disables the stepper and CTA outright.
 
 ### 2.4 [`VariantSelector.tsx`](../src/components/products/VariantSelector.tsx) — stateless, single-axis pills
 
@@ -243,15 +283,53 @@ export default function VariantSelector({ variants, selectedVariantId, onSelect 
 | Behavior | Implementation |
 |---|---|
 | Single variant | Returns `null` — no dead single pill |
-| Per-pill price | Each pill shows **that variant's own price** (`font-mono tabular-nums`), since variants aren't uniformly priced — price lives on the pill, not floating above the list |
+| Per-pill price | Each pill shows **that variant's own (discounted) price** (`font-mono tabular-nums`), since variants aren't uniformly priced — price lives on the pill, not floating above the list |
 | Out-of-stock variant | `isAvailable: false` → pill is **disabled but kept in the DOM** (strikethrough price, muted text), so the option stays visible/indexable rather than vanishing |
 | A11y | `role="radiogroup"` wrapper, `role="radio"` + `aria-checked` per pill, keyboard-focusable, visible `focus-visible` ring |
+
+### 2.5 Storefront Discount Integration (Product Cards + PDP) — `BUILT`
+
+Active promotions are surfaced on every storefront price node by one shared, pure resolver — [`src/lib/discounts.ts`](../src/lib/discounts.ts). Nothing in the UI implements discount math itself; cards, the PDP, the cart preview, and `placeOrder` all call the same functions, so they can never disagree on what a variant costs. (The resolver internals — liveness rules, lowest-price-wins, rounding — are documented in [`HOW_IT_WORKS.md` §6](./HOW_IT_WORKS.md); this section is the storefront-rendering contract.)
+
+**The three helpers a storefront surface uses:**
+
+| Helper | Role |
+|---|---|
+| `livePromotionWhere(now)` | A Prisma `where` matching only **live** promotions (`isActive && startDate <= now <= endDate`). Spread it into every `promotions: { where: … , select: PROMOTION_SELECT_FIELDS }` include so the DB returns only currently-running promos. |
+| `gatherPromotions(variantPromos, productPromos, categoryPromos)` | Merges + de-dupes (by id) the promotions targeting a variant **directly**, its **parent product**, or that product's **category** — the full target hierarchy in one list. |
+| `resolvePrice(basePrice, promotions, now)` | Returns `{ basePrice, finalPrice, discountAmount, hasDiscount, appliedPromotion }`. When several live promos apply, the one yielding the **lowest** `finalPrice` wins (best for the customer). |
+
+**Always pass a single `now` per request** (every page above declares `const now = new Date()` once) so the DB filter and the in-memory evaluation agree on the same instant — a promo can't be "live" for the query but "expired" for the math.
+
+**Product cards** ([`ProductCard.tsx`](../src/components/ProductCard.tsx), fed by [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx), `/shop`, and the category route) price the **starting (lowest-base-price) variant** — the representative figure the card shows and the variant quick-add adds:
+
+```ts
+const starting = product.variants[0];
+const priced = resolvePrice(
+  starting?.price ?? 0,
+  gatherPromotions(starting?.promotions, product.promotions, product.category.promotions),
+  now,
+);
+const card = {
+  ...,
+  price: priced.finalPrice,                                    // discounted starting price
+  compareAtPrice: priced.hasDiscount ? priced.basePrice : null, // strikethrough only on a live promo
+};
+```
+
+The card then renders, only while `compareAtPrice > price`:
+- a struck-through original price beside the live price (`aria-label="Original price … EGP"`), and
+- a `-{percentOff}%` **sale badge** over the image, where `percentOff = Math.round((1 - price / compareAtPrice) * 100)`.
+
+**PDP variant islands** (§2.1–§2.4) price **every** variant — not just the cheapest — so the strikethrough and percentage follow the selected pill. The displayed `compareAtPrice` is `priced.basePrice` on a live promo, or the manual `ProductVariant.compareAtPrice` column when no promo applies.
+
+> **Intentional card-vs-PDP asymmetry — keep it in mind.** Cards pass `compareAtPrice: priced.hasDiscount ? priced.basePrice : null`, i.e. **cards ignore the manual `compareAtPrice` column** and only ever show a strikethrough for a live Discount-Engine promotion. The PDP additionally falls back to the manual column. So a variant with a manual "was" price but no active promotion shows a strikethrough on its **PDP** but a plain price on the **grid card**. If you ever want the manual compare-at to drive a card sale badge too, change the card mappers in `ShopPage`/`CategoryPageTemplate` to fall back to `starting.compareAtPrice` — don't reintroduce discount math in the component.
 
 ---
 
 ## 3. The Café Menu Page (`/menu`) — `BUILT`
 
-The café menu is **structurally isolated** from the shop catalog — `MenuCategory`/`MenuItem` carry no foreign key to `Category`, `Product`, or `ProductVariant`:
+The café menu is **structurally isolated** from the shop catalog — `MenuCategory`/`MenuItem` carry no foreign key to `Category`, `Product`, or `ProductVariant`, and (deliberately) no relation to `Promotion`:
 
 ```prisma
 model MenuCategory {
@@ -265,7 +343,7 @@ model MenuCategory {
 model MenuItem { id String @id @default(cuid()); name String; price Float; order Int @default(0); categoryId String }
 ```
 
-This separation is deliberate: the café menu is a **read-only, dine-in/pickup price list**, not something that flows into the cart or checkout. Don't wire an "Add to Cart" button onto a `MenuItem` — there's no `CartItem`/`OrderItem` relation to support it.
+This separation is deliberate: the café menu is a **read-only, dine-in/pickup price list**, not something that flows into the cart, checkout, or the Discount Engine. Don't wire an "Add to Cart" button onto a `MenuItem`, and don't expect a `Promotion` to discount one — there's no `CartItem`/`OrderItem`/`Promotion` relation to support it.
 
 ### 3.1 Fixed-price rendering — [`MenuClient.tsx`](../src/app/(shop)/menu/MenuClient.tsx)
 
@@ -299,28 +377,28 @@ Both `order` columns are `Int @default(0)` with their own `@@index([order])`. Th
 ### 4.1 Roles & session — `BUILT`
 
 ```prisma
-enum UserRole { USER  ADMIN }
-model User { ... role UserRole @default(USER) ... }
+enum UserRole { USER  ADMIN  MANAGER }
+model User { ... role UserRole @default(USER) ... branchId String? ... }
 ```
 
-Better Auth provides the session; `role` is layered on as an `additionalFields` entry with `input: false` ([`src/lib/auth.ts`](../src/lib/auth.ts)) — a client **cannot set its own role at signup**, only a direct DB write can promote a user to `ADMIN`.
+Better Auth provides the session; `role` is layered on as an `additionalFields` entry with `input: false` ([`src/lib/auth.ts`](../src/lib/auth.ts)) — a client **cannot set its own role at signup**, only a direct DB write (or admin action) can promote a user. `MANAGER` is a branch-scoped staff role (see [`ARCHITECTURE.md`](./ARCHITECTURE.md)); on the storefront it behaves like any authenticated user.
 
 | Context | Access pattern | File |
 |---|---|---|
-| Server Component / Server Action | `getServerSession()` (React `cache()`-wrapped), or `requireAdmin()` to throw on non-admin | [`src/lib/session.ts`](../src/lib/session.ts) |
+| Server Component / Server Action | `getServerSession()` (React `cache()`-wrapped), or `requireAdmin()` / `requireDashboardAccess()` for staff gates | [`src/lib/session.ts`](../src/lib/session.ts) |
 | Client Component | `useSession()` — Better Auth's React client, with `inferAdditionalFields<typeof auth>()` so `session.user.role` is typed | [`src/lib/auth-client.ts`](../src/lib/auth-client.ts) |
 
 ### 4.2 Navbar visibility — `BUILT`
 
-[`Navbar.tsx`](../src/components/Navbar.tsx) / [`UserMenu.tsx`](../src/components/UserMenu.tsx) gate the **Admin Dashboard** link behind `const isAdmin = user?.role === "ADMIN"`, while **My Orders** and **Wishlist** render unconditionally inside the "is logged in" branch:
+[`Navbar.tsx`](../src/components/Navbar.tsx) / [`UserMenu.tsx`](../src/components/UserMenu.tsx) gate the **Admin Dashboard** link behind a role check, while **My Orders** and **Wishlist** render unconditionally inside the "is logged in" branch:
 
-| Session state | My Orders | Wishlist | Admin Dashboard |
+| Session state | My Orders | Wishlist | Dashboard |
 |---|---|---|---|
 | Guest (no session) | — | — | — |
 | `USER` | ✓ | ✓ | — |
-| `ADMIN` | ✓ | ✓ | ✓ |
+| `ADMIN` / `MANAGER` | ✓ | ✓ | ✓ |
 
-The takeaway for any future navbar change: **My Orders / Wishlist are an "is authenticated" check, not a role check** — both roles see them; only the Admin Dashboard link is role-gated. The auth block also renders a pulse skeleton (not "Sign In") while `useSession()` is `isPending`, preventing a logged-in user from seeing a "Sign In" flash before their account menu resolves. Apply the same `isPending` guard to any new auth-aware UI.
+The takeaway for any future navbar change: **My Orders / Wishlist are an "is authenticated" check, not a role check** — every signed-in user sees them; only the Dashboard link is role-gated. The auth block also renders a pulse skeleton (not "Sign In") while `useSession()` is `isPending`, preventing a logged-in user from seeing a "Sign In" flash before their account menu resolves. Apply the same `isPending` guard to any new auth-aware UI.
 
 ### 4.3 Route protection via the Edge Proxy — `BUILT` (was a "no middleware" `HARDENING`; now shipped)
 
@@ -346,6 +424,7 @@ export const config = {
 
 - **Optimistic & edge-safe.** `getSessionCookie` only confirms a Better Auth cookie is present — it can't validate against Postgres (Prisma doesn't run on the Edge). The proxy imports only `next/server` and `better-auth/cookies`; never add `@/lib/prisma` or `@/lib/auth` here.
 - **Defense in depth, not a replacement.** The pages still self-guard: [`/wishlist`](../src/app/(shop)/wishlist/page.tsx) and [`/my-orders`](../src/app/(shop)/my-orders/page.tsx) both run `const session = await getServerSession(); if (!session) redirect("/login");`. The proxy is the cheap first gate that catches "developer forgot the guard"; `getServerSession()` stays the source of truth and rejects a present-but-expired cookie that slips past the Edge. (The in-page guard redirects to a bare `/login` without `?redirect=`; the destination round-trip is a property of the proxy path.)
+- **`/checkout` is deliberately NOT in the matcher.** Checkout supports **guest orders** (`placeOrder` accepts a null `userId`), so gating it behind the proxy would break the guest flow. Keep it out.
 - **Extending it.** A new authenticated route is protected by adding its bare path **and** `:path*` wildcard to `config.matcher` — and still adding the in-page `getServerSession()` check, which remains the only gate for any Server Action invoked directly.
 
 ### 4.4 The login & redirect flow — `BUILT`
@@ -374,9 +453,9 @@ function sanitizeRedirect(path: string | null): string {
 const redirectTo = sanitizeRedirect(searchParams.get("redirect"));
 ```
 
-Only a single-slash, same-origin relative path survives. Absolute URLs and the protocol-relative `//host` trick (which browsers resolve to a *different* origin) both collapse to `"/"`. On a successful `signIn.email`, navigation is **`router.push(redirectTo)` followed by `router.refresh()`** — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only honored by redirect-based flows like OAuth/verification, and is forwarded only for completeness), so the explicit `router.push` is what actually returns the user to the page the proxy bounced them from.
+Only a single-slash, same-origin relative path survives. Absolute URLs and the protocol-relative `//host` trick (which browsers resolve to a *different* origin) both collapse to `"/"`. On a successful `signIn.email`, navigation is **`router.push(redirectTo)` followed by `router.refresh()`** — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only honored by redirect-based flows like OAuth/verification, and is forwarded only for completeness), so the explicit `router.push` is what actually returns the user to the page the proxy bounced them from. The `router.refresh()` also matters for the cart: it lets [`CartSyncProvider`](../src/components/providers/CartSyncProvider.tsx) observe the new session and fold the guest cart into the account (§5.4).
 
-> **`HARDENING`:** `sanitizeRedirect` currently lives as a private function inside `LoginClient.tsx`, not as a shared export in `@/lib/utils`. It's correct as-is; if a second redirect-consuming surface appears (e.g. a signup flow honoring `?redirect=`), promote it to `@/lib/utils` rather than duplicating it.
+> **`HARDENING`:** `sanitizeRedirect` currently lives as a private function inside `LoginClient.tsx`, not as a shared export in `@/lib/utils`. It's correct as-is; if a second redirect-consuming surface appears (e.g. the signup flow honoring `?redirect=`), promote it to `@/lib/utils` rather than duplicating it.
 
 ### 4.5 Wishlist flow — `BUILT`
 
@@ -384,7 +463,7 @@ Persisted to Postgres, not local state: `WishlistItem { userId, productId }` wit
 
 - Toggling, listing, and existence-checking are all Server Actions ([`src/lib/actions/wishlist.ts`](../src/lib/actions/wishlist.ts)) — there's no `/api/wishlist` REST route.
 - Every page that renders product cards seeds `initialIsFavorited` from `getWishlistedProductIds()` **on the server**, so the heart's first paint is already correct for the signed-in user — no flash-then-pop-in. [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx) builds a `Set` from it for O(1) per-card lookups; [`WishlistButton.tsx`](../src/components/products/WishlistButton.tsx) takes over interactivity (optimistic flip, `useTransition`, rollback + toast on failure).
-- Because that per-user seeding can't be cached and served to the next visitor, every page doing it (`/shop`, the dynamic `/category/[slug]` route, the PDP) runs `export const dynamic = "force-dynamic"` rather than ISR. Carry this forward on any new product-listing surface.
+- Because that per-user seeding can't be cached and served to the next visitor, every page doing it (`/shop`, the dynamic `/category/[slug]` route, the PDP) runs `export const dynamic = "force-dynamic"` rather than ISR. (This dovetails with the per-request discount window, §2.5 — both reasons point to `force-dynamic`.) Carry this forward on any new product-listing surface.
 
 ### 4.6 My Orders dashboard — `BUILT`
 
@@ -394,46 +473,61 @@ Persisted to Postgres, not local state: `WishlistItem { userId, productId }` wit
 where: { userId: session.user.id, ...(status !== "ALL" ? { status } : {}) }
 ```
 
-`OrderItem` stores a **snapshot** (`productName`, `variantName`, `unitPrice`, `quantity`) captured at purchase time — it does not re-read the live `Product`/`ProductVariant`. A customer's order from six months ago still shows the exact name and price they paid, even if that variant was since renamed, repriced, or archived. Never join back to the live catalog to render order history — the snapshot *is* the source of truth for a placed order.
+`OrderItem` stores a **snapshot** (`productName`, `variantName`, `unitPrice`, `quantity`) captured at purchase time — and the `unitPrice` is the **already-discounted** price the customer was billed (the Discount Engine ran at `placeOrder`, §5.5). It does not re-read the live `Product`/`ProductVariant`. A customer's order from six months ago still shows the exact name and price they paid, even if that variant was since renamed, repriced, or its promotion ended. Never join back to the live catalog to render order history — the snapshot *is* the source of truth for a placed order.
 
 ---
 
 ## 5. Cart & Checkout Pipeline
 
-### 5.1 Implementation — `BUILT`, variant-keyed
+### 5.1 Implementation — `BUILT`, variant-keyed, client-first with optional DB persistence
 
-The cart is **client-only** — Zustand + `persist`, `localStorage` key `"ali-baba-cart"` ([`src/lib/cart-store.ts`](../src/lib/cart-store.ts)). There is no server-side cart sync for guests or logged-in users; only the final `placeOrder` touches the database.
+The cart's **client source of truth** is Zustand + `persist`, `localStorage` key `"ali-baba-cart"` ([`src/lib/cart-store.ts`](../src/lib/cart-store.ts)). A **guest** cart is purely local. A **logged-in** customer additionally gets a **DB-backed, cross-device cart** (`CartItem`): the local store stays the optimistic front end, and each mutation is mirrored to Postgres in the background. (This replaces the earlier "the cart is client-only; nothing but `placeOrder` ever touches the DB" claim — that is no longer true.)
 
 ```ts
 export interface CartItem {
   id: string;         // parent product id — display / grouping / PDP links ONLY, never the merge key
   variantId: string;  // the purchasable unit, and the canonical identity of a cart line
   name: string;
-  price: number;      // local display currency (EGP); server re-resolves the real price at checkout
+  price: number;      // local display currency (EGP) — the DISCOUNTED unit price the customer saw;
+                      // still display-only, the server re-resolves the real price at checkout
   quantity: number;
   image: string;
   category?: string;
 }
 ```
 
+Every mutating action takes an optional `isLoggedIn` flag (the caller reads it from `useSession()`), and when it's true the action mirrors the change to the DB via a fire-and-forget `syncCartItemAction` (§5.4). The optimistic local update always lands first, so the UI never waits on the round-trip:
+
+```ts
+addItem:        (item, isLoggedIn?)            // local merge by variantId, then fireSync(SET)
+removeItem:     (variantId, isLoggedIn?)       // local filter, then fireSync(DELETE)
+updateQuantity: (variantId, qty, isLoggedIn?)  // local map (<1 → remove), then fireSync(SET)
+clearCart:      ()                             // local-only empty (checkout / "Clear cart" button)
+clearLocalCart: ()                             // LOGOUT-only wipe: local + persisted, DB untouched
+mergeAndSyncCart: () => Promise<void>          // guest → auth bridge (§5.4)
+```
+
+`partialize` persists only `items`, never `isOpen` or any session-derived data — so SSR renders `items: []`, the client rehydrates from `localStorage` after mount, and there's no hydration mismatch and no stale auth bleeding across users on a shared device.
+
 ### 5.2 Every operation keys on `variantId` — `BUILT` (was a `BUG`; now fixed and live)
 
 `addItem`, `removeItem`, and `updateQuantity` all identify a line by `variantId`:
 
 ```ts
-addItem: (newItem) => set((s) => {
+addItem: (newItem, isLoggedIn) => set((s) => {
   const existing = s.items.find((i) => i.variantId === newItem.variantId);
   if (existing) {
     return { items: s.items.map((i) =>
       i.variantId === newItem.variantId ? { ...i, quantity: i.quantity + 1 } : i) };
   }
   return { items: [...s.items, { ...newItem, quantity: 1 }] };
+  // …then fireSync(newItem.variantId, newQuantity, "SET") when logged in
 });
 removeItem:     (variantId) => /* filter i.variantId !== variantId */
 updateQuantity: (variantId, quantity) => /* map by i.variantId === variantId; <1 removes */
 ```
 
-**Why this is correct (and why it had to ship with §2's selector).** The store previously merged on the product `id`. The instant the PDP gained a real variant selector, that became a money bug: adding "Cake — Small" (`variantId: A`, 80) then "Cake — Large" (`variantId: B`, 150) would match the existing line by product id and merely bump quantity — keeping the Small's `variantId` and price, so checkout charged 2× Small. Keying every operation on `variantId` makes each chosen variant a distinct, correctly-priced line. The selector (§2) and this keying landed in the same change, never as a follow-up.
+**Why this is correct (and why it had to ship with §2's selector).** The store previously merged on the product `id`. The instant the PDP gained a real variant selector, that became a money bug: adding "Cake — Small" (`variantId: A`, 80) then "Cake — Large" (`variantId: B`, 150) would match the existing line by product id and merely bump quantity — keeping the Small's `variantId` and price, so checkout charged 2× Small. Keying every operation on `variantId` makes each chosen variant a distinct, correctly-priced line.
 
 **Why `variantId` alone — not a composite `productId_variantId`.** `ProductVariant.id` is already a globally unique `cuid`, and every variant belongs to exactly one product. The database asserts the same modeling choice — the `CartItem` table's uniqueness is `@@unique([userId, variantId])`, not `([userId, productId, variantId])`:
 
@@ -441,6 +535,7 @@ updateQuantity: (variantId, quantity) => /* map by i.variantId === variantId; <1
 model CartItem {
   userId    String
   variantId String
+  quantity  Int      @default(1)
   @@unique([userId, variantId])
   @@index([userId])
   @@index([variantId])
@@ -449,15 +544,54 @@ model CartItem {
 
 The client store's merge key matches the database's own key. Keep `id` (product id) on the line item for display grouping and PDP links — just never use it to dedup. **All React keys in the cart drawer and the checkout summary map over `variantId`**, consistent with this identity model.
 
-**Migration safety.** The persisted shape is unchanged by the fix — `variantId` was always stored on `CartItem` — so previously-saved carts in `localStorage` remain valid with no migration. `partialize` persists only `items`, not the drawer `isOpen` flag.
+**Migration safety.** The persisted shape is unchanged — `variantId` was always stored on `CartItem` — so previously-saved carts in `localStorage` remain valid with no migration.
 
-**The `CartItem` table** exists in the schema but the live cart never writes to it (the cart is local-only; `placeOrder` creates `Order`/`OrderItem`, never `CartItem`). Treat it as a reserved extension point for a future "sync my cart across devices" feature — its only relevance here is confirming `variantId` as the correct dedup key.
+### 5.3 Cart discount integrity — `BUILT`
 
-### 5.3 Server-side price integrity — preserve this — `BUILT`
+The cart never does discount math itself, yet it always shows discounted prices, because the discounted figure is computed upstream and threaded through:
 
-[`placeOrder`](../src/lib/actions/orders.ts) accepts only `{ variantId, quantity }` pairs and re-resolves price, availability, and parent-product availability **server-side**, inside a transaction — the client never sends a price, and `placeOrder` never trusts the cart store's `price` field (which is display-only). When touching the cart, don't start threading the client's `price` into the order payload "for convenience" — the checkout flow's entire price-integrity guarantee rests on the server being the only source of truth for what a variant costs. The full transaction design, VAT/delivery-fee math, and guest-checkout handling are in [`HOW_IT_WORKS.md` §6](./HOW_IT_WORKS.md).
+- **Local adds** carry the price the customer saw. Quick-add from a card (`ProductCard`) and Add-to-Cart from the PDP (`ProductPurchasePanel`) both pass `price: <discounted unit price>` — the value the Discount Engine produced when the listing rendered (§2.5). So the drawer line total, the `/checkout` summary, and the navbar count are all already discount-aware with zero extra work.
+- **DB reads re-resolve, never store.** `CartItem` persists only `{ userId, variantId, quantity }` — **no price column.** When a logged-in cart is read back ([`getDbCartAction`](../src/lib/actions/cart.ts)), each line is joined to its variant + product + category live promotions and run through `resolvePrice(variant.price, gatherPromotions(...), now)`, so the hydrated price is the *current* discount, not whatever was true when the row was written. A promotion that started or ended since the item was added is reflected the moment the cart hydrates.
+- **The server is still the only pricing authority.** The local `price` remains display-only. `placeOrder` re-resolves every line server-side (§5.5); a stale or tampered client price can never reach the order. This is the same discipline the catalogue read paths use — the client renders a price, the server decides the price.
 
-### 5.4 `/cart` route — `GAP` (drawer-only today)
+### 5.4 Guest → authenticated bridge & `CartSyncProvider` — `BUILT`
+
+[`CartSyncProvider`](../src/components/providers/CartSyncProvider.tsx) is a client-only wrapper (renders children untouched, no SSR mismatch) that reconciles the local cart with the DB cart across the auth lifecycle. Its hard problem is that `useSession()` reports "logged in" in two situations that must be handled differently:
+
+| Situation | Detected via | Action |
+|---|---|---|
+| **Already logged in on mount** (refresh / new device) | `firstResolve` ref, first non-pending session reading | **HYDRATE** — `getDbCartAction()` and overwrite local. Never merge (would double-count an overlapping local + DB cart). |
+| **Guest → logged in** (a real sign-in this session) | `knownUserId` ref transitions `null → id` | **MERGE** — `mergeAndSyncCart()`: push the guest's local lines up (server **SUMs** onto existing rows via upsert + `increment`), then adopt the freshly-merged DB cart wholesale. |
+| **Logged in → guest** (logout) | transition `id → null` | `clearLocalCart()` — wipe local + persisted storage so the next person on the device starts clean; **DB cart left intact** for the user's next sign-in. |
+| **Account switch A → B** | transition `idA → idB` | `clearLocalCart()` then HYDRATE B's DB cart. |
+
+The two refs (`firstResolve`, `knownUserId`) make each transition fire **exactly once** — no loops, no redundant network calls — and the provider deliberately never subscribes to `items`, so a cart edit doesn't re-run the effect.
+
+Per-line persistence is **fire-and-forget and idempotent**: `syncCartItemAction(variantId, quantity, "SET" | "DELETE")` upserts to the *absolute* quantity (a late-arriving `SET` simply overwrites, sidestepping increment races), and a `DELETE` uses `deleteMany` so removing an already-gone row is silent rather than a `P2025` throw. A sync failure only logs — the optimistic local state already applied, and the next hydrate/merge reconciles.
+
+> **Why this is safe with the price model.** None of these paths trust a client price: `mergeCartAction` and `syncCartItemAction` write only `{ variantId, quantity }`, and `getDbCartAction` re-prices on read (§5.3). Cross-device consistency is about **identity and intent**, never money.
+
+### 5.5 Server-side price integrity — preserve this — `BUILT`
+
+[`placeOrder`](../src/lib/actions/orders.ts) accepts only `{ variantId, quantity }` pairs and re-resolves price, **the best live discount**, availability, and parent-product availability **server-side**, inside a transaction — the client never sends a price. For each line it re-reads the variant plus its variant/product/category live promotions (`livePromotionWhere(now)`), applies `resolvePrice`, and **snapshots the discounted `finalPrice`** onto the `OrderItem`. When touching the cart, don't start threading the client's `price` into the order payload "for convenience" — the checkout flow's entire price-integrity guarantee rests on the server being the only source of truth for what a variant costs. The full transaction design, the discount-before-VAT ordering, VAT/delivery-fee math, and guest-checkout handling are in [`HOW_IT_WORKS.md` §6–§7](./HOW_IT_WORKS.md).
+
+### 5.6 Checkout delivery & pickup — dynamic Branch fetching — `BUILT` (replaces the legacy `DeliveryLocation` enum)
+
+The checkout form's location selector ([`src/app/(shop)/checkout/page.tsx`](../src/app/(shop)/checkout/page.tsx)) is **driven by the live `Branch` table**, not a hardcoded enum. The old static `DeliveryLocation` enum (`MENOUF | SADAT | SARS | …`) and its fixed-options `CitySelect` dropdown are **gone from the checkout flow** — adding or renaming a delivery area is now an admin Branch edit, not a schema migration.
+
+On mount the page loads active branches **once** via [`getActiveBranches()`](../src/lib/actions/branches.ts) — a public Server Action returning `{ id, slug, name }` for `isActive` branches, `name`-ordered — and renders them through a single `BranchSelect`. Because each option carries a **real `branchId`**, whatever the customer picks resolves directly to the value stamped onto the order (the unit of Branch-Manager RBAC):
+
+- **Delivery** — the "Delivery Area" selector is the branch list **plus** a synthetic **"Other Areas"** option (`id: "__other__"`). A chosen branch sends its id; "Other Areas" sends `branchId = null`, which leaves the order **unassigned** so it surfaces to the **Super Admin** (`ADMIN`) only.
+- **Pickup** — the customer chooses a branch directly; its id becomes `branchId`, and `pickupBranch` additionally carries the human-readable branch **label** for the receipt.
+- **Arabic sub-labels** in the dropdown (`BRANCH_SUBLABELS`, keyed by branch `slug`) are **presentational only** — not stored on the `Branch` model. A branch without a known sub-label simply shows its `name`.
+
+`placeOrder` then does a **defensive re-resolution**: a supplied `branchId` is stamped only if it still matches a real, `isActive` branch (`findFirst({ where: { id, isActive: true } })`); a stale/invalid/deactivated id silently falls back to `null` (→ Super Admin) so the order never hard-fails on a race.
+
+> **Legacy compatibility.** `Order.deliveryCity` (a `DeliveryLocation?`) and the enum itself **remain in the schema**, but the checkout flow no longer writes them — they exist purely so historical orders placed under the old model still render. The order detail drawers show the legacy `deliveryCity` defensively as "City" for those rows, and the assigned branch as the "Area" for new ones (see [`HOW_IT_WORKS.md` §7.5](./HOW_IT_WORKS.md)). Don't reintroduce the enum into checkout.
+
+A note on cart-hydration UX at checkout: the page tracks Zustand's `persist` hydration with `useSyncExternalStore(useCartStore.persist.onFinishHydration, …)` and holds a neutral background until the cart has rehydrated from `localStorage`, so a customer who actually has items never flashes the "Your Cart is Empty" state on a hard load. On success it `clearCart()` locally and, when logged in, `clearDbCartAction()` so the placed cart doesn't re-hydrate from the server.
+
+### 5.7 `/cart` route — `GAP` (drawer-only today)
 
 `src/app/(shop)/cart/` is an empty directory — there's no full-page cart view, only the slide-out [`CartSidebar.tsx`](../src/components/CartSidebar.tsx) drawer (opened from the navbar cart icon, or automatically on `addItem`). Worth a dedicated full page if a deep-linkable, shareable cart view is ever needed — noted only so the empty directory isn't mistaken for an oversight.
 
@@ -467,16 +601,16 @@ The client store's merge key matches the database's own key. Keep `id` (product 
 
 | Metric | Lever in use | Where |
 |---|---|---|
-| **LCP** | Server Components fetch with Prisma at render time — hero image and cards arrive in the initial HTML, no client-fetch waterfall | `(shop)/page.tsx`, `/category/[slug]` |
+| **LCP** | Server Components fetch with Prisma at render time — hero image, cards, **and resolved discount prices** arrive in the initial HTML, no client-fetch waterfall and no client-side discount computation | `(shop)/page.tsx`, `/category/[slug]`, `/shop` |
 | **LCP** | `next/image` with per-breakpoint `sizes`, `remotePatterns` scoped to the UploadThing CDN (`utfs.io`, `*.ufs.sh`) | [`next.config.ts`](../next.config.ts), `CategorySlider.tsx` |
 | **CLS** | `tabular-nums` on **every** price node that can change at runtime — the PDP hero price, `compareAtPrice` strikethrough, variant-pill prices, quantity stepper, CTA line total, menu prices — so switching a variant or a discount toggling never reflows neighbouring text | `ProductPurchasePanel`, `VariantSelector`, `MenuRow` |
-| **CLS** | Pulse-skeleton for the navbar auth state while `useSession()` is `isPending`; matching `animate-pulse` skeleton as the `/login` Suspense fallback | `Navbar.tsx`, `LoginFallback` |
+| **CLS** | Pulse-skeleton for the navbar auth state while `useSession()` is `isPending`; matching `animate-pulse` skeleton as the `/login` Suspense fallback; checkout holds its background until the cart `persist` store rehydrates | `Navbar.tsx`, `LoginFallback`, `checkout/page.tsx` |
 | **INP** | `IntersectionObserver` for the menu scroll-spy instead of a `scroll` handler | `MenuClient.tsx` |
-| **INP** | Every mutation (wishlist toggle, status change, add-to-cart) runs with optimistic local state — UI responds before the round-trip | wishlist, orders, `ProductPurchasePanel` |
+| **INP** | Every mutation (wishlist toggle, status change, add-to-cart) runs with optimistic local state — UI responds before the round-trip; cart DB sync is fire-and-forget, never blocking | wishlist, orders, `ProductPurchasePanel`, `cart-store.ts` |
 | **INP** | Client-side category filtering on `/shop` trades a larger initial payload for zero-latency filter clicks — re-evaluate as the catalog grows | `ShopClient.tsx` |
 | **TTFB** | React `cache()` dedupes the per-request category lookup across `generateMetadata` + page — one Postgres round-trip, not two | `/category/[slug]` |
-| **Bundle size** | Embla Carousel (~6 KB) instead of a heavier carousel; Zustand (~1 KB) instead of Redux/Context for cart state | `CategorySlider.tsx`, `cart-store.ts` |
-| **Hydration correctness** | Wishlist heart state and the PDP's default variant are computed/derived deterministically (server-seeded prop / cheapest-available) — never from a client-only `useEffect` fetch that reintroduces a flash-of-wrong-state | `getWishlistedProductIds()`, `ProductPurchasePanel` |
+| **Bundle size** | Embla Carousel (~6 KB) instead of a heavier carousel; Zustand (~1 KB) instead of Redux/Context for cart state; the discount resolver is pure TS with no runtime deps | `CategorySlider.tsx`, `cart-store.ts`, `discounts.ts` |
+| **Hydration correctness** | Wishlist heart state, the PDP's default variant, and discount prices are computed/derived deterministically server-side (server-seeded prop / cheapest-available / `resolvePrice`) — never from a client-only `useEffect` fetch that reintroduces a flash-of-wrong-state | `getWishlistedProductIds()`, `ProductPurchasePanel`, `discounts.ts` |
 
 ---
 
@@ -490,8 +624,12 @@ The blocking storefront work this document used to track is shipped. What remain
 | 2 | Cart store merges on `variantId`, not product `id` | §5.2 | — | ✅ Shipped (atomic with #1) |
 | 3 | Centralized authenticated-route protection | §4.3 | — | ✅ Shipped (`src/proxy.ts`) |
 | 4 | Collapse the five static `/category/<slug>` routes into one dynamic route | §1.3 | — | ✅ Shipped (`category/[slug]/page.tsx`) |
-| 5 | Wire `compareAtPrice` into the admin product forms (PDP already renders it defensively) | §2.2 | Low | Schema-ready; `null` until admin support ships |
-| 6 | Drive footer category links from the DB (or accept the rename→404 coupling) | §1.3 | Low | Hardcoded array; labels are marketing copy, `moulid-sweets` omitted |
-| 7 | Promote `sanitizeRedirect` to `@/lib/utils` if a second redirect surface appears | §4.4 | Low | Currently private to `LoginClient.tsx` |
-| 8 | Build a full-page `/cart` view if a deep-linkable cart is needed | §5.4 | Low | Empty directory; drawer-only today |
-| 9 | Revisit client-side `/shop` filtering once the catalog grows materially | §1.2 | Low | Not a problem yet |
+| 5 | Wire promotions into every storefront price node (cards, PDP, cart, checkout) | §2.5, §5.3, §5.5 | — | ✅ Shipped (`src/lib/discounts.ts` — one resolver everywhere) |
+| 6 | Expose the manual `compareAtPrice` in the admin product forms | §2.2 | — | ✅ Shipped (`New`/`EditProductForm` "Compare-At Price"; PDP uses it as the no-promo fallback) |
+| 7 | DB-backed, cross-device cart for logged-in users | §5.1, §5.4 | — | ✅ Shipped (`CartItem` + `CartSyncProvider` + `cart.ts` actions) |
+| 8 | Branch-driven checkout delivery (retire the `DeliveryLocation` enum) | §5.6 | — | ✅ Shipped (`getActiveBranches` + `BranchSelect`; enum kept only for legacy orders) |
+| 9 | Drive footer category links from the DB (or accept the rename→404 coupling) | §1.3 | Low | Hardcoded array; labels are marketing copy, `moulid-sweets` omitted |
+| 10 | Promote `sanitizeRedirect` to `@/lib/utils` if a second redirect surface appears | §4.4 | Low | Currently private to `LoginClient.tsx` |
+| 11 | Surface the manual `compareAtPrice` on grid cards (currently PDP-only fallback) | §2.5 | Low | Intentional asymmetry today; cards only badge live promotions |
+| 12 | Build a full-page `/cart` view if a deep-linkable cart is needed | §5.7 | Low | Empty directory; drawer-only today |
+| 13 | Revisit client-side `/shop` filtering once the catalog grows materially | §1.2 | Low | Not a problem yet |
