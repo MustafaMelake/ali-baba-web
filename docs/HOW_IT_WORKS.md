@@ -138,11 +138,41 @@ This replaced the old single-component `ProductAddToCart`, which only ever surfa
 
 ---
 
-## 4. The Cart — variant-keyed integrity
+## 4. The Cart — variant-keyed integrity, dual-mode persistence
 
-The cart is **client-only**: Zustand + `persist` to `localStorage` under the key `"ali-baba-cart"` ([`src/lib/cart-store.ts`](../src/lib/cart-store.ts)). There is no server-side cart sync for guests or logged-in users; only the final `placeOrder` touches the database.
+The cart runs in **two modes** depending on auth state. A guest's cart is **client-only**: Zustand + `persist` to `localStorage` under the key `"ali-baba-cart"` ([`src/lib/cart-store.ts`](../src/lib/cart-store.ts)). A **logged-in** customer gets the same local store, but it is now also **synced to the database** (`CartItem`) in the background, giving them a cross-device cart. (Earlier revisions of this document described the cart as client-only with no server sync for any user — that is no longer accurate; only the *guest* path is still client-only.)
 
-**The canonical identity of a cart line is `variantId`, not the product id.** A `CartItem` still carries `id` (the parent product id) for display, grouping, and PDP back-links — but every merge/lookup operation keys on `variantId`:
+### 4.1 Zustand as the optimistic frontend
+
+Regardless of auth state, **Zustand is always the thing the UI reads from** — every mutation applies to the local store first and renders instantly, with zero latency. When the user is logged in, that same mutation is also fired off to a Server Action to persist it, but the UI never waits on that round-trip:
+
+```ts
+// src/lib/cart-store.ts
+addItem: (newItem, isLoggedIn) => {
+  const existing = get().items.find((i) => i.variantId === newItem.variantId);
+  const newQuantity = existing ? existing.quantity + 1 : 1;
+
+  set((s) => ({
+    items: existing
+      ? s.items.map((i) => i.variantId === newItem.variantId ? { ...i, quantity: newQuantity } : i)
+      : [...s.items, { ...newItem, quantity: 1 }],
+    isOpen: true,
+  }));
+
+  // Fire-and-forget DB mirror — only when authenticated. The optimistic local
+  // state above has already applied; this just keeps Postgres in step.
+  if (isLoggedIn) fireSync(newItem.variantId, newQuantity, "SET");
+},
+// removeItem(variantId, isLoggedIn) and updateQuantity(variantId, qty, isLoggedIn) follow the same pattern.
+```
+
+`fireSync` calls [`syncCartItemAction`](../src/lib/actions/cart.ts) (`"use server"`) and only logs on failure — it never rolls back the optimistic UI, since the next hydrate/merge cycle (§4.3) reconciles any divergence. `SET` upserts the line to an **absolute** quantity (idempotent — a late-arriving `SET` simply overwrites, sidestepping increment races), and `DELETE` uses `deleteMany` so removing an already-gone row is silent rather than throwing.
+
+Critically, **`CartItem` stores only identity and intent** — `{ userId, variantId, quantity }`, no price column. Reading it back ([`getDbCartAction`](../src/lib/actions/cart.ts)) joins each line to its live variant/product/category and re-resolves price (including any active discount, §6) at read time, so a hydrated cart always reflects the *current* catalogue, never a stale snapshot.
+
+### 4.2 The canonical identity of a cart line is `variantId`, not the product id
+
+A `CartItem` still carries `id` (the parent product id) for display, grouping, and PDP back-links — but every merge/lookup operation, local or remote, keys on `variantId`:
 
 ```ts
 addItem: (newItem) => set((s) => {
@@ -156,11 +186,35 @@ addItem: (newItem) => set((s) => {
 // removeItem(variantId) and updateQuantity(variantId, qty) take variantId too.
 ```
 
-**Why this matters.** The previous store merged on the product `id`. Once the PDP gained a real variant selector, that became a billing bug: adding "Cake — Small" (`variantId: A`, 80) then "Cake — Large" (`variantId: B`, 150) would match the existing line by product id and merely increment its quantity — keeping the Small's `variantId` and price. Checkout would charge 2× Small. Keying every operation on `variantId` makes each chosen variant a distinct, correctly-priced line. This isn't an arbitrary choice — it mirrors the database's own modeling: the `CartItem` table declares `@@unique([userId, variantId])`, not `([userId, productId])`. (The `CartItem` table itself remains a reserved extension point for future cross-device cart sync; the live cart never writes to it.) The persisted shape is unchanged — `variantId` was always stored — so previously-saved carts remain valid with no migration.
+**Why this matters.** The previous store merged on the product `id`. Once the PDP gained a real variant selector, that became a billing bug: adding "Cake — Small" (`variantId: A`, 80) then "Cake — Large" (`variantId: B`, 150) would match the existing line by product id and merely increment its quantity — keeping the Small's `variantId` and price. Checkout would charge 2× Small. Keying every operation on `variantId` makes each chosen variant a distinct, correctly-priced line. This isn't an arbitrary choice — it mirrors the database's own modeling: the `CartItem` table declares `@@unique([userId, variantId])`, not `([userId, productId])`. The persisted shape is unchanged — `variantId` was always stored — so previously-saved carts remain valid with no migration.
 
-> **Price note.** The cart stores the *display* price it captured at add-time, but it is never trusted for billing: `placeOrder` re-reads each variant and re-resolves its discount server-side (§6, §7), so even a stale cart price (or a promotion that started/ended after the item was added) is corrected at checkout.
+```prisma
+model CartItem {
+  userId    String
+  variantId String
+  quantity  Int      @default(1)
+  @@unique([userId, variantId])
+  @@index([userId])
+  @@index([variantId])
+}
+```
 
-All React keys in the cart drawer and the checkout summary map over `variantId`, consistent with the store's identity model.
+All React keys in the cart drawer and the checkout summary map over `variantId`, consistent with the store's identity model — on both the local and DB-synced paths.
+
+### 4.3 `CartSyncProvider` — bridging guest and authenticated state
+
+[`CartSyncProvider`](../src/components/providers/CartSyncProvider.tsx) is a client-only wrapper mounted near the app root. It renders its children untouched — all of its behavior lives in a `useEffect` reacting to `useSession()` — so it introduces no SSR hydration mismatch. Its job is to tell apart two situations that both superficially look like "the user is logged in," using two refs (`firstResolve`, `knownUserId`) so each transition fires **exactly once**:
+
+| Transition | Detected as | Action |
+|---|---|---|
+| Already logged in on mount (refresh / new device) | First non-pending session reading, `userId` already set | **Hydrate**: pull the DB cart and overwrite local. *Never* merge here — the local and DB carts may already overlap, and summing them would double-count. |
+| Guest → logged in (a real sign-in this session) | `null → id` transition | **Merge**: push local lines up via [`mergeCartAction`](../src/lib/actions/cart.ts) (server **sums** onto any existing DB rows via upsert + `increment`), then adopt the merged DB cart wholesale as the new local state. |
+| Logged in → guest (logout) | `id → null` transition | `clearLocalCart()` — wipe local + `localStorage` so the next person on this device starts clean. The DB cart is **left intact** for the user's next sign-in or another device. |
+| Account switch A → B | `idA → idB` transition | `clearLocalCart()`, then hydrate B's cart fresh from the DB. |
+
+The provider deliberately never subscribes to `items`, so editing the cart doesn't re-trigger the effect — only an actual auth-state change does.
+
+> **Price note, unchanged in spirit.** Neither mode ever trusts a client-supplied price for billing: `mergeCartAction` and `syncCartItemAction` persist only `{ variantId, quantity }`, `getDbCartAction` re-resolves price (and discount) on every read, and `placeOrder` re-reads each variant and re-resolves its discount server-side at checkout (§6, §7). So even a stale cart price — or a promotion that started/ended after the item was added, or after the DB row was written — is corrected before the customer is ever billed.
 
 ---
 
