@@ -62,3 +62,17 @@ export function prettyLabel(value: string) {
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ")
 }
+
+/**
+ * Guards against an open-redirect: a `redirect` value typically arrives as a raw
+ * query-string value, so anyone can link to `/login?redirect=https://evil.com`
+ * directly (it never has to pass through our own proxy.ts to be attacker-
+ * controlled). Only a same-origin relative path is accepted — absolute URLs and
+ * the protocol-relative "//host" trick (which browsers resolve to a different
+ * origin) both fall back to "/". Shared so every auth surface that honors a
+ * `?redirect=` (login, signup, password reset, …) applies the identical guard.
+ */
+export function sanitizeRedirect(path: string | null): string {
+  if (!path || !path.startsWith("/") || path.startsWith("//")) return "/"
+  return path
+}

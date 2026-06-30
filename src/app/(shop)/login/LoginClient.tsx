@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
 import { signIn } from "@/lib/auth-client";
+import { sanitizeRedirect } from "@/lib/utils";
 
 // Cinematic cubic-bezier — fast start, silky deceleration
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
@@ -17,19 +18,6 @@ function fadeUp(delay = 0) {
     animate: { opacity: 1, y: 0 },
     transition: { duration: 0.7, ease: EASE, delay },
   };
-}
-
-/**
- * Guards against an open-redirect: `redirect` arrives as a raw query string
- * value, so anyone can link to `/login?redirect=https://evil.com` directly
- * (this never has to pass through our own proxy.ts to be attacker-controlled).
- * Only a same-origin relative path is accepted — absolute URLs and the
- * protocol-relative "//host" trick (which browsers resolve to a different
- * origin) both fall back to "/".
- */
-function sanitizeRedirect(path: string | null): string {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) return "/";
-  return path;
 }
 
 export default function LoginClient() {
