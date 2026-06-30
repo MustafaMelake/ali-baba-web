@@ -4,7 +4,7 @@ import useEmblaCarousel from "embla-carousel-react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Sparkles } from "lucide-react";
 
 export interface CategorySliderProps {
   categories: {
@@ -14,6 +14,8 @@ export interface CategorySliderProps {
     href: string;
     image: string;
     alt: string;
+    /** Optional promotion badge text, e.g. "20% OFF" or "SALE". */
+    discountLabel?: string;
   }[];
 }
 
@@ -107,6 +109,31 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
                   >
                     {cat.id}
                   </span>
+
+                  {/* Promotion badge — premium glassmorphic pill, top-right.
+                      Slides in from above, then pulses gently to draw the eye. */}
+                  {cat.discountLabel && (
+                    <motion.div
+                      className="absolute top-5 right-5 z-10"
+                      initial={{ opacity: 0, y: -14 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true, margin: "-40px" }}
+                      transition={{ duration: 0.5, ease: "easeOut", delay: i * 0.08 + 0.25 }}
+                    >
+                      <motion.span
+                        className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-gradient-to-br from-primary to-primary/80 px-3.5 py-1.5 text-[11px] font-sans font-bold uppercase tracking-[0.12em] text-white shadow-lg shadow-primary/30 backdrop-blur-md ring-1 ring-inset ring-white/10"
+                        animate={{ scale: [1, 1.06, 1] }}
+                        transition={{
+                          duration: 2.2,
+                          repeat: Infinity,
+                          ease: "easeInOut",
+                        }}
+                      >
+                        <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+                        {cat.discountLabel}
+                      </motion.span>
+                    </motion.div>
+                  )}
 
                   {/* Text block — pinned to bottom */}
                   <div className="absolute bottom-0 left-0 right-0 p-5 md:p-7">

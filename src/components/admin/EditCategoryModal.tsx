@@ -5,23 +5,20 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Loader2, Check, ImagePlus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { CategoryIdentifier } from "@/generated/prisma/enums";
 import { updateCategory } from "@/lib/actions/categories";
 import { UploadDropzone } from "@/lib/uploadthing";
-import { prettyLabel } from "@/lib/utils";
 
 export type EditableCategory = {
   id: string;
   name: string;
   subtitle: string | null;
   image: string | null;
-  identifier: CategoryIdentifier | null;
+  isFeatured: boolean;
+  sliderOrder: number;
 };
 
 const inputClasses =
   "w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm text-stone-900 outline-none transition-colors placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20";
-
-const IDENTIFIER_OPTIONS = Object.values(CategoryIdentifier);
 
 export default function EditCategoryModal({
   category,
@@ -37,7 +34,8 @@ export default function EditCategoryModal({
 
   const [name, setName] = useState("");
   const [subtitle, setSubtitle] = useState("");
-  const [identifier, setIdentifier] = useState<string>(""); // "" === NONE
+  const [isFeatured, setIsFeatured] = useState(false);
+  const [sliderOrder, setSliderOrder] = useState("0");
   const [image, setImage] = useState("");
 
   // Sync the controlled form with the target category whenever the modal opens
@@ -47,7 +45,8 @@ export default function EditCategoryModal({
     /* eslint-disable react-hooks/set-state-in-effect -- intentional: seed the form from props on open */
     setName(category.name);
     setSubtitle(category.subtitle ?? "");
-    setIdentifier(category.identifier ?? "");
+    setIsFeatured(category.isFeatured);
+    setSliderOrder(String(category.sliderOrder ?? 0));
     setImage(category.image ?? "");
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [isOpen, category]);
@@ -75,7 +74,8 @@ export default function EditCategoryModal({
         id: category.id,
         name: name.trim(),
         subtitle: subtitle.trim() || null,
-        identifier: identifier || null,
+        isFeatured,
+        sliderOrder: Number(sliderOrder) || 0,
         image: image.trim() || null,
       });
 
@@ -84,11 +84,7 @@ export default function EditCategoryModal({
         return;
       }
 
-      toast.success("Category updated", {
-        description: result.transferredFrom
-          ? `Core position moved here from “${result.transferredFrom}”.`
-          : undefined,
-      });
+      toast.success("Category updated");
       onClose();
       router.refresh();
     });
@@ -171,30 +167,54 @@ export default function EditCategoryModal({
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="cat-identifier"
-                    className="text-sm font-medium text-stone-700"
-                  >
-                    Core Position
+                <div className="space-y-3 rounded-xl border border-stone-200 bg-stone-50/60 px-4 py-3.5">
+                  <label className="flex cursor-pointer items-center justify-between gap-3">
+                    <span>
+                      <span className="block text-sm font-medium text-stone-700">
+                        Feature in slider
+                      </span>
+                      <span className="block text-xs text-stone-400">
+                        Show this category in the homepage carousel.
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isFeatured}
+                      onClick={() => setIsFeatured((v) => !v)}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                        isFeatured ? "bg-primary" : "bg-stone-300"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                          isFeatured ? "translate-x-[1.375rem]" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
                   </label>
-                  <select
-                    id="cat-identifier"
-                    value={identifier}
-                    onChange={(e) => setIdentifier(e.target.value)}
-                    className={inputClasses}
-                  >
-                    <option value="">None (standard category)</option>
-                    {IDENTIFIER_OPTIONS.map((value) => (
-                      <option key={value} value={value}>
-                        {prettyLabel(value)}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-stone-400">
-                    Core categories appear in the homepage slider. Each position
-                    is unique — assigning one already in use moves it here.
-                  </p>
+
+                  {isFeatured && (
+                    <div className="space-y-1.5 border-t border-stone-200 pt-3">
+                      <label
+                        htmlFor="cat-slider-order"
+                        className="text-sm font-medium text-stone-700"
+                      >
+                        Slider position
+                      </label>
+                      <input
+                        id="cat-slider-order"
+                        type="number"
+                        min={0}
+                        value={sliderOrder}
+                        onChange={(e) => setSliderOrder(e.target.value)}
+                        className={inputClasses}
+                      />
+                      <p className="text-xs text-stone-400">
+                        Lower numbers appear first in the slider.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">

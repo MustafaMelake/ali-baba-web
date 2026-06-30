@@ -6,24 +6,56 @@ import Hero from "@/components/Hero";
 import Navbar from "@/components/Navbar";
 import OurStory from "@/components/OurStory";
 import { prisma } from "@/lib/prisma";
+import { livePromotionWhere } from "@/lib/discounts";
+import { DiscountType } from "@/generated/prisma/enums";
 
-// Re-fetch the core categories at most once per hour (tune or remove as needed).
+// Re-fetch the slider categories at most once per hour (tune or remove as needed).
+// Note: promotion badges are resolved at cache time, so a freshly-started/expired
+// promotion can lag by up to this window.
 export const revalidate = 3600;
 
 /**
- * Loads the five "core" categories — the ones carrying a CategoryIdentifier —
- * and maps the DB rows into the shape <CategorySlider /> expects.
- * Ordered by `identifier` so the slider follows the enum's declared order
- * (ORIENTAL_SWEETS → WESTERN_SWEETS → MOULID_SWEETS → EID_SWEETS → BAKERY).
+ * Derives a short, eye-catching badge from a category's live promotions.
+ * Prefers the strongest percentage discount ("20% OFF"); any other live
+ * promotion (e.g. a fixed-amount one) falls back to a generic "SALE".
+ * Returns `undefined` when nothing is live, so the slider shows no badge.
+ */
+function discountLabelFor(
+  promotions: { type: string; value: number }[],
+): string | undefined {
+  if (promotions.length === 0) return undefined;
+
+  const percentages = promotions.filter((p) => p.type === DiscountType.PERCENTAGE);
+  if (percentages.length > 0) {
+    const best = Math.max(...percentages.map((p) => p.value));
+    return `${Math.round(best)}% OFF`;
+  }
+
+  return "SALE";
+}
+
+/**
+ * Loads the admin-curated "featured" categories — those with `isFeatured: true`
+ * — ordered by `sliderOrder` ascending, and maps the DB rows into the shape
+ * <CategorySlider /> expects. Each row also pulls its currently-live category
+ * promotions so the slider can surface a premium discount badge.
  */
 async function getSliderCategories() {
+  const now = new Date();
+
   const categories = await prisma.category.findMany({
-    where: { identifier: { not: null } },
-    orderBy: { identifier: "asc" },
+    where: { isFeatured: true },
+    orderBy: { sliderOrder: "asc" },
+    include: {
+      promotions: {
+        where: livePromotionWhere(now),
+        select: { type: true, value: true },
+      },
+    },
   });
 
   return categories.map((category, i) => ({
-    // Editorial watermark number ("01".."05") — kept presentational, not the cuid.
+    // Editorial watermark number ("01".."05"…) — kept presentational, not the cuid.
     id: String(i + 1).padStart(2, "0"),
     title: category.name,
     subtitle: category.subtitle ?? "",
@@ -32,6 +64,7 @@ async function getSliderCategories() {
     alt: category.subtitle
       ? `${category.name} — ${category.subtitle}`
       : `${category.name} category`,
+    discountLabel: discountLabelFor(category.promotions),
   }));
 }
 

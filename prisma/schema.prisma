@@ -32,17 +32,6 @@ enum CategoryType {
   CAFE // Dine-in café menu
 }
 
-/// The five fixed, first-class categories surfaced in the homepage CategorySlider.
-/// A Category that carries one of these is a "core" category (slider-eligible);
-/// the @unique on Category.identifier guarantees exactly one row per value.
-enum CategoryIdentifier {
-  ORIENTAL_SWEETS
-  WESTERN_SWEETS
-  MOULID_SWEETS
-  EID_SWEETS
-  BAKERY
-}
-
 enum FulfillmentMethod {
   DELIVERY
   PICKUP
@@ -200,12 +189,15 @@ model Category {
 
   // ── CategorySlider presentation fields ─────────────────────────────────────
   /// Short marketing tagline shown under the title in the slider card.
-  subtitle   String?
+  subtitle String?
   /// Hero image URL (or /public path) for the slider card.
-  image      String?
-  /// Marks this as one of the five core categories rendered in the homepage
-  /// slider. NULL for ordinary categories. @unique → one row per enum value.
-  identifier CategoryIdentifier? @unique
+  image    String?
+
+  /// When true, this category is surfaced in the homepage CategorySlider.
+  /// Any number of categories may be featured (no longer capped at five).
+  isFeatured  Boolean @default(false)
+  /// Ascending display position within the slider (lower = earlier).
+  sliderOrder Int     @default(0)
 
   products Product[]
 
@@ -214,6 +206,9 @@ model Category {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Matches the storefront slider read: where isFeatured, ordered by sliderOrder.
+  @@index([isFeatured, sliderOrder])
 }
 
 model MenuPage {

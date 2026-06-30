@@ -3,9 +3,6 @@
 import { revalidatePath, updateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
-import { CategoryIdentifier } from "@/generated/prisma/enums";
-
-const VALID_IDENTIFIERS = new Set<string>(Object.values(CategoryIdentifier));
 
 /** The transactional client type, derived straight from `prisma.$transaction`. */
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -32,25 +29,11 @@ async function ensureUniqueSlug(tx: Tx, base: string, excludeId?: string) {
   }
 }
 
-/**
- * Assigns `identifier` to `categoryId`, first stripping it from whoever else
- * holds it. `Category.identifier` is `@unique`, so without this the second
- * write would throw P2002 — instead the core position is *transferred*.
- * Returns the name of the category it was taken from, if any.
- */
-async function transferIdentifier(
-  tx: Tx,
-  identifier: CategoryIdentifier | null,
-  categoryId?: string,
-): Promise<string | undefined> {
-  if (!identifier) return undefined;
-  const holder = await tx.category.findUnique({
-    where: { identifier },
-    select: { id: true, name: true },
-  });
-  if (!holder || holder.id === categoryId) return undefined;
-  await tx.category.update({ where: { id: holder.id }, data: { identifier: null } });
-  return holder.name;
+/** Coerce a (possibly NaN / float / undefined) slider order into a safe non-negative integer. */
+function sanitizeSliderOrder(value: number | null | undefined): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.trunc(n));
 }
 
 /** Maps a Prisma unique-constraint violation to a user-facing message, or `null` if it's something else. */
@@ -70,12 +53,6 @@ function uniqueViolationMessage(err: unknown): string | null {
   return "That value must be unique.";
 }
 
-function parseIdentifier(value: string | null): { identifier: CategoryIdentifier | null } | { error: string } {
-  if (!value) return { identifier: null };
-  if (!VALID_IDENTIFIERS.has(value)) return { error: "Invalid core position." };
-  return { identifier: value as CategoryIdentifier };
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Create
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,13 +60,15 @@ function parseIdentifier(value: string | null): { identifier: CategoryIdentifier
 export type CreateCategoryInput = {
   name: string;
   subtitle: string | null;
-  /** A CategoryIdentifier value, or null for a standard (non-core) category. */
-  identifier: string | null;
+  /** Surface this category in the homepage CategorySlider. */
+  isFeatured: boolean;
+  /** Ascending position within the slider (only meaningful when featured). */
+  sliderOrder: number;
   image: string | null;
 };
 
 export type CreateCategoryResult =
-  | { success: true; id: string; transferredFrom?: string }
+  | { success: true; id: string }
   | { success: false; error: string };
 
 export async function createCategory(
@@ -102,12 +81,6 @@ export async function createCategory(
     return { success: false, error: "Name must be at least 2 characters." };
   }
 
-  const parsedIdentifier = parseIdentifier(input.identifier);
-  if ("error" in parsedIdentifier) {
-    return { success: false, error: parsedIdentifier.error };
-  }
-  const { identifier } = parsedIdentifier;
-
   const baseSlug = slugify(name);
   if (!baseSlug) {
     return { success: false, error: "Name must contain at least one letter or number." };
@@ -115,25 +88,26 @@ export async function createCategory(
 
   const subtitle = input.subtitle?.trim() || null;
   const image = input.image?.trim() || null;
+  const isFeatured = Boolean(input.isFeatured);
+  const sliderOrder = sanitizeSliderOrder(input.sliderOrder);
 
   try {
-    const { id, transferredFrom } = await prisma.$transaction(async (tx) => {
-      const transferredFrom = await transferIdentifier(tx, identifier);
+    const id = await prisma.$transaction(async (tx) => {
       const slug = await ensureUniqueSlug(tx, baseSlug);
 
       const created = await tx.category.create({
-        data: { name, slug, subtitle, image, identifier },
+        data: { name, slug, subtitle, image, isFeatured, sliderOrder },
         select: { id: true },
       });
 
-      return { id: created.id, transferredFrom };
+      return created.id;
     });
 
     revalidatePath("/"); // homepage CategorySlider
     revalidatePath("/admin/categories");
     updateTag("categories"); // purge the tagged Footer cache (read-your-own-writes)
 
-    return transferredFrom ? { success: true, id, transferredFrom } : { success: true, id };
+    return { success: true, id };
   } catch (err) {
     const message = uniqueViolationMessage(err);
     if (message) return { success: false, error: message };
@@ -151,19 +125,21 @@ export type UpdateCategoryInput = {
   id: string;
   name: string;
   subtitle: string | null;
-  /** A CategoryIdentifier value, or null for a standard (non-core) category. */
-  identifier: string | null;
+  /** Surface this category in the homepage CategorySlider. */
+  isFeatured: boolean;
+  /** Ascending position within the slider (only meaningful when featured). */
+  sliderOrder: number;
   image: string | null;
 };
 
 export type UpdateCategoryResult =
-  | { success: true; transferredFrom?: string }
+  | { success: true }
   | { success: false; error: string };
 
 /**
- * Updates a category's name, subtitle, cover image and "core position"
- * (CategoryIdentifier). See `transferIdentifier` for how the unique-identifier
- * conflict is resolved without ever throwing P2002.
+ * Updates a category's name, subtitle, cover image and slider placement
+ * (`isFeatured` + `sliderOrder`). Multiple categories may be featured at once,
+ * so there is no longer any single-slot transfer logic to perform.
  */
 export async function updateCategory(
   input: UpdateCategoryInput,
@@ -175,26 +151,16 @@ export async function updateCategory(
     return { success: false, error: "Name must be at least 2 characters." };
   }
 
-  const parsedIdentifier = parseIdentifier(input.identifier);
-  if ("error" in parsedIdentifier) {
-    return { success: false, error: parsedIdentifier.error };
-  }
-  const { identifier } = parsedIdentifier;
-
   const subtitle = input.subtitle?.trim() || null;
   const image = input.image?.trim() || null;
+  const isFeatured = Boolean(input.isFeatured);
+  const sliderOrder = sanitizeSliderOrder(input.sliderOrder);
 
   try {
-    const { slug, transferredFrom } = await prisma.$transaction(async (tx) => {
-      const transferredFrom = await transferIdentifier(tx, identifier, input.id);
-
-      const updated = await tx.category.update({
-        where: { id: input.id },
-        data: { name, subtitle, image, identifier },
-        select: { slug: true },
-      });
-
-      return { slug: updated.slug, transferredFrom };
+    const { slug } = await prisma.category.update({
+      where: { id: input.id },
+      data: { name, subtitle, image, isFeatured, sliderOrder },
+      select: { slug: true },
     });
 
     revalidatePath("/"); // homepage CategorySlider
@@ -202,10 +168,16 @@ export async function updateCategory(
     revalidatePath(`/category/${slug}`);
     updateTag("categories"); // purge the tagged Footer cache (read-your-own-writes)
 
-    return transferredFrom ? { success: true, transferredFrom } : { success: true };
+    return { success: true };
   } catch (err) {
     const message = uniqueViolationMessage(err);
     if (message) return { success: false, error: message };
+
+    if (typeof err === "object" && err !== null && "code" in err) {
+      if ((err as { code?: unknown }).code === "P2025") {
+        return { success: false, error: "That category no longer exists." };
+      }
+    }
 
     console.error("updateCategory failed:", err);
     return { success: false, error: "Could not update the category. Please try again." };

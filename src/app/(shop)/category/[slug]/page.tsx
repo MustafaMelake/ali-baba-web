@@ -60,10 +60,9 @@ export default async function CategoryPage({
   // One instant drives every promotion filter this request.
   const now = new Date();
 
-  // Filter by the resolved FK (indexed) rather than re-deriving from identifier;
-  // works identically for core (identifier set) and standard categories. Live
-  // promotions are joined at category / product / variant level for the Discount
-  // Engine (see CategoryPageTemplate).
+  // Filter by the resolved category FK (indexed) — works identically for
+  // featured and standard categories. Live promotions are joined at category /
+  // product / variant level for the Discount Engine (see CategoryPageTemplate).
   const products = await prisma.product.findMany({
     where: { isAvailable: true, categoryId: category.id },
     include: {
