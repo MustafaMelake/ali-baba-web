@@ -1,5 +1,9 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import {
+  createJSONStorage,
+  persist,
+  type StateStorage,
+} from "zustand/middleware";
 import {
   mergeCartAction,
   syncCartItemAction,
@@ -83,6 +87,19 @@ function fireSync(
     console.error("cart sync failed:", err);
   });
 }
+
+/**
+ * Inert storage used only when there is no `window` (server render / prerender).
+ * It reads as empty and discards writes, which is exactly what we want on the
+ * server: nothing to rehydrate, nothing to persist. Its real purpose is to keep
+ * zustand's persist middleware from bailing out early so the `.persist` API stays
+ * attached on the server too (see the `storage` option below).
+ */
+const SERVER_NOOP_STORAGE: StateStorage = {
+  getItem: () => null,
+  setItem: () => {},
+  removeItem: () => {},
+};
 
 export const useCartStore = create<CartState>()(
   persist(
@@ -179,6 +196,17 @@ export const useCartStore = create<CartState>()(
     }),
     {
       name: "ali-baba-cart",
+      // SSR-safe storage. The default (`createJSONStorage(() => window.localStorage)`)
+      // THROWS on the server (no `window`), which makes zustand's persist middleware
+      // bail out *before* it attaches the `.persist` API to the store. The checkout
+      // page reads `useCartStore.persist.onFinishHydration` during render, so a missing
+      // `.persist` crashes any server render/prerender of that page. Falling back to a
+      // no-op storage on the server keeps `createJSONStorage` returning a valid wrapper,
+      // so `.persist` is always attached; on the client it resolves to the real
+      // localStorage and rehydrates from it exactly as before.
+      storage: createJSONStorage(() =>
+        typeof window !== "undefined" ? window.localStorage : SERVER_NOOP_STORAGE,
+      ),
       // Persist ONLY the items — never UI state (isOpen) or session-derived data.
       // Keeping nothing session-specific in storage avoids stale auth across
       // users on a shared device and keeps SSR/CSR first paint identical
