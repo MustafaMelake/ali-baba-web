@@ -78,18 +78,19 @@ export default function LoginPage() {
 
 The boundary is **required**, not cosmetic: [`LoginClient.tsx`](../src/app/(shop)/login/LoginClient.tsx) reads `useSearchParams()` to recover the proxy's `?redirect=` intent, and Next.js forces any search-params reader under a Suspense boundary or the entire route opts out to client-side rendering at build time. The `LoginFallback` is an `animate-pulse` skeleton sized to the real two-column layout, reusing the same skeleton convention as the navbar's auth state — so there's no blank flash on a client-side navigation into `/login`.
 
-**Open-redirect hardening.** The `redirect` value is attacker-controllable (anyone can hand-craft `/login?redirect=https://evil.com` — it never had to pass through our proxy to arrive). `LoginClient` runs it through a strict guard before navigating:
+**Open-redirect hardening — a globally shared guard.** The `redirect` value is attacker-controllable (anyone can hand-craft `/login?redirect=https://evil.com` — it never had to pass through our proxy to arrive). The application is protected by `sanitizeRedirect`, a single function exported from [`@/lib/utils`](../src/lib/utils.ts) — **not** a private helper duplicated inside `LoginClient.tsx` — so the same protection is isomorphic and importable from any Server Component, Client Component, or Server Action that ever needs to honor a `?redirect=` value:
 
 ```ts
-function sanitizeRedirect(path: string | null): string {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) return "/";
-  return path;
+// src/lib/utils.ts
+export function sanitizeRedirect(path: string | null): string {
+  if (!path || !path.startsWith("/") || path.startsWith("//")) return "/"
+  return path
 }
 ```
 
-Only a single-slash, same-origin relative path survives; absolute URLs and the protocol-relative `//host` trick (which browsers resolve to a different origin) both fall back to `"/"`. On a successful `signIn.email`, navigation is driven by `router.push(redirectTo)` followed by `router.refresh()` — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only acted on by redirect-based flows like OAuth), so the explicit `router.push` is what completes the round-trip back to the originally-requested page.
+`LoginClient` imports it and runs the proxy's `?redirect=` value through it before navigating: `const redirectTo = sanitizeRedirect(searchParams.get("redirect"))`. Only a single-slash, same-origin relative path survives; absolute URLs and the protocol-relative `//host` trick (which browsers resolve to a different origin) both fall back to `"/"`. On a successful `signIn.email`, navigation is driven by `router.push(redirectTo)` followed by `router.refresh()` — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only acted on by redirect-based flows like OAuth), so the explicit `router.push` is what completes the round-trip back to the originally-requested page.
 
-> **Friction note (non-blocking):** `sanitizeRedirect` is currently a private function inside `LoginClient.tsx`, not a shared export in `@/lib/utils`. It is correct and well-tested-by-construction, but if a second redirect-consuming surface is ever added (e.g. a signup flow that honors `?redirect=`), promote it to `@/lib/utils` rather than copy-pasting it.
+Because the guard lives in `@/lib/utils` rather than one client island, any future redirect-consuming surface — a signup flow honoring `?redirect=`, a password-reset return path, a Server Action that needs to validate a callback target — imports the same function instead of re-implementing (and potentially drifting from) the open-redirect policy. There is exactly one definition of "what counts as a safe redirect" for the whole app.
 
 ### 2.4 Routing topology
 
@@ -120,11 +121,11 @@ const getCategoryBySlug = cache((slug: string) =>
 
 Both `generateMetadata` and `CategoryPage` call `getCategoryBySlug(slug)`; the second call within a request is served from React's memo — **one** round-trip per request. A miss renders `notFound()` (HTTP 404) and a `"Category Not Found"` title. Products are filtered by the resolved, indexed `categoryId` FK (not re-derived from `identifier`), their variants and live promotions are included so the grid can price each card through the Discount Engine (§6), and the page is `export const dynamic = "force-dynamic"` because [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx) seeds per-user wishlist hearts — it must never render from a shared ISR cache that would leak one user's state to the next.
 
-**Footer links — partial sync, with a coupling caveat.** [`Footer.tsx`](../src/components/Footer.tsx) links into this route with hrefs that use real database-derived slugs (`/category/oriental-sweets`, `/category/western-sweets`, `/category/eid-sweets`, `/category/bakery`). Two things to know when maintaining it: the link **labels** are editorial marketing copy (e.g. "Modern Pastry" → `western-sweets`, "Luxury Beverages" → `bakery`) and deliberately don't mirror the category names; and the set is a **hardcoded constant array**, not a live query — `moulid-sweets` is intentionally omitted, and because slugs are derived from the category `name`, renaming a core category in the admin would change its slug and silently 404 the corresponding footer link. If the footer ever needs to be authoritative, drive it from `prisma.category.findMany`.
+**Footer links — now DB-backed, not a coupling caveat.** [`Footer.tsx`](../src/components/layout/Footer.tsx) no longer links into this route via a hardcoded constant array. The main nav columns are now driven by the `FooterLink` model (see §5.8), so an admin-authored link's `url` is whatever the admin typed — not derived from a category's current `name`/`slug` — and a category rename in the admin can no longer silently 404 a footer link. (If no managed links exist yet, the footer falls back to a live `prisma.category.findMany` read for its "Collection" column, not the old static array.)
 
 ### 3.2 Homepage slider & `/shop` directory
 
-The homepage ([`(shop)/page.tsx`](../src/app/(shop)/page.tsx)) projects up to five `Category` rows where `identifier` is non-null, ordered by the enum's declaration order, into the Embla [`CategorySlider`](../src/components/CategorySlider.tsx). The `/shop` catalog directory fetches every available SHOP product once (with variants + live promotions) and filters by category pill **client-side** for zero-latency switching — a deliberate trade-off documented for revisiting once the catalog grows past a few hundred products. Full detail (the `CategoryIdentifier` mechanism, slot-transfer semantics, the client-filter trade-off) is in [`STOREFRONT_ARCHITECTURE.md` §1](./STOREFRONT_ARCHITECTURE.md).
+The homepage ([`(shop)/page.tsx`](../src/app/(shop)/page.tsx)) projects up to five `Category` rows where `identifier` is non-null, ordered by the enum's declaration order, into the Embla [`CategorySlider`](../src/components/CategorySlider.tsx). The `/shop` catalog directory relies on high-performance **Server-Side filtering via URL `searchParams`**: `ShopPage` reads `?category=slug` and narrows the `Product` query in Postgres (`category: categoryParam ? { type: "SHOP", slug: categoryParam } : { type: "SHOP" }`) — there is no in-memory `.filter()` over a fully-loaded product array. This keeps the data layer clean and prevents a client-side bottleneck as the catalog scales: `/shop` and `/shop?category=bakery` are two genuinely different, narrowly-scoped reads, so the grid only ever ships the rows it renders, no matter how large the SHOP catalog grows. [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx) keeps the pill-click UX instant despite the server round-trip by wrapping the URL navigation in `useTransition` and pushing with `router.push(..., { scroll: false })`, so the sticky filter bar and Framer Motion's grid animation are never disrupted by a hard reload. Full detail (the `CategoryIdentifier` mechanism, slot-transfer semantics, the `useTransition`/`searchParams` filtering pattern) is in [`STOREFRONT_ARCHITECTURE.md` §1](./STOREFRONT_ARCHITECTURE.md).
 
 ### 3.3 Product Detail Page — multi-variant client islands
 
@@ -379,6 +380,31 @@ The defining characteristic is that **every metric is computed in the database**
 
 A stable colour is assigned per branch (by name-sorted order, via `branchColor`) so every chart in the suite agrees on which colour means which branch. The page renders these into a "Star of the Month" hero card, a branch-sales bar chart, a multi-series peak-hours line chart, and per-branch best-seller cards with share bars.
 
+### 5.8 Store Settings — Dynamic Footer Navigation CMS
+
+`/admin/settings` ([`src/app/admin/settings/page.tsx`](../src/app/admin/settings/page.tsx)) gives the Super Admin full editorial control over the storefront footer's navigation — what used to be a hardcoded constant array in [`Footer.tsx`](../src/components/layout/Footer.tsx) is now a DB-backed CMS built on a single model:
+
+```prisma
+model FooterLink {
+  id       String  @id @default(cuid())
+  label    String                      // display text, e.g. "Our Story" or "Instagram"
+  url      String                      // internal path ("/category/bakery"), "#anchor", or absolute http(s) URL
+  group    String  @default("Explore") // column heading — links sharing a group form one nav column
+  order    Int     @default(0)         // ascending sort, both within a column and across columns
+  isActive Boolean @default(true)      // hidden from the storefront when false, row not deleted
+
+  @@index([isActive, order])
+}
+```
+
+Each row is an independent `label → url` pair — an admin can point a link at a `Category`, a specific `Product`, an internal page, or an external/social profile, with **no foreign key back to the catalog**. This is the deliberate fix for the old hardcoded-array problem: a footer link is no longer derived from a category's current `name`/`slug`, so renaming a category in the admin can never silently 404 a footer link.
+
+**The `group` field drives column layout without touching the grid CSS.** [`Footer.tsx`](../src/components/layout/Footer.tsx) renders the nav as `<nav className="... grid grid-cols-2 md:grid-cols-4 gap-10">`, mapping one `<div>` per distinct `group` value, in first-appearance order (the list is already sorted by `order`, so a group's position follows its earliest-ordered link). Because this is a CSS grid with a fixed `md:grid-cols-4` track count, **the layout never breaks regardless of how many groups an admin creates**: 4 or fewer groups fill a single row cleanly, and a 5th+ group simply wraps onto a new row under the same 4-column template — there's no hardcoded column count in the React tree to keep in sync with the data.
+
+**The admin surface** ([`FooterLinksManager.tsx`](../src/components/admin/FooterLinksManager.tsx)) lists links grouped into the same columns the storefront will render, with inline **▲▼ reorder** (swaps a link with its neighbour *within* the same group, then persists the full flattened order — so a same-group reorder can never reshuffle which links land in which column), an **active toggle** (soft-hide without deleting), and a modal to add/edit a link's label, URL, and group. Every mutation — `createFooterLink`, `updateFooterLink`, `deleteFooterLink`, `reorderFooterLinks` ([`src/lib/actions/settings.ts`](../src/lib/actions/settings.ts)) — gates on `requireAdmin()` and validates the URL shape server-side (must start with `/`, `#`, or `http(s)://`, rejecting a pasted `javascript:` href before it can ever reach the public footer).
+
+**Cache & read-your-own-writes.** The public footer reads links through an `unstable_cache` tagged `"footer-links"`; every settings mutation calls `updateTag("footer-links")`, so an admin's edit is reflected on the storefront the very next render — no manual revalidation, no stale footer. If no managed links exist yet (a fresh install, or before this migration), the footer falls back to the original category-driven "Collection" column plus static `Heritage`/`Boutiques`/`Client Care` groups, so the layout is never empty mid-rollout.
+
 ---
 
 ## 6. The Discount Engine
@@ -559,3 +585,9 @@ This is safe specifically because both drawers are *closed* on first client pain
 ### In one sentence
 
 The platform is server-rendered and server-validated end to end — Prisma queries and Server Actions do all the real work, auth is gated first at the Edge (`src/proxy.ts`) and then authoritatively in-page (`getServerSession()`), staff access is branch-scoped (`ADMIN` sees everything, `MANAGER` sees only their own branch, resolved live from the DB), pricing and stock are always re-resolved from the database — including the best live promotion via the pure Discount Engine, applied before VAT and delivery — rather than trusted from the client, orders are routed to a real `Branch` (or to the Super Admin when unassigned) and, like the cart, are keyed by `variantId` to keep each purchasable unit distinct and correctly priced, the database's own constraints (`P2003`, `P2002`, `P2025`) are treated as the source of truth rather than re-implemented in application code, and the client side exists only to make those server-side results — and the staff/customer actions that produce them — feel instant.
+
+---
+
+### Current Status: Operational Integrity & Technical Debt
+
+All critical architectural "Hardening" tasks tracked by this document and its storefront companion are officially resolved: the footer is a fully dynamic, DB-backed CMS (`FooterLink`, §5.8) instead of a hardcoded array that could silently 404; the open-redirect guard (`sanitizeRedirect`) is a single, globally shared utility in `@/lib/utils` rather than logic duplicated per surface; the `/shop` catalog filters server-side through `searchParams` instead of shipping the full product set to the client; and the PDP variant selector, the `variantId`-keyed cart, centralized Edge route protection, the single dynamic category route, the storefront-wide Discount Engine, the DB-backed cross-device cart, and the branch-driven checkout — every item this document and `STOREFRONT_ARCHITECTURE.md` once tracked as open work — have shipped and are documented above as `BUILT`. The platform is highly optimized for performance (server-side filtering and rendering, request-level query dedupe, zero client-side data-fetching caches), security (server-validated pricing and stock, branch-scoped RBAC resolved live from the database, a single shared open-redirect policy), and operational flexibility (admin-editable footer navigation, branch-driven fulfillment, a merchandising console for time-boxed promotions). The system state is now fully synchronized with this documentation.

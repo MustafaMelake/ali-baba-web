@@ -67,32 +67,61 @@ Each slider card links to `/category/${category.slug}` — i.e. straight into th
 
 ### 1.2 Standard Categories & the Catalog Directory — `BUILT`
 
-A standard category (`identifier === null`, `type: "SHOP"`) doesn't get its own slider slot, but it **does** get a landing page through the same dynamic route as the core categories (§1.3). It also surfaces in the **`/shop` catalog directory** ([`page.tsx`](../src/app/(shop)/shop/page.tsx) + [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx)):
+A standard category (`identifier === null`, `type: "SHOP"`) doesn't get its own slider slot, but it **does** get a landing page through the same dynamic route as the core categories (§1.3). It also surfaces in the **`/shop` catalog directory** ([`page.tsx`](../src/app/(shop)/shop/page.tsx) + [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx)), which uses **Server-Side Filtering driven by `searchParams`** (`BUILT` — was a client-side `HARDENING` note; now shipped):
 
 ```ts
-const now = new Date();   // one instant drives every promotion filter this request
+export default async function ShopPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ category?: string }>; // ?category=slug from the URL
+}) {
+  const now = new Date();   // one instant drives every promotion filter this request
+  const { category: categoryParam } = await searchParams;
 
-const [categories, products] = await Promise.all([
-  prisma.category.findMany({ where: { type: "SHOP" }, orderBy: { name: "asc" }, select: { name: true } }),
-  prisma.product.findMany({
-    where: { isAvailable: true, category: { type: "SHOP" } },
-    include: {
-      category: { select: { name: true, promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
-      promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-      variants: { orderBy: { price: "asc" }, include: { promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
-    },
-    orderBy: { createdAt: "desc" },
-  }),
-]);
+  const [categories, products, wishlistedIds] = await Promise.all([
+    prisma.category.findMany({ where: { type: "SHOP" }, orderBy: { name: "asc" }, select: { name: true, slug: true } }),
+    prisma.product.findMany({
+      where: {
+        isAvailable: true,
+        // Narrow by slug when ?category= is present; the SHOP type guard always holds.
+        category: categoryParam ? { type: "SHOP", slug: categoryParam } : { type: "SHOP" },
+      },
+      include: {
+        category: { select: { name: true, promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
+        promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        variants: { orderBy: { price: "asc" }, include: { promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    getWishlistedProductIds(),
+  ]);
+  // ...
+}
 ```
 
-This fetches **every** SHOP category name and **every** available SHOP product, in two queries, once, server-side. Each product's **starting (lowest-base-price) variant is priced through the Discount Engine** before it reaches the client — see §2.5 — so the card already carries its discounted `price` and a struck-through `compareAtPrice`. Filtering by category afterward (`"All Collection"` pill + one pill per category name) happens **entirely client-side**:
+This fetches **every** SHOP category name (for the filter pills) and **only the products matching the active filter**, in two queries, once, server-side. Each product's **starting (lowest-base-price) variant is priced through the Discount Engine** before it reaches the client — see §2.5 — so the card already carries its discounted `price` and a struck-through `compareAtPrice`.
+
+There is **no client-side `.filter()` over a fully-loaded product array.** `/shop` (no query) and `/shop?category=bakery` are two genuinely different Postgres reads, so the grid only ever ships the rows it renders. This scales correctly as the catalog grows — it replaces the earlier approach of shipping the full SHOP catalog once and filtering it in memory client-side.
+
+**The animated, app-like UX is preserved without a client-side filter** — [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx) wraps the navigation in `useTransition` and pushes the new URL with `scroll: false`:
 
 ```ts
-const filtered = active === ALL ? products : products.filter((p) => p.category === active);
+const [isPending, startTransition] = useTransition();
+
+function selectCategory(slug: string | null) {
+  const params = new URLSearchParams(searchParams.toString());
+  if (slug) params.set("category", slug);
+  else params.delete("category");
+  const query = params.toString();
+  startTransition(() => {
+    router.push(query ? `/shop?${query}` : "/shop", { scroll: false });
+  });
+}
 ```
 
-This is a deliberate trade-off: at the current catalog size, shipping the full product set once and filtering in memory means clicking a category pill is a zero-latency `setState` — no spinner, no re-fetch, just an animated grid reflow via `framer-motion`'s `layout` prop. **Revisit this once the SHOP catalog grows past roughly a few hundred products** — at that point the larger initial payload starts costing more (TTFB/LCP) than the filter-latency win is worth, and filtering should move to a server-read `?category=` param, the same pattern already used for `/admin/orders` and `/my-orders`.
+- **`useTransition`** marks the navigation as non-blocking — clicking a pill doesn't freeze the UI while the server re-renders `ShopPage` with the new `searchParams`; `isPending` dims the grid (`opacity: 0.6`) for visual feedback during the round-trip instead of showing a hard loading state.
+- **`router.push(..., { scroll: false })`** stops Next.js from jumping the viewport back to the top of the page on every filter click, so the sticky filter bar stays exactly where the customer clicked it.
+- **`framer-motion`'s `layout` + `AnimatePresence mode="popLayout"`** still own the actual grid reflow and card enter/exit animation — `useTransition` only governs *when* the new server-rendered list lands; once it does, Framer Motion animates the diff exactly as it did under the old client-filtered version. The result is a server-driven filter that still *feels* like an instant client-side one.
 
 ### 1.3 The single dynamic category route — `BUILT` (was a `HARDENING` recommendation; now shipped)
 
@@ -140,15 +169,29 @@ Three properties to preserve:
 2. **Filtering by `categoryId`, not `identifier`.** Once the row is resolved, products are filtered by the indexed FK. This is why the same route works for standard categories (which have no `identifier`) exactly as it does for core ones — there's no enum branch.
 3. **`force-dynamic` is mandatory.** `CategoryPageTemplate` seeds per-user wishlist hearts (§4.4) and prices each card through the Discount Engine against a per-request `now`; rendering from a shared ISR cache would leak one user's hearts to the next visitor and could serve a stale promotion window.
 
-**Footer coupling caveat — `HARDENING`.** [`Footer.tsx`](../src/components/layout/Footer.tsx) links into this route with hrefs that use real database slugs (`/category/oriental-sweets`, `/category/western-sweets`, `/category/eid-sweets`, `/category/bakery`). But it is a **hardcoded constant array**, with two consequences worth knowing:
+**Footer navigation — `BUILT` (was a `HARDENING` recommendation; now shipped).** [`Footer.tsx`](../src/components/layout/Footer.tsx) is no longer a hardcoded constant array — the main nav columns are a fully dynamic, DB-backed system driven by the `FooterLink` model:
 
-- The link **labels** are editorial marketing copy that don't mirror the category names — "Modern Pastry" → `western-sweets`, "Bespoke Cakes" → `eid-sweets`, "Luxury Beverages" → `bakery`. And `moulid-sweets` is intentionally not linked.
-- Because slugs are derived from the category `name` ([`slugify`](../src/lib/actions/categories.ts)), **renaming a core category in the admin changes its slug and silently 404s the matching footer link.** The links are correct today; they are not self-healing. If the footer ever needs to be authoritative, drive it from `prisma.category.findMany({ where: { identifier: { not: null } } })` the way the homepage slider does.
+```prisma
+model FooterLink {
+  id       String  @id @default(cuid())
+  label    String                    // display text, e.g. "Our Story" or "Instagram"
+  url      String                    // internal path or absolute URL
+  group    String  @default("Explore") // column heading — links sharing a group form one nav column
+  order    Int     @default(0)         // ascending sort, both within a column and across columns
+  isActive Boolean @default(true)      // hidden from the storefront when false, row not deleted
+
+  @@index([isActive, order])
+}
+```
+
+Each row is just `label → url`, so an admin can point a link at a `Category`, a specific `Product`, an internal page, or an external/social URL with no schema coupling — there's no slug-rename-404 hazard anymore, because the URL is whatever the admin typed, not derived from a category's current `name`. Rows are grouped by `group` into nav columns (preserving first-appearance order for columns, `order` ascending within each), edited from `/admin/settings → Footer Navigation`.
+
+The read path ([`getActiveFooterLinks`](../src/components/layout/Footer.tsx)) is `unstable_cache`-wrapped and tagged `"footer-links"`, so the footer is served from cache and only re-queries Postgres when the settings Server Action invalidates the tag. If no managed links exist yet (or the DB read throws), the footer falls back to the original category-driven "Collection" column plus the static `Heritage`/`Boutiques`/`Client Care` groups, so the layout is never empty mid-migration.
 
 | Entry point | Source | Shows |
 |---|---|---|
 | Homepage slider | `Category.findMany({ identifier: { not: null } })`, enum order | The configured core categories (0–5 cards) |
-| `/shop` | `Category` (type SHOP, all) + `Product` (type SHOP, available) | Full catalog, discount-priced, client-filtered by category pill |
+| `/shop` | `Category` (type SHOP, all) + `Product` (type SHOP, available, narrowed by `?category=slug`) | Discount-priced catalog, **server-filtered** per request — `?category=` selects the Postgres query, not an in-memory filter |
 | `/category/[slug]` | `getCategoryBySlug(slug)` → products by `categoryId` | **Any** category's landing page (core or standard), one route |
 
 ---
@@ -301,7 +344,7 @@ Active promotions are surfaced on every storefront price node by one shared, pur
 
 **Always pass a single `now` per request** (every page above declares `const now = new Date()` once) so the DB filter and the in-memory evaluation agree on the same instant — a promo can't be "live" for the query but "expired" for the math.
 
-**Product cards** ([`ProductCard.tsx`](../src/components/ProductCard.tsx), fed by [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx), `/shop`, and the category route) price the **starting (lowest-base-price) variant** — the representative figure the card shows and the variant quick-add adds:
+**Product cards** ([`ProductCard.tsx`](../src/components/ProductCard.tsx), fed by [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx), `/shop`, the category route, and the wishlist page) price the **starting (lowest-base-price) variant** — the representative figure the card shows and the variant quick-add adds:
 
 ```ts
 const starting = product.variants[0];
@@ -312,8 +355,10 @@ const priced = resolvePrice(
 );
 const card = {
   ...,
-  price: priced.finalPrice,                                    // discounted starting price
-  compareAtPrice: priced.hasDiscount ? priced.basePrice : null, // strikethrough only on a live promo
+  price: priced.finalPrice, // discounted starting price
+  // Live promo → struck-through base price; otherwise fall back to the
+  // variant's manual Compare-At so admin-set "was" prices show on the card too.
+  compareAtPrice: priced.hasDiscount ? priced.basePrice : starting?.compareAtPrice ?? null,
 };
 ```
 
@@ -321,9 +366,9 @@ The card then renders, only while `compareAtPrice > price`:
 - a struck-through original price beside the live price (`aria-label="Original price … EGP"`), and
 - a `-{percentOff}%` **sale badge** over the image, where `percentOff = Math.round((1 - price / compareAtPrice) * 100)`.
 
-**PDP variant islands** (§2.1–§2.4) price **every** variant — not just the cheapest — so the strikethrough and percentage follow the selected pill. The displayed `compareAtPrice` is `priced.basePrice` on a live promo, or the manual `ProductVariant.compareAtPrice` column when no promo applies.
+**PDP variant islands** (§2.1–§2.4) price **every** variant — not just the cheapest — so the strikethrough and percentage follow the selected pill, using the same `priced.hasDiscount ? priced.basePrice : v.compareAtPrice` fallback.
 
-> **Intentional card-vs-PDP asymmetry — keep it in mind.** Cards pass `compareAtPrice: priced.hasDiscount ? priced.basePrice : null`, i.e. **cards ignore the manual `compareAtPrice` column** and only ever show a strikethrough for a live Discount-Engine promotion. The PDP additionally falls back to the manual column. So a variant with a manual "was" price but no active promotion shows a strikethrough on its **PDP** but a plain price on the **grid card**. If you ever want the manual compare-at to drive a card sale badge too, change the card mappers in `ShopPage`/`CategoryPageTemplate` to fall back to `starting.compareAtPrice` — don't reintroduce discount math in the component.
+**The manual fallback is now mirrored everywhere a product card renders — `BUILT` (was a `HARDENING` asymmetry; now closed).** [`ShopClient`](../src/app/(shop)/shop/page.tsx) / `ShopPage`, [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx), and the [wishlist page](../src/app/(shop)/wishlist/page.tsx) (via [`getWishlistItems`](../src/lib/actions/wishlist.ts)) all use the identical `priced.hasDiscount ? priced.basePrice : starting?.compareAtPrice ?? null` expression. A variant with a manual "was" price but no active promotion now shows the same strikethrough and sale styling on the **PDP**, every **grid card** (`/shop`, `/category/[slug]`), and the **wishlist** — there is no longer a surface where the manual compare-at silently fails to render. If a new card-rendering surface is added, copy this exact fallback rather than re-deriving discount logic in the component (the math itself still only ever lives in `src/lib/discounts.ts`).
 
 ---
 
@@ -443,19 +488,19 @@ export default function LoginPage() {
 
 The boundary is **required**: [`LoginClient.tsx`](../src/app/(shop)/login/LoginClient.tsx) reads `useSearchParams()` to recover the proxy's `?redirect=` intent, and Next.js forces any search-params reader under Suspense or the whole route opts out to client-side rendering at build time. `LoginFallback` is an `animate-pulse` skeleton sized to the real two-column layout — same skeleton convention as the navbar's auth state — so there's no blank flash on a client-side navigation into `/login`.
 
-**Open-redirect hardening — `sanitizeRedirect`.** The `redirect` value is attacker-controllable (anyone can craft `/login?redirect=https://evil.com` directly; it never had to pass through our proxy to arrive). `LoginClient` runs it through a strict guard:
+**Open-redirect hardening — `sanitizeRedirect`.** The `redirect` value is attacker-controllable (anyone can craft `/login?redirect=https://evil.com` directly; it never had to pass through our proxy to arrive). The guard is now a **shared export in [`@/lib/utils`](../src/lib/utils.ts)** (was previously a private function inside `LoginClient.tsx`), making the protection isomorphic — usable from both Server and Client Components/Actions, not just the one client island that happened to define it first:
 
 ```ts
-function sanitizeRedirect(path: string | null): string {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) return "/";
-  return path;
+// src/lib/utils.ts
+export function sanitizeRedirect(path: string | null): string {
+  if (!path || !path.startsWith("/") || path.startsWith("//")) return "/"
+  return path
 }
-const redirectTo = sanitizeRedirect(searchParams.get("redirect"));
 ```
 
-Only a single-slash, same-origin relative path survives. Absolute URLs and the protocol-relative `//host` trick (which browsers resolve to a *different* origin) both collapse to `"/"`. On a successful `signIn.email`, navigation is **`router.push(redirectTo)` followed by `router.refresh()`** — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only honored by redirect-based flows like OAuth/verification, and is forwarded only for completeness), so the explicit `router.push` is what actually returns the user to the page the proxy bounced them from. The `router.refresh()` also matters for the cart: it lets [`CartSyncProvider`](../src/components/providers/CartSyncProvider.tsx) observe the new session and fold the guest cart into the account (§5.4).
+`LoginClient.tsx` imports it: `const redirectTo = sanitizeRedirect(searchParams.get("redirect"));`. Only a single-slash, same-origin relative path survives. Absolute URLs and the protocol-relative `//host` trick (which browsers resolve to a *different* origin) both collapse to `"/"`. On a successful `signIn.email`, navigation is **`router.push(redirectTo)` followed by `router.refresh()`** — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only honored by redirect-based flows like OAuth/verification, and is forwarded only for completeness), so the explicit `router.push` is what actually returns the user to the page the proxy bounced them from. The `router.refresh()` also matters for the cart: it lets [`CartSyncProvider`](../src/components/providers/CartSyncProvider.tsx) observe the new session and fold the guest cart into the account (§5.4).
 
-> **`HARDENING`:** `sanitizeRedirect` currently lives as a private function inside `LoginClient.tsx`, not as a shared export in `@/lib/utils`. It's correct as-is; if a second redirect-consuming surface appears (e.g. the signup flow honoring `?redirect=`), promote it to `@/lib/utils` rather than duplicating it.
+**Extending it.** Because `sanitizeRedirect` now lives in `@/lib/utils`, any new redirect-consuming surface — a signup flow honoring `?redirect=`, a password-reset return path, a future Server Action — imports the same guard rather than redefining it. There is now exactly one open-redirect policy for the whole app, enforced isomorphically (the same function runs unchanged on the server or in the browser).
 
 ### 4.5 Wishlist flow — `BUILT`
 
@@ -607,7 +652,7 @@ A note on cart-hydration UX at checkout: the page tracks Zustand's `persist` hyd
 | **CLS** | Pulse-skeleton for the navbar auth state while `useSession()` is `isPending`; matching `animate-pulse` skeleton as the `/login` Suspense fallback; checkout holds its background until the cart `persist` store rehydrates | `Navbar.tsx`, `LoginFallback`, `checkout/page.tsx` |
 | **INP** | `IntersectionObserver` for the menu scroll-spy instead of a `scroll` handler | `MenuClient.tsx` |
 | **INP** | Every mutation (wishlist toggle, status change, add-to-cart) runs with optimistic local state — UI responds before the round-trip; cart DB sync is fire-and-forget, never blocking | wishlist, orders, `ProductPurchasePanel`, `cart-store.ts` |
-| **INP** | Client-side category filtering on `/shop` trades a larger initial payload for zero-latency filter clicks — re-evaluate as the catalog grows | `ShopClient.tsx` |
+| **INP** | `/shop` category filtering is server-side (`?category=` narrows the Prisma query); `useTransition` + `router.push(..., { scroll: false })` keep the pill click non-blocking and scroll-stable while the server re-renders, so it still feels instant without shipping the full catalog up front | `ShopClient.tsx` |
 | **TTFB** | React `cache()` dedupes the per-request category lookup across `generateMetadata` + page — one Postgres round-trip, not two | `/category/[slug]` |
 | **Bundle size** | Embla Carousel (~6 KB) instead of a heavier carousel; Zustand (~1 KB) instead of Redux/Context for cart state; the discount resolver is pure TS with no runtime deps | `CategorySlider.tsx`, `cart-store.ts`, `discounts.ts` |
 | **Hydration correctness** | Wishlist heart state, the PDP's default variant, and discount prices are computed/derived deterministically server-side (server-seeded prop / cheapest-available / `resolvePrice`) — never from a client-only `useEffect` fetch that reintroduces a flash-of-wrong-state | `getWishlistedProductIds()`, `ProductPurchasePanel`, `discounts.ts` |
@@ -628,8 +673,8 @@ The blocking storefront work this document used to track is shipped. What remain
 | 6 | Expose the manual `compareAtPrice` in the admin product forms | §2.2 | — | ✅ Shipped (`New`/`EditProductForm` "Compare-At Price"; PDP uses it as the no-promo fallback) |
 | 7 | DB-backed, cross-device cart for logged-in users | §5.1, §5.4 | — | ✅ Shipped (`CartItem` + `CartSyncProvider` + `cart.ts` actions) |
 | 8 | Branch-driven checkout delivery (retire the `DeliveryLocation` enum) | §5.6 | — | ✅ Shipped (`getActiveBranches` + `BranchSelect`; enum kept only for legacy orders) |
-| 9 | Drive footer category links from the DB (or accept the rename→404 coupling) | §1.3 | Low | Hardcoded array; labels are marketing copy, `moulid-sweets` omitted |
-| 10 | Promote `sanitizeRedirect` to `@/lib/utils` if a second redirect surface appears | §4.4 | Low | Currently private to `LoginClient.tsx` |
-| 11 | Surface the manual `compareAtPrice` on grid cards (currently PDP-only fallback) | §2.5 | Low | Intentional asymmetry today; cards only badge live promotions |
+| 9 | Drive footer category/nav links from the DB (or accept the rename→404 coupling) | §1.3 | Low | ✅ Shipped — `FooterLink` model, admin-managed columns via `group` + `order`, category-driven fallback retained |
+| 10 | Promote `sanitizeRedirect` to `@/lib/utils` if a second redirect surface appears | §4.4 | Low | ✅ Shipped — now a shared, isomorphic export in `@/lib/utils`, imported by `LoginClient.tsx` |
+| 11 | Surface the manual `compareAtPrice` on grid cards (currently PDP-only fallback) | §2.5 | Low | ✅ Shipped — manual fallback mirrored to `ShopClient`/`ShopPage`, `CategoryPageTemplate`, and the wishlist; PDP, cards, and wishlist now agree |
 | 12 | Build a full-page `/cart` view if a deep-linkable cart is needed | §5.7 | Low | Empty directory; drawer-only today |
-| 13 | Revisit client-side `/shop` filtering once the catalog grows materially | §1.2 | Low | Not a problem yet |
+| 13 | Revisit client-side `/shop` filtering once the catalog grows materially | §1.2 | — | ✅ Shipped — filtering moved server-side (`?category=` + Prisma `where`), `useTransition`/`router.push({ scroll: false })` preserve the zero-latency feel |
