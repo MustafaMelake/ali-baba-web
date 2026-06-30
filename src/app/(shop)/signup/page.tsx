@@ -47,7 +47,9 @@ export default function SignupPage() {
       });
 
       if (error) {
-        setError(error.message ?? "Unable to create your account. Please try again.");
+        setError(
+          error.message ?? "Unable to create your account. Please try again."
+        );
         setLoading(false);
         return;
       }
@@ -214,7 +216,7 @@ export default function SignupPage() {
           transition={{ duration: 1.8, ease: EASE }}
         >
           <Image
-            src="/cake2.jpg"
+            src="/cake4.jpg"
             alt="Ali Baba — signature confections"
             fill
             priority
