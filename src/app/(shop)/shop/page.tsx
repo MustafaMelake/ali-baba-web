@@ -12,19 +12,35 @@ import ShopClient from "./ShopClient";
 // Reads the per-user wishlist → must be dynamic (no shared ISR cache).
 export const dynamic = "force-dynamic";
 
-export default async function ShopPage() {
+export default async function ShopPage({
+  searchParams,
+}: {
+  // Next 15 streams searchParams as a Promise — the active filter is the slug.
+  searchParams: Promise<{ category?: string }>;
+}) {
   // One instant drives every promotion filter + evaluation this request.
   const now = new Date();
+
+  // Active category slug from the URL (?category=slug). Absent ⇒ "All Collection".
+  const { category: categoryParam } = await searchParams;
 
   // Run all queries concurrently.
   const [categories, products, wishlistedIds] = await Promise.all([
     prisma.category.findMany({
       where: { type: "SHOP" },
       orderBy: { name: "asc" },
-      select: { name: true },
+      select: { name: true, slug: true },
     }),
     prisma.product.findMany({
-      where: { isAvailable: true, category: { type: "SHOP" } },
+      // Server-side category filtering: narrow by slug when one is present, so
+      // the grid only ever ships the products it renders (LCP scales with the
+      // page size, not the whole catalog). The SHOP type guard is always kept.
+      where: {
+        isAvailable: true,
+        category: categoryParam
+          ? { type: "SHOP", slug: categoryParam }
+          : { type: "SHOP" },
+      },
       include: {
         // Category + its live promotions (name kept for the card label).
         category: {
@@ -47,8 +63,6 @@ export default async function ShopPage() {
     }),
     getWishlistedProductIds(),
   ]);
-
-  const fetchedCategories = categories.map((c) => c.name);
 
   const mappedProducts: ShopProduct[] = products.map((product) => {
     // Discount the starting (lowest-base-price) variant — that's the card's
@@ -81,7 +95,7 @@ export default async function ShopPage() {
 
   return (
     <ShopClient
-      categories={fetchedCategories}
+      categories={categories}
       products={mappedProducts}
       wishlistedIds={wishlistedIds}
     />
