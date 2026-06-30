@@ -492,3 +492,36 @@ model Promotion {
 
   @@index([isActive])
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Storefront navigation (admin-managed)
+//
+// A fully editorial set of footer links: each row is just a label + an href, so
+// the admin can point one at a Category, a specific Product, an internal page,
+// or an external/social URL — the storefront simply renders `label → url`. This
+// replaces the previously hardcoded footer links (see src/components/layout/
+// Footer.tsx), which fall back in only when no managed links exist.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model FooterLink {
+  id    String @id @default(cuid())
+  /// Display text, e.g. "Our Story" or "Instagram".
+  label String
+  /// The href — an internal path ("/category/oriental-sweets") or absolute URL.
+  url   String
+  /// Column heading this link renders under in the footer, e.g. "Customer
+  /// Service" or "About Us". Links sharing a group form one nav column.
+  group String @default("Explore")
+  /// Ascending sort position within the footer (lower = earlier). Drives both
+  /// the order within a column and the left-to-right order of the columns
+  /// (a column's position follows its earliest-ordered link).
+  order Int    @default(0)
+  /// Hidden from the storefront when false, without deleting the row.
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Matches the storefront read: where isActive, ordered by `order` ascending.
+  @@index([isActive, order])
+}

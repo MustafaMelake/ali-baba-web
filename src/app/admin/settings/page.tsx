@@ -1,6 +1,8 @@
 import { Store } from "lucide-react";
 import { requireAdminPage } from "@/lib/session";
+import { getFooterLinks } from "@/lib/actions/settings";
 import PageHeader from "@/components/admin/PageHeader";
+import FooterLinksManager from "@/components/admin/FooterLinksManager";
 
 export const metadata = {
   title: "Settings | Admin",
@@ -34,6 +36,9 @@ function Field({
 
 export default async function AdminSettingsPage() {
   await requireAdminPage();
+
+  // Admin-managed storefront footer links (active + inactive), ordered.
+  const footerLinks = await getFooterLinks();
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -153,6 +158,9 @@ export default async function AdminSettingsPage() {
           </button>
         </div>
       </form>
+
+      {/* Footer Navigation — fully wired to the `settings` Server Actions. */}
+      <FooterLinksManager links={footerLinks} />
     </div>
   );
 }

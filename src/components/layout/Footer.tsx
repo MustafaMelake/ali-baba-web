@@ -8,24 +8,28 @@ import NewsletterForm from "./NewsletterForm";
 /**
  * Footer — a React Server Component.
  *
- * The "Collection" column is driven straight from the database so it can never
- * 404 after an admin renames a category or edits its slug. Everything renders
- * on the server: no framer-motion, no client hooks → zero JS shipped for the
- * footer (the only interactive bit, the newsletter, uses a progressively-
- * enhanced Server Action form, so it also needs no client bundle).
+ * The main nav columns are fully admin-managed: each FooterLink carries a
+ * `group` (the column heading) and an `order`, edited from /admin/settings →
+ * Footer Navigation. When no managed links exist (or the DB is unreachable /
+ * pre-migration) the footer falls back to the category-driven "Collection"
+ * column + the static columns below, so the layout is never empty.
  *
- * Cache: the category query is wrapped in `unstable_cache`, tagged
- * `"categories"`, so the footer is served from cache on every request and only
- * re-queries Postgres when that tag is invalidated (see the revalidation note
- * at the bottom of this file).
+ * Everything renders on the server: no framer-motion, no client hooks → zero JS
+ * shipped for the footer (the only interactive bit, the newsletter, uses a
+ * progressively-enhanced Server Action form, so it also needs no client bundle).
+ *
+ * Cache: both queries are wrapped in `unstable_cache` — categories tagged
+ * `"categories"`, managed links tagged `"footer-links"` — so the footer is
+ * served from cache and only re-queries Postgres when a tag is invalidated by
+ * the relevant Server Action (read-your-own-writes).
  */
 
-type FooterLink = { label: string; href: string };
+type NavLink = { label: string; href: string };
 
 // ── Static fallback ──────────────────────────────────────────────────────────
 // Used if the DB is unreachable (query throws) or returns no shop categories,
 // so the column is never empty. Mirrors the original hardcoded set.
-const FALLBACK_COLLECTION: FooterLink[] = [
+const FALLBACK_COLLECTION: NavLink[] = [
   { label: "Oriental Sweets", href: "/category/oriental-sweets" },
   { label: "Modern Pastry", href: "/category/western-sweets" },
   { label: "Bespoke Cakes", href: "/category/eid-sweets" },
@@ -34,7 +38,7 @@ const FALLBACK_COLLECTION: FooterLink[] = [
 
 // The non-category columns stay as static config — they aren't slug-driven and
 // weren't the source of the 404s.
-const STATIC_GROUPS: { heading: string; links: FooterLink[] }[] = [
+const STATIC_GROUPS: { heading: string; links: NavLink[] }[] = [
   {
     heading: "Heritage",
     links: [
@@ -84,7 +88,7 @@ const getShopCategories = unstable_cache(
   { tags: ["categories"], revalidate: 3600 }, // tag-invalidated; 1h safety TTL
 );
 
-async function getCollectionLinks(): Promise<FooterLink[]> {
+async function getCollectionLinks(): Promise<NavLink[]> {
   try {
     const categories = await getShopCategories();
     if (categories.length === 0) return FALLBACK_COLLECTION;
@@ -99,10 +103,50 @@ async function getCollectionLinks(): Promise<FooterLink[]> {
   }
 }
 
+// ── Managed footer columns (admin-editable) ──────────────────────────────────
+// The main nav columns are curated from /admin/settings → Footer Navigation:
+// each active link carries a `group` (column heading) + `order`. Cached + tagged
+// "footer-links"; the settings Server Actions call updateTag("footer-links") so
+// an edit shows up on the next render.
+const getActiveFooterLinks = unstable_cache(
+  async () =>
+    prisma.footerLink.findMany({
+      where: { isActive: true },
+      orderBy: { order: "asc" },
+      select: { id: true, label: true, url: true, group: true },
+    }),
+  ["footer-managed-links"], // cache key
+  { tags: ["footer-links"], revalidate: 3600 }, // tag-invalidated; 1h safety TTL
+);
+
+type FooterColumn = { heading: string; links: NavLink[] };
+
+async function getFooterColumns(): Promise<FooterColumn[]> {
+  try {
+    const links = await getActiveFooterLinks();
+    if (links.length > 0) {
+      // Group by `group`, preserving first-appearance order for the columns and
+      // (since the query is ordered by `order`) `order` asc within each column.
+      const columns = new Map<string, NavLink[]>();
+      for (const link of links) {
+        const col = columns.get(link.group) ?? [];
+        col.push({ label: link.label, href: link.url });
+        columns.set(link.group, col);
+      }
+      return [...columns].map(([heading, groupLinks]) => ({ heading, links: groupLinks }));
+    }
+  } catch (err) {
+    console.error("Footer: failed to load managed links, using fallback —", err);
+  }
+  // Fallback — the original category-driven Collection + static columns, so the
+  // footer is unchanged until an admin curates links (and pre-migration).
+  const collectionLinks = await getCollectionLinks();
+  return [{ heading: "The Collection", links: collectionLinks }, ...STATIC_GROUPS];
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 export default async function Footer() {
-  const collectionLinks = await getCollectionLinks();
-  const navGroups = [{ heading: "The Collection", links: collectionLinks }, ...STATIC_GROUPS];
+  const navGroups = await getFooterColumns();
 
   return (
     <footer className="bg-[#0F5A6D] text-white">
@@ -157,16 +201,20 @@ export default async function Footer() {
                   {group.heading}
                 </p>
                 <ul className="flex flex-col gap-3.5">
-                  {group.links.map((link) => (
-                    <li key={`${group.heading}-${link.href}`}>
-                      <Link
-                        href={link.href}
-                        className="font-sans text-sm text-white/50 hover:text-white/90 transition-colors duration-200"
-                      >
-                        {link.label}
-                      </Link>
-                    </li>
-                  ))}
+                  {group.links.map((link) => {
+                    const external = /^https?:\/\//i.test(link.href);
+                    return (
+                      <li key={`${group.heading}-${link.href}`}>
+                        <Link
+                          href={link.href}
+                          {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+                          className="font-sans text-sm text-white/50 hover:text-white/90 transition-colors duration-200"
+                        >
+                          {link.label}
+                        </Link>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             ))}
