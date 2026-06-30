@@ -12,7 +12,7 @@ import { DiscountType } from "@/generated/prisma/enums";
 // Re-fetch the slider categories at most once per hour (tune or remove as needed).
 // Note: promotion badges are resolved at cache time, so a freshly-started/expired
 // promotion can lag by up to this window.
-export const revalidate = 3600;
+export const revalidate = 0;
 
 /**
  * Derives a short, eye-catching badge from a category's live promotions.
@@ -21,11 +21,13 @@ export const revalidate = 3600;
  * Returns `undefined` when nothing is live, so the slider shows no badge.
  */
 function discountLabelFor(
-  promotions: { type: string; value: number }[],
+  promotions: { type: string; value: number }[]
 ): string | undefined {
   if (promotions.length === 0) return undefined;
 
-  const percentages = promotions.filter((p) => p.type === DiscountType.PERCENTAGE);
+  const percentages = promotions.filter(
+    (p) => p.type === DiscountType.PERCENTAGE
+  );
   if (percentages.length > 0) {
     const best = Math.max(...percentages.map((p) => p.value));
     return `${Math.round(best)}% OFF`;
