@@ -29,7 +29,13 @@ export interface CategoryProduct {
   description: string | null;
   images: string[];
   category: { name: string; promotions?: PromotionLike[] };
-  variants: { id: string; price: number; promotions?: PromotionLike[] }[];
+  variants: {
+    id: string;
+    price: number;
+    /** Optional manual strikethrough price, used as the card's promo fallback. */
+    compareAtPrice?: number | null;
+    promotions?: PromotionLike[];
+  }[];
   promotions?: PromotionLike[];
 }
 
@@ -148,7 +154,9 @@ export default async function CategoryPageTemplate({
                   slug: product.slug,
                   category: product.category.name,
                   price: priced.finalPrice,
-                  compareAtPrice: priced.hasDiscount ? priced.basePrice : null,
+                  // Live promo → struck-through base price; otherwise fall back
+                  // to the variant's manual Compare-At (mirrors the PDP).
+                  compareAtPrice: priced.hasDiscount ? priced.basePrice : starting?.compareAtPrice ?? null,
                   image: product.images[0] ?? "/placeholder.jpg",
                   tagline: product.description ?? undefined,
                 };

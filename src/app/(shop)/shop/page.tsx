@@ -70,7 +70,10 @@ export default async function ShopPage() {
       slug: product.slug,
       category: product.category.name,
       price: priced.finalPrice, // discounted starting price
-      compareAtPrice: priced.hasDiscount ? priced.basePrice : null,
+      // Live promo → struck-through base price; otherwise fall back to the
+      // variant's manual Compare-At so admin-set "was" prices show on the card
+      // too (mirrors the PDP — see product/[slug]/page.tsx).
+      compareAtPrice: priced.hasDiscount ? priced.basePrice : starting?.compareAtPrice ?? null,
       image: product.images[0] ?? "/placeholder.jpg",
       tagline: product.description ?? undefined,
     };

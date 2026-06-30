@@ -116,6 +116,7 @@ export async function getWishlistItems(): Promise<GetWishlistResult> {
               select: {
                 id: true,
                 price: true,
+                compareAtPrice: true, // manual "was" price → card fallback
                 promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
               },
             },
@@ -142,7 +143,9 @@ export async function getWishlistItems(): Promise<GetWishlistResult> {
         image: product.images[0] ?? "/placeholder.jpg",
         category: product.category.name,
         price: priced.finalPrice,
-        compareAtPrice: priced.hasDiscount ? priced.basePrice : null,
+        // Live promo → struck-through base price; otherwise fall back to the
+        // variant's manual Compare-At (mirrors the PDP and storefront cards).
+        compareAtPrice: priced.hasDiscount ? priced.basePrice : starting?.compareAtPrice ?? null,
       };
     });
 
