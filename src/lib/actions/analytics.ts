@@ -118,6 +118,9 @@ export async function getAnalytics(): Promise<AnalyticsData> {
 
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  // Peak Hours only looks at recent activity so old test/seed data (e.g. odd
+  // 2 AM spikes) can't distort the current customer-behaviour chart.
+  const peakWindowStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const monthLabel = new Intl.DateTimeFormat("en-US", {
     month: "long",
     year: "numeric",
@@ -151,14 +154,16 @@ export async function getAnalytics(): Promise<AnalyticsData> {
       // (2) Orders bucketed by branch × hour-of-day, in store-local time. The
       // createdAt column is a UTC `timestamp`; reinterpret it as UTC then convert
       // to Cairo wall-clock before extracting the hour. COUNT(*) is bigint, so we
-      // cast everything to int4 to avoid BigInt serialization.
+      // cast everything to int4 to avoid BigInt serialization. Scoped to the last
+      // 30 days (peakWindowStart, bound as a parameter — not string-interpolated)
+      // so stale seed/test orders can't skew the current-behaviour chart.
       prisma.$queryRaw<PeakRow[]>`
         SELECT
           "branchId",
           EXTRACT(HOUR FROM "createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${STORE_TZ})::int AS hour,
           COUNT(*)::int AS orders
         FROM "Order"
-        WHERE "branchId" IS NOT NULL AND "status" <> 'CANCELLED'
+        WHERE "branchId" IS NOT NULL AND "status" <> 'CANCELLED' AND "createdAt" >= ${peakWindowStart}
         GROUP BY "branchId", hour
       `,
 
