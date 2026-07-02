@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FulfillmentMethod } from "@/generated/prisma/enums";
 
 /**
  * Shared validation schemas — imported by BOTH the client forms (for instant
@@ -88,6 +89,63 @@ export const productUpdateSchema = z.object({
 });
 
 export type ProductUpdateInput = z.infer<typeof productUpdateSchema>;
+
+// ─── Checkout ────────────────────────────────────────────────────────────────
+
+/** One order line as the client ships it — the server re-resolves the price. */
+export const checkoutItemSchema = z.object({
+  variantId: z.string().trim().min(1, "Missing variant."),
+  quantity: z
+    .number({ error: "Enter a valid quantity" })
+    .int("Quantity must be a whole number")
+    .min(1, "Quantity must be at least 1"),
+});
+
+/**
+ * The full checkout payload, shared by the checkout form (instant feedback)
+ * and `placeOrder` (the authoritative check — never trust the client copy).
+ *
+ * `addressLine` is CONDITIONALLY required: a DELIVERY order without a real
+ * address is undeliverable, while a PICKUP order carries no address at all.
+ * That cross-field rule can't be expressed on the field itself, so it lives
+ * in `superRefine` with the issue attached to `addressLine` — the form
+ * surfaces it inline on that exact input (path → `addressLine`).
+ */
+export const checkoutSchema = z
+  .object({
+    items: z.array(checkoutItemSchema).min(1, "Your cart is empty."),
+    fulfillment: z.enum(FulfillmentMethod),
+    addressLine: optionalText(500),
+    pickupBranch: optionalText(120),
+    branchId: z.string().nullish(),
+    customerName: z
+      .string()
+      .trim()
+      .min(1, "Name is required")
+      .max(120, "Name is too long"),
+    customerPhone: z
+      .string()
+      .trim()
+      .min(1, "Phone number is required")
+      .max(30, "Phone number is too long"),
+    orderNotes: optionalText(1000),
+  })
+  .superRefine((data, ctx) => {
+    // `optionalText` trims, so a whitespace-only address arrives here as "";
+    // the extra .trim() is belt-and-braces against future schema edits.
+    if (
+      data.fulfillment === FulfillmentMethod.DELIVERY &&
+      (!data.addressLine || data.addressLine.trim().length === 0)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["addressLine"],
+        message: "Please add a delivery address.",
+      });
+    }
+  });
+
+export type CheckoutInput = z.infer<typeof checkoutSchema>;
 
 export const categoryUpdateSchema = z.object({
   id: z.string().min(1, "Missing category id"),

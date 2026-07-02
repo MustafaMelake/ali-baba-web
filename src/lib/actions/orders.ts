@@ -12,6 +12,7 @@ import {
   resolvePrice,
 } from "@/lib/discounts";
 import { getStoreSettings } from "@/lib/store-settings";
+import { checkoutSchema } from "@/lib/validators";
 
 // التسعير الرسمي بيتقري من قاعدة البيانات وقت الطلب (مش ثوابت في الكود):
 // رسوم التوصيل من الـ Branch المختار (أو defaultDeliveryFee لـ "مناطق أخرى")،
@@ -44,12 +45,19 @@ export async function placeOrder(
   const session = await getServerSession();
   const userId = session?.user?.id ?? null;
 
-  if (!payload.items?.length) {
-    return { success: false, error: "Your cart is empty." };
+  // Authoritative validation — the SAME shared schema the checkout form runs
+  // client-side (src/lib/validators.ts). Beyond the empty-cart and name/phone
+  // checks, it enforces the conditional rule a tampered client could bypass:
+  // a DELIVERY order MUST carry a non-empty addressLine (PICKUP stays
+  // address-free). Client-side validation is a courtesy; this is the gate.
+  const parsed = checkoutSchema.safeParse(payload);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid order details.",
+    };
   }
-  if (!payload.customerName?.trim() || !payload.customerPhone?.trim()) {
-    return { success: false, error: "Name and phone number are required." };
-  }
+  const data = parsed.data;
 
   try {
     // Defensive branch resolution: only stamp a REAL, ACTIVE branch (the pickup
@@ -58,9 +66,9 @@ export async function placeOrder(
     // The branch's own deliveryFee is captured here too: it's the authoritative
     // fee for DELIVERY orders routed to this branch.
     let branch: { id: string; deliveryFee: number } | null = null;
-    if (payload.branchId) {
+    if (data.branchId) {
       branch = await prisma.branch.findFirst({
-        where: { id: payload.branchId, isActive: true },
+        where: { id: data.branchId, isActive: true },
         select: { id: true, deliveryFee: true },
       });
     }
@@ -89,7 +97,7 @@ export async function placeOrder(
       // الأسعار تتقري من قاعدة البيانات مباشرة (الـ Source of Truth) — لا نثق
       // بأي سعر جاي من العميل، نمنع التلاعب بالأسعار. الخصم كمان بيتحسب هنا على
       // السيرفر فقط (Discount Engine) فالعميل يتحاسب على السعر النهائي بالظبط.
-      for (const item of payload.items) {
+      for (const item of data.items) {
         const quantity = Math.max(1, Math.floor(item.quantity));
 
         const dbVariant = await tx.productVariant.findUnique({
@@ -149,7 +157,7 @@ export async function placeOrder(
       // ("Other Areas", or a branch that went inactive mid-checkout) → the
       // global default. PICKUP is always free.
       const deliveryFee =
-        payload.fulfillment === FulfillmentMethod.DELIVERY
+        data.fulfillment === FulfillmentMethod.DELIVERY
           ? branch?.deliveryFee ?? settings.defaultDeliveryFee
           : 0;
       // VAT غير مخزّن في عمود مستقل — مدموج في totalAmount، وبيتحسب كـ residual
@@ -167,15 +175,16 @@ export async function placeOrder(
           subtotal,
           deliveryFee,
           totalAmount,
-          fulfillment: payload.fulfillment,
+          fulfillment: data.fulfillment,
           status: OrderStatus.PENDING,
-          addressLine: payload.addressLine,
-          pickupBranch: payload.pickupBranch,
+          // Schema-guaranteed: non-empty (trimmed) for DELIVERY orders.
+          addressLine: data.addressLine,
+          pickupBranch: data.pickupBranch,
           // Resolved + validated above: a real active branch, or null.
           branchId,
-          customerName: payload.customerName.trim(),
-          customerPhone: payload.customerPhone.trim(),
-          orderNotes: payload.orderNotes,
+          customerName: data.customerName,
+          customerPhone: data.customerPhone,
+          orderNotes: data.orderNotes,
           items: { create: orderItemsData },
         },
         select: { id: true, orderNumber: true },

@@ -23,6 +23,8 @@ import {
 } from "@/lib/actions/store-settings";
 import { clearDbCartAction } from "@/lib/actions/cart";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
+import { checkoutSchema, fieldErrors } from "@/lib/validators";
+import { cn } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
@@ -87,11 +89,17 @@ function FieldLabel({
   );
 }
 
-function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+function Input({
+  className,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className="w-full bg-transparent border-b border-stone-300 pb-3 font-sans text-sm text-stone-900 placeholder:text-stone-300 outline-none transition-colors duration-250 focus:border-primary caret-primary"
+      className={cn(
+        "w-full bg-transparent border-b border-stone-300 pb-3 font-sans text-sm text-stone-900 placeholder:text-stone-300 outline-none transition-colors duration-250 focus:border-primary caret-primary",
+        className,
+      )}
     />
   );
 }
@@ -485,6 +493,18 @@ export default function CheckoutPage() {
   const [isPending, startTransition] = useTransition();
   const [placed, setPlaced] = useState(false);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
+  // Field-level validation errors keyed by the checkoutSchema path (e.g.
+  // "addressLine") — rendered inline next to the offending input.
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function clearError(field: string) {
+    setErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }
 
   // Load active branches (with their delivery fees) for the selectors, plus the
   // global pricing settings — the order stores branchId (for Branch-Manager
@@ -517,17 +537,6 @@ export default function CheckoutPage() {
   function handleSubmit() {
     if (isPending || placed) return;
 
-    // The Zustand cart is the source of truth for what's ordered — guard against a
-    // race where the cart emptied between render and submit.
-    if (cartItems.length === 0) {
-      toast.error("Your cart is empty.");
-      return;
-    }
-    if (!firstName.trim() || !phone.trim()) {
-      toast.error("Please add your name and phone number.");
-      return;
-    }
-
     const addressLine = [address.trim(), apartment.trim()]
       .filter(Boolean)
       .join(", ");
@@ -545,26 +554,41 @@ export default function CheckoutPage() {
           ? null
           : deliveryAreaId || null;
 
+    // Send only variantId + quantity — every price is re-resolved server-side.
+    const payload = {
+      items: cartItems.map((i) => ({
+        variantId: i.variantId,
+        quantity: i.quantity,
+      })),
+      fulfillment:
+        mode === "delivery"
+          ? FulfillmentMethod.DELIVERY
+          : FulfillmentMethod.PICKUP,
+      addressLine: mode === "delivery" ? addressLine : undefined,
+      // The branch IS the delivery area now (no DeliveryLocation enum).
+      // pickupBranch keeps the readable label for pickup orders only.
+      branchId: resolvedBranchId,
+      pickupBranch: pickupSelection?.name,
+      customerName: `${firstName} ${lastName}`.trim(),
+      customerPhone: phone,
+      orderNotes: notes.trim() || undefined,
+    };
+
+    // The SAME schema placeOrder re-checks server-side: empty cart, name/phone,
+    // and the conditional rule — DELIVERY requires a non-empty addressLine.
+    // Field issues render inline (keyed by schema path, e.g. "addressLine").
+    const parsed = checkoutSchema.safeParse(payload);
+    if (!parsed.success) {
+      setErrors(fieldErrors(parsed.error));
+      toast.error(
+        parsed.error.issues[0]?.message ?? "Please check your details.",
+      );
+      return;
+    }
+    setErrors({});
+
     startTransition(async () => {
-      // Send only variantId + quantity — every price is re-resolved server-side.
-      const res = await placeOrder({
-        items: cartItems.map((i) => ({
-          variantId: i.variantId,
-          quantity: i.quantity,
-        })),
-        fulfillment:
-          mode === "delivery"
-            ? FulfillmentMethod.DELIVERY
-            : FulfillmentMethod.PICKUP,
-        addressLine: mode === "delivery" ? addressLine : undefined,
-        // The branch IS the delivery area now (no DeliveryLocation enum).
-        // pickupBranch keeps the readable label for pickup orders only.
-        branchId: resolvedBranchId,
-        pickupBranch: pickupSelection?.name,
-        customerName: `${firstName} ${lastName}`.trim(),
-        customerPhone: phone,
-        orderNotes: notes.trim() || undefined,
-      });
+      const res = await placeOrder(parsed.data);
 
       if (!res.success) {
         toast.error(res.error);
@@ -726,7 +750,15 @@ export default function CheckoutPage() {
             <section>
               <SectionHeading>Fulfillment Method</SectionHeading>
 
-              <FulfillmentToggle mode={mode} onChange={setMode} />
+              <FulfillmentToggle
+                mode={mode}
+                onChange={(m) => {
+                  setMode(m);
+                  // Pickup orders carry no address — a stale delivery-address
+                  // error must not survive the switch.
+                  if (m === "pickup") clearError("addressLine");
+                }}
+              />
 
               <AnimatePresence mode="wait">
                 {mode === "delivery" ? (
@@ -739,15 +771,45 @@ export default function CheckoutPage() {
                     transition={{ duration: 0.3, ease: EASE }}
                   >
                     <div>
-                      <FieldLabel htmlFor="address">Street Address</FieldLabel>
+                      {/* Required only for DELIVERY — this whole block is
+                          unmounted in pickup mode, so the asterisk (and the
+                          input itself) can never appear for a pickup order. */}
+                      <FieldLabel htmlFor="address">
+                        Street Address{" "}
+                        <span className="text-red-500" aria-hidden="true">
+                          *
+                        </span>
+                      </FieldLabel>
                       <Input
                         id="address"
                         type="text"
                         autoComplete="street-address"
                         placeholder="12 El Corniche St."
+                        aria-required="true"
+                        aria-invalid={!!errors.addressLine}
+                        aria-describedby={
+                          errors.addressLine ? "address-error" : undefined
+                        }
+                        className={
+                          errors.addressLine
+                            ? "border-red-400 focus:border-red-500"
+                            : undefined
+                        }
                         value={address}
-                        onChange={(e) => setAddress(e.target.value)}
+                        onChange={(e) => {
+                          setAddress(e.target.value);
+                          clearError("addressLine");
+                        }}
                       />
+                      {errors.addressLine && (
+                        <p
+                          id="address-error"
+                          role="alert"
+                          className="mt-2 font-sans text-xs text-red-500"
+                        >
+                          {errors.addressLine}
+                        </p>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
