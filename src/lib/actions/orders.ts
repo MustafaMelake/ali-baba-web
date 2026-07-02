@@ -11,10 +11,11 @@ import {
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
 } from "@/lib/discounts";
+import { getStoreSettings } from "@/lib/store-settings";
 
-// التسعير لازم يطابق ملخص الـ checkout بالظبط: توصيل 35 + ضريبة 14%.
-const DELIVERY_FEE = 35;
-const VAT_RATE = 0.14;
+// التسعير الرسمي بيتقري من قاعدة البيانات وقت الطلب (مش ثوابت في الكود):
+// رسوم التوصيل من الـ Branch المختار (أو defaultDeliveryFee لـ "مناطق أخرى")،
+// والضريبة من StoreSettings — نفس القيم اللي الـ checkout بيعرضها كـ preview.
 
 export interface CheckoutPayload {
   items: { variantId: string; quantity: number }[];
@@ -54,14 +55,20 @@ export async function placeOrder(
     // Defensive branch resolution: only stamp a REAL, ACTIVE branch (the pickup
     // choice or the delivery auto-route). A stale / invalid / inactive id falls
     // back to null so the order never fails — it just surfaces to the Super Admin.
-    let branchId: string | null = null;
+    // The branch's own deliveryFee is captured here too: it's the authoritative
+    // fee for DELIVERY orders routed to this branch.
+    let branch: { id: string; deliveryFee: number } | null = null;
     if (payload.branchId) {
-      const branch = await prisma.branch.findFirst({
+      branch = await prisma.branch.findFirst({
         where: { id: payload.branchId, isActive: true },
-        select: { id: true },
+        select: { id: true, deliveryFee: true },
       });
-      branchId = branch?.id ?? null;
     }
+    const branchId = branch?.id ?? null;
+
+    // Global pricing knobs (VAT + the "Other Areas" delivery fee), read fresh
+    // from the DB per order — the client's preview numbers are never trusted.
+    const settings = await getStoreSettings();
 
     // One instant for the whole order: every promotion (variant/product/category
     // level) is filtered AND evaluated against the same `now`, so a promo can't
@@ -138,11 +145,19 @@ export async function placeOrder(
         });
       }
 
+      // DELIVERY → the fulfilling branch's own fee; branchless delivery
+      // ("Other Areas", or a branch that went inactive mid-checkout) → the
+      // global default. PICKUP is always free.
       const deliveryFee =
-        payload.fulfillment === FulfillmentMethod.DELIVERY ? DELIVERY_FEE : 0;
+        payload.fulfillment === FulfillmentMethod.DELIVERY
+          ? branch?.deliveryFee ?? settings.defaultDeliveryFee
+          : 0;
       // VAT غير مخزّن في عمود مستقل — مدموج في totalAmount، وبيتحسب كـ residual
-      // وقت العرض (totalAmount - subtotal - deliveryFee) فيفضل دايماً متسق.
-      const vat = Math.round(subtotal * VAT_RATE);
+      // وقت العرض (totalAmount - subtotal - deliveryFee) فيفضل دايماً متسق،
+      // حتى لو الأدمن غيّر النسبة أو قفل الضريبة بعد ما الأوردر اتعمل.
+      const vat = settings.isVatEnabled
+        ? Math.round(subtotal * settings.vatRate)
+        : 0;
       const totalAmount = subtotal + deliveryFee + vat;
 
       // إنشاء الأوردر مع سطوره في عملية واحدة (nested write).

@@ -1,8 +1,11 @@
 import { Store } from "lucide-react";
 import { requireAdminPage } from "@/lib/session";
+import { prisma } from "@/lib/prisma";
 import { getFooterLinks } from "@/lib/actions/settings";
+import { getStoreSettings } from "@/lib/store-settings";
 import PageHeader from "@/components/admin/PageHeader";
 import FooterLinksManager from "@/components/admin/FooterLinksManager";
+import PricingSettingsManager from "@/components/admin/PricingSettingsManager";
 
 export const metadata = {
   title: "Settings | Admin",
@@ -37,8 +40,18 @@ function Field({
 export default async function AdminSettingsPage() {
   await requireAdminPage();
 
-  // Admin-managed storefront footer links (active + inactive), ordered.
-  const footerLinks = await getFooterLinks();
+  // Footer links, the global pricing settings (VAT + default delivery fee),
+  // and the active branches whose per-area fees the admin edits here. Active
+  // only — these are exactly the rows the checkout selectors offer.
+  const [footerLinks, pricingSettings, branches] = await Promise.all([
+    getFooterLinks(),
+    getStoreSettings(),
+    prisma.branch.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, slug: true, deliveryFee: true },
+    }),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -158,6 +171,10 @@ export default async function AdminSettingsPage() {
           </button>
         </div>
       </form>
+
+      {/* Pricing — VAT + delivery fees, wired to the `store-settings` actions.
+          The same rows placeOrder reads, so a save here changes real billing. */}
+      <PricingSettingsManager settings={pricingSettings} branches={branches} />
 
       {/* Footer Navigation — fully wired to the `settings` Server Actions. */}
       <FooterLinksManager links={footerLinks} />

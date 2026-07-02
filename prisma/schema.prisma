@@ -159,6 +159,10 @@ model Branch {
   /// Soft on/off switch for the location without deleting it.
   isActive Boolean @default(true)
 
+  /// Flat delivery fee (EGP) charged when this branch fulfils a DELIVERY order.
+  /// Orders with no branch ("Other Areas") use StoreSettings.defaultDeliveryFee.
+  deliveryFee Float @default(35)
+
   /// Users assigned to this branch (typically role == MANAGER).
   managers User[]
 
@@ -497,6 +501,32 @@ model Promotion {
 // replaces the previously hardcoded footer links (see src/components/layout/
 // Footer.tsx), which fall back in only when no managed links exist.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Store settings (admin-managed, single row)
+//
+// Global pricing knobs read by the checkout preview AND by `placeOrder` (the
+// authoritative pricing path). The table holds exactly ONE row with the fixed
+// id "store" — readers upsert it into existence (see src/lib/store-settings.ts)
+// so no seed step is required.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model StoreSettings {
+  /// Fixed singleton id — always "store". Never create a second row.
+  id String @id @default("store")
+
+  /// VAT as a FRACTION (0.14 = 14%). The admin UI edits it as a percentage.
+  vatRate      Float   @default(0.14)
+  /// Master VAT switch — when false, no VAT is shown or charged anywhere.
+  isVatEnabled Boolean @default(true)
+
+  /// Delivery fee (EGP) for DELIVERY orders not routed to a branch
+  /// ("Other Areas" at checkout, or a branch that went inactive mid-order).
+  defaultDeliveryFee Float @default(35)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
 
 model FooterLink {
   id    String @id @default(cuid())

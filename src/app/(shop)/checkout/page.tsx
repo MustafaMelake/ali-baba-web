@@ -17,13 +17,23 @@ import { useCartStore, type CartItem } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { placeOrder } from "@/lib/actions/orders";
 import { getActiveBranches } from "@/lib/actions/branches";
+import {
+  getPublicPricingSettings,
+  type PricingSettings,
+} from "@/lib/actions/store-settings";
 import { clearDbCartAction } from "@/lib/actions/cart";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
-const DELIVERY_FEE = 35;
-const TAX_RATE = 0.14; // 14% VAT
+// Preview-only fallback used ONLY if the pricing fetch fails (mirrors the
+// StoreSettings schema defaults). Never used for billing — `placeOrder`
+// re-reads the real values from the database.
+const FALLBACK_PRICING: PricingSettings = {
+  vatRate: 0.14,
+  isVatEnabled: true,
+  defaultDeliveryFee: 35,
+};
 
 // Arabic sublabels are presentational only (not stored on the Branch model),
 // keyed by branch slug. Seeded branches keep their bilingual label; any other
@@ -38,15 +48,20 @@ type BranchOption = {
   slug: string;
   name: string;
   sublabel?: string;
+  /** The branch's delivery fee (EGP) — preview only; the server re-reads it. */
+  deliveryFee: number;
 };
 
 // Synthetic "no specific branch" option appended to the delivery-area list.
 // Selecting it sends branchId = null, so the order routes to the Super Admin.
+// Its REAL fee is StoreSettings.defaultDeliveryFee — resolved by id, so the
+// placeholder 0 here is never displayed.
 const OTHER_AREAS_OPTION: BranchOption = {
   id: "__other__",
   slug: "__other__",
   name: "Other Areas",
   sublabel: "مناطق أخرى",
+  deliveryFee: 0,
 };
 
 // A cart line, normalized for display — `category` is always a string so the
@@ -246,18 +261,39 @@ function BranchSelect({
 function OrderSummary({
   items,
   mode,
+  deliveryFee,
+  pricing,
   loading,
   onSubmit,
 }: {
   items: CheckoutItem[];
   mode: Mode;
+  /** Resolved fee for the current selection (0 for pickup) — display only. */
+  deliveryFee: number;
+  pricing: PricingSettings;
   loading: boolean;
   onSubmit: () => void;
 }) {
+  // Mirrors placeOrder's math exactly: discounted subtotal → VAT on it → fee.
   const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
-  const delivery = mode === "pickup" ? 0 : DELIVERY_FEE;
-  const tax = Math.round(subtotal * TAX_RATE);
+  const delivery = deliveryFee;
+  const tax = pricing.isVatEnabled ? Math.round(subtotal * pricing.vatRate) : 0;
   const total = subtotal + delivery + tax;
+  // Human label — trims trailing zeros (0.14 → "14", 0.1425 → "14.25").
+  const vatPercent = +(pricing.vatRate * 100).toFixed(2);
+
+  const rows: { label: string; value: number; free?: boolean }[] = [
+    { label: "Subtotal", value: subtotal },
+    {
+      label: mode === "pickup" ? "Pickup" : "Delivery",
+      value: delivery,
+      // Pickup is always free; a 0-fee delivery branch reads as free too.
+      free: delivery === 0,
+    },
+  ];
+  if (pricing.isVatEnabled) {
+    rows.push({ label: `VAT (${vatPercent}%)`, value: tax });
+  }
 
   return (
     <div className="bg-stone-50 rounded-2xl p-6 md:p-8 border border-stone-100">
@@ -303,15 +339,7 @@ function OrderSummary({
 
       {/* Totals */}
       <div className="border-t border-stone-200 pt-5 space-y-3">
-        {[
-          { label: "Subtotal", value: subtotal },
-          {
-            label: mode === "pickup" ? "Pickup" : "Delivery",
-            value: delivery,
-            free: mode === "pickup",
-          },
-          { label: "VAT (14%)", value: tax },
-        ].map(({ label, value, free }) => (
+        {rows.map(({ label, value, free }) => (
           <div key={label} className="flex justify-between items-center">
             <span className="font-sans text-sm text-stone-500">{label}</span>
             {free ? (
@@ -451,16 +479,20 @@ export default function CheckoutPage() {
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [branchId, setBranchId] = useState(""); // pickup: chosen branch id
   const [deliveryAreaId, setDeliveryAreaId] = useState(""); // delivery: branch id, or OTHER_AREAS_OPTION.id
+  // Global pricing knobs (VAT + default delivery fee) — null until fetched so
+  // the summary never flashes totals computed from stale hardcoded numbers.
+  const [pricing, setPricing] = useState<PricingSettings | null>(null);
   const [isPending, startTransition] = useTransition();
   const [placed, setPlaced] = useState(false);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
 
-  // Load active branches for the pickup selector and resolve real ids — the
-  // order stores branchId (for Branch-Manager RBAC), not just a free-text label.
+  // Load active branches (with their delivery fees) for the selectors, plus the
+  // global pricing settings — the order stores branchId (for Branch-Manager
+  // RBAC), and the summary previews the same numbers placeOrder will bill.
   useEffect(() => {
     let alive = true;
-    getActiveBranches()
-      .then((rows) => {
+    Promise.all([getActiveBranches(), getPublicPricingSettings()])
+      .then(([rows, settings]) => {
         if (!alive) return;
         const opts: BranchOption[] = rows.map((b) => ({
           ...b,
@@ -469,9 +501,13 @@ export default function CheckoutPage() {
         setBranches(opts);
         setBranchId((cur) => cur || opts[0]?.id || "");
         setDeliveryAreaId((cur) => cur || opts[0]?.id || OTHER_AREAS_OPTION.id);
+        setPricing(settings);
       })
       .catch(() => {
-        /* leave the selector empty; pickup still works without a stored branch */
+        // Selector stays empty (pickup still works without a stored branch);
+        // totals degrade to the schema-default preview. Billing is unaffected —
+        // placeOrder reads the real values from the DB.
+        if (alive) setPricing(FALLBACK_PRICING);
       });
     return () => {
       alive = false;
@@ -545,9 +581,10 @@ export default function CheckoutPage() {
     });
   }
 
-  // Hold the background until the cart has rehydrated — prevents an empty-cart
-  // flash for customers who already have items, and keeps SSR/CSR markup in sync.
-  if (!hydrated) {
+  // Hold the background until the cart has rehydrated AND the pricing settings
+  // have loaded — prevents an empty-cart flash for customers who already have
+  // items, and never shows a total computed from numbers about to change.
+  if (!hydrated || !pricing) {
     return <div className="min-h-screen bg-[#FAFAFA]" />;
   }
 
@@ -599,6 +636,17 @@ export default function CheckoutPage() {
       </div>
     );
   }
+
+  // Preview fee for the CURRENT selection — mirrors placeOrder's server-side
+  // resolution exactly: pickup → 0; delivery → the chosen area-branch's fee,
+  // or the global default for "Other Areas".
+  const previewDeliveryFee =
+    mode === "pickup"
+      ? 0
+      : deliveryAreaId && deliveryAreaId !== OTHER_AREAS_OPTION.id
+        ? branches.find((b) => b.id === deliveryAreaId)?.deliveryFee ??
+          pricing.defaultDeliveryFee
+        : pricing.defaultDeliveryFee;
 
   return (
     <div className="min-h-screen bg-[#FAFAFA] pt-16 md:pt-20">
@@ -781,6 +829,8 @@ export default function CheckoutPage() {
                 <OrderSummary
                   items={items}
                   mode={mode}
+                  deliveryFee={previewDeliveryFee}
+                  pricing={pricing}
                   loading={isPending}
                   onSubmit={handleSubmit}
                 />
@@ -794,6 +844,8 @@ export default function CheckoutPage() {
               <OrderSummary
                 items={items}
                 mode={mode}
+                deliveryFee={previewDeliveryFee}
+                pricing={pricing}
                 loading={isPending}
                 onSubmit={handleSubmit}
               />
