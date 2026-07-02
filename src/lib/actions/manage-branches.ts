@@ -67,11 +67,12 @@ function uniqueViolationMessage(err: unknown): string | null {
   return "That value must be unique.";
 }
 
-/** Validate + normalize the shared name/slug fields. Slug is slugified so an
- *  invalid value can never reach the unique column. */
+/** Validate + normalize the shared name/slug/deliveryFee fields. Slug is
+ *  slugified so an invalid value can never reach the unique column; the fee is
+ *  coerced so a client bug can never push NaN into the Float column. */
 function validateBranchInput(
-  data: { name: string; slug: string },
-): { name: string; slug: string } | { error: string } {
+  data: { name: string; slug: string; deliveryFee?: number },
+): { name: string; slug: string; deliveryFee: number } | { error: string } {
   const name = data.name?.trim() ?? "";
   if (name.length < 2) {
     return { error: "Name must be at least 2 characters." };
@@ -82,7 +83,14 @@ function validateBranchInput(
     return { error: "Slug must contain at least one letter or number." };
   }
 
-  return { name, slug };
+  // Missing fee falls back to the schema default (35 EGP). Zero is allowed —
+  // it means the branch delivers for free.
+  const deliveryFee = Number(data.deliveryFee ?? 35);
+  if (!Number.isFinite(deliveryFee) || deliveryFee < 0) {
+    return { error: "Delivery fee must be zero or a positive number." };
+  }
+
+  return { name, slug, deliveryFee: Math.round(deliveryFee * 100) / 100 };
 }
 
 // ── Create ───────────────────────────────────────────────────────────────────
@@ -91,6 +99,7 @@ export async function createBranch(data: {
   name: string;
   slug: string;
   isActive: boolean;
+  deliveryFee?: number;
 }): Promise<CreateBranchResult> {
   const denied = await ensureAdmin();
   if (denied) return { success: false, error: denied.error };
@@ -104,6 +113,7 @@ export async function createBranch(data: {
         name: parsed.name,
         slug: parsed.slug,
         isActive: Boolean(data.isActive),
+        deliveryFee: parsed.deliveryFee,
       },
       select: { id: true },
     });
@@ -123,7 +133,7 @@ export async function createBranch(data: {
 
 export async function updateBranch(
   id: string,
-  data: { name: string; slug: string; isActive: boolean },
+  data: { name: string; slug: string; isActive: boolean; deliveryFee?: number },
 ): Promise<BranchActionResult> {
   const denied = await ensureAdmin();
   if (denied) return { success: false, error: denied.error };
@@ -140,6 +150,7 @@ export async function updateBranch(
         name: parsed.name,
         slug: parsed.slug,
         isActive: Boolean(data.isActive),
+        deliveryFee: parsed.deliveryFee,
       },
       select: { id: true },
     });

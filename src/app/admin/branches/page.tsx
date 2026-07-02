@@ -27,6 +27,7 @@ export default async function AdminBranchesPage() {
       name: true,
       slug: true,
       isActive: true,
+      deliveryFee: true,
       createdAt: true,
       // Live relation counts give the admin context before deleting a branch.
       _count: { select: { managers: true, orders: true } },
@@ -107,6 +108,7 @@ export default async function AdminBranchesPage() {
                             name: b.name,
                             slug: b.slug,
                             isActive: b.isActive,
+                            deliveryFee: b.deliveryFee,
                           }}
                         />
                         <DeleteBranchButton id={b.id} name={b.name} />

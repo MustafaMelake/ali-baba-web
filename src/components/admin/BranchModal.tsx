@@ -16,6 +16,7 @@ export type EditableBranch = {
   name: string;
   slug: string;
   isActive: boolean;
+  deliveryFee: number;
 };
 
 /** Mirror of the server-side slugify so the previewed slug matches what's stored. */
@@ -48,6 +49,8 @@ export default function BranchModal({
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [isActive, setIsActive] = useState(true);
+  // Kept as a string so the input can be cleared while typing; parsed on submit.
+  const [deliveryFee, setDeliveryFee] = useState("35");
   // Stop auto-deriving the slug from the name once it's been set by hand (or
   // when editing an existing branch that already has one).
   const [slugTouched, setSlugTouched] = useState(false);
@@ -59,6 +62,7 @@ export default function BranchModal({
     setName(branch?.name ?? "");
     setSlug(branch?.slug ?? "");
     setIsActive(branch?.isActive ?? true);
+    setDeliveryFee(String(branch?.deliveryFee ?? 35));
     setSlugTouched(Boolean(branch));
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [isOpen, branch]);
@@ -84,7 +88,19 @@ export default function BranchModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = { name: name.trim(), slug: slug.trim(), isActive };
+
+    const fee = Number(deliveryFee);
+    if (deliveryFee.trim() === "" || !Number.isFinite(fee) || fee < 0) {
+      toast.error("Delivery fee must be zero or a positive number.");
+      return;
+    }
+
+    const payload = {
+      name: name.trim(),
+      slug: slug.trim(),
+      isActive,
+      deliveryFee: fee,
+    };
 
     startTransition(async () => {
       const result = isEdit
@@ -184,6 +200,30 @@ export default function BranchModal({
                   <p className="text-xs text-stone-400">
                     URL-safe identifier — lowercase letters, numbers and hyphens.
                     Normalized automatically on save.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="branch-delivery-fee"
+                    className="text-sm font-medium text-stone-700"
+                  >
+                    Delivery Fee (EGP)
+                  </label>
+                  <input
+                    id="branch-delivery-fee"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    inputMode="decimal"
+                    value={deliveryFee}
+                    onChange={(e) => setDeliveryFee(e.target.value)}
+                    placeholder="35"
+                    className={inputClasses}
+                  />
+                  <p className="text-xs text-stone-400">
+                    Flat fee charged when this branch fulfils a delivery order.
+                    Set to 0 for free delivery.
                   </p>
                 </div>
 
