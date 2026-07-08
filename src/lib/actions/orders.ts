@@ -84,7 +84,39 @@ export async function placeOrder(
     const now = new Date();
 
     // Transaction يضمن تماسك الداتا: إمّا الأوردر بكل سطوره يتعمل، أو لا شيء.
+    // Kept deliberately SHORT for Neon: exactly two statements — one batched
+    // variant read, one nested order create — regardless of how many lines the
+    // order has (was a findUnique per line, an N+1 that held the transaction
+    // open in proportion to cart size).
     const newOrder = await prisma.$transaction(async (tx) => {
+      // ONE read for the whole cart. The schema has already capped items at
+      // CHECKOUT_MAX_ITEMS, so this `id IN (…)` list is bounded too.
+      const variantIds = [...new Set(data.items.map((i) => i.variantId))];
+      const dbVariants = await tx.productVariant.findMany({
+        where: { id: { in: variantIds } },
+        include: {
+          // Promotions that target the variant itself…
+          promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+          product: {
+            select: {
+              name: true,
+              isAvailable: true,
+              // …its parent product…
+              promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+              // …or that product's category.
+              category: {
+                select: {
+                  promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // O(1) per-line lookups; the loop below does no database work at all.
+      const variantById = new Map(dbVariants.map((v) => [v.id, v]));
+
       let subtotal = 0;
       const orderItemsData: {
         variantId: string;
@@ -98,30 +130,10 @@ export async function placeOrder(
       // بأي سعر جاي من العميل، نمنع التلاعب بالأسعار. الخصم كمان بيتحسب هنا على
       // السيرفر فقط (Discount Engine) فالعميل يتحاسب على السعر النهائي بالظبط.
       for (const item of data.items) {
-        const quantity = Math.max(1, Math.floor(item.quantity));
+        const dbVariant = variantById.get(item.variantId);
 
-        const dbVariant = await tx.productVariant.findUnique({
-          where: { id: item.variantId },
-          include: {
-            // Promotions that target the variant itself…
-            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-            product: {
-              select: {
-                name: true,
-                isAvailable: true,
-                // …its parent product…
-                promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-                // …or that product's category.
-                category: {
-                  select: {
-                    promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-                  },
-                },
-              },
-            },
-          },
-        });
-
+        // Missing (deleted / forged id) or switched off — throw so the whole
+        // order rolls back; a partial order must never be created.
         if (
           !dbVariant ||
           !dbVariant.isAvailable ||
@@ -141,7 +153,8 @@ export async function placeOrder(
         );
         const { finalPrice } = resolvePrice(dbVariant.price, promotions, now);
 
-        subtotal += finalPrice * quantity;
+        // Quantity is schema-guaranteed: an integer in [1, CHECKOUT_MAX_QUANTITY].
+        subtotal += finalPrice * item.quantity;
 
         // Snapshot لبيانات السطر وقت الشراء (الاسم/الـ variant/السعر النهائي بعد الخصم).
         orderItemsData.push({
@@ -149,7 +162,7 @@ export async function placeOrder(
           productName: dbVariant.product.name,
           variantName: dbVariant.name,
           unitPrice: finalPrice,
-          quantity,
+          quantity: item.quantity,
         });
       }
 

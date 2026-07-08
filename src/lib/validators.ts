@@ -92,13 +92,24 @@ export type ProductUpdateInput = z.infer<typeof productUpdateSchema>;
 
 // ─── Checkout ────────────────────────────────────────────────────────────────
 
+// Hard ceilings for a checkout payload, enforced BEFORE any database work so a
+// forged payload can't drag `placeOrder` into unbounded queries (its variant
+// fetch is `id IN (…)` over at most CHECKOUT_MAX_ITEMS ids). MAX_QUANTITY
+// mirrors the DB cart's clamp (MAX_QUANTITY in src/lib/actions/cart.ts).
+export const CHECKOUT_MAX_ITEMS = 50;
+export const CHECKOUT_MAX_QUANTITY = 99;
+
 /** One order line as the client ships it — the server re-resolves the price. */
 export const checkoutItemSchema = z.object({
   variantId: z.string().trim().min(1, "Missing variant."),
   quantity: z
     .number({ error: "Enter a valid quantity" })
     .int("Quantity must be a whole number")
-    .min(1, "Quantity must be at least 1"),
+    .min(1, "Quantity must be at least 1")
+    .max(
+      CHECKOUT_MAX_QUANTITY,
+      `Quantity can't exceed ${CHECKOUT_MAX_QUANTITY} per item`,
+    ),
 });
 
 /**
@@ -113,7 +124,13 @@ export const checkoutItemSchema = z.object({
  */
 export const checkoutSchema = z
   .object({
-    items: z.array(checkoutItemSchema).min(1, "Your cart is empty."),
+    items: z
+      .array(checkoutItemSchema)
+      .min(1, "Your cart is empty.")
+      .max(
+        CHECKOUT_MAX_ITEMS,
+        `Orders are limited to ${CHECKOUT_MAX_ITEMS} different items.`,
+      ),
     fulfillment: z.enum(FulfillmentMethod),
     addressLine: optionalText(500),
     pickupBranch: optionalText(120),
