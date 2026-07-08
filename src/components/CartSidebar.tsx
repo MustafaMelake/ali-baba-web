@@ -8,6 +8,7 @@ import { X, Minus, Plus, ArrowRight, ShoppingBag } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { clearDbCartAction } from "@/lib/actions/cart";
+import { CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
 
 const EASE: [number, number, number, number] = [0.32, 0.72, 0, 1];
 
@@ -117,8 +118,9 @@ function CartLineItem({
               onClick={() =>
                 updateQuantity(item.variantId, item.quantity + 1, isLoggedIn)
               }
+              disabled={item.quantity >= CHECKOUT_MAX_QUANTITY}
               aria-label="Increase quantity"
-              className="text-stone-400 hover:text-stone-800 transition-colors"
+              className="text-stone-400 hover:text-stone-800 transition-colors disabled:opacity-25 disabled:hover:text-stone-400"
             >
               <Plus className="w-3 h-3" />
             </button>

@@ -9,6 +9,7 @@ import {
   syncCartItemAction,
   getDbCartAction,
 } from "@/lib/actions/cart";
+import { CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
 
 export interface CartItem {
   /**
@@ -42,7 +43,16 @@ interface CartState {
   // Items — all keyed by `variantId`, never the product `id`.
   // `isLoggedIn` is supplied by the caller (from Better Auth's session). When
   // true, the local optimistic update is mirrored to the DB in the background.
-  addItem: (item: Omit<CartItem, "quantity">, isLoggedIn?: boolean) => void;
+  /**
+   * Adds `item.quantity` units (default 1) in ONE update + ONE background
+   * sync. The resulting line is clamped to CHECKOUT_MAX_QUANTITY — the same
+   * ceiling `checkoutSchema` and the DB cart enforce, so no UI path can build
+   * a cart the server would reject.
+   */
+  addItem: (
+    item: Omit<CartItem, "quantity"> & { quantity?: number },
+    isLoggedIn?: boolean,
+  ) => void;
   removeItem: (variantId: string, isLoggedIn?: boolean) => void;
   updateQuantity: (
     variantId: string,
@@ -117,12 +127,20 @@ export const useCartStore = create<CartState>()(
       // charge the Small price for both. Keying on variantId keeps each chosen
       // variant a distinct, correctly-priced line.
       addItem: (newItem, isLoggedIn) => {
+        // Amount to add this call — a whole number, at least 1.
+        const amount = Math.max(1, Math.floor(newItem.quantity ?? 1));
+
         // Derive the resulting quantity first so we can both update locally and
-        // send an absolute SET to the server (idempotent — beats increment races).
+        // send an absolute SET to the server (idempotent — beats increment
+        // races). Clamped to the shared per-line ceiling: growing past it
+        // silently caps at the max instead of building an unsubmittable cart.
         const existing = get().items.find(
           (i) => i.variantId === newItem.variantId,
         );
-        const newQuantity = existing ? existing.quantity + 1 : 1;
+        const newQuantity = Math.min(
+          (existing?.quantity ?? 0) + amount,
+          CHECKOUT_MAX_QUANTITY,
+        );
 
         set((s) => ({
           items: existing
@@ -131,7 +149,7 @@ export const useCartStore = create<CartState>()(
                   ? { ...i, quantity: newQuantity }
                   : i,
               )
-            : [...s.items, { ...newItem, quantity: 1 }],
+            : [...s.items, { ...newItem, quantity: newQuantity }],
           isOpen: true, // open the drawer on add
         }));
 
@@ -153,13 +171,16 @@ export const useCartStore = create<CartState>()(
           return;
         }
 
+        // Same shared ceiling as addItem / checkoutSchema / the DB cart.
+        const clamped = Math.min(Math.floor(quantity), CHECKOUT_MAX_QUANTITY);
+
         set((s) => ({
           items: s.items.map((i) =>
-            i.variantId === variantId ? { ...i, quantity } : i,
+            i.variantId === variantId ? { ...i, quantity: clamped } : i,
           ),
         }));
 
-        if (isLoggedIn) fireSync(variantId, quantity, "SET");
+        if (isLoggedIn) fireSync(variantId, clamped, "SET");
       },
 
       clearCart: () => set({ items: [] }),

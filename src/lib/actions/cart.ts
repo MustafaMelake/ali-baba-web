@@ -9,6 +9,7 @@ import {
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
 } from "@/lib/discounts";
+import { CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
 
 /**
  * Cart synchronization Server Actions.
@@ -51,8 +52,10 @@ export type CartActionResult<T = null> =
 
 // ── Constants & helpers ─────────────────────────────────────────────────────
 
-/** Hard ceiling per line — keeps a single line from being abused into millions. */
-const MAX_QUANTITY = 99;
+/** Hard ceiling per line — the SAME shared limit `checkoutSchema` enforces at
+ *  checkout and the Zustand store clamps to locally, so a synced cart can never
+ *  hold a line the order pipeline would reject. */
+const MAX_QUANTITY = CHECKOUT_MAX_QUANTITY;
 
 const PLACEHOLDER_IMAGE = "/placeholder.jpg";
 

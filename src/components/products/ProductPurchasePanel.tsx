@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Minus, Plus, ShoppingBag, Check } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
+import { CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
 import WishlistButton from "@/components/products/WishlistButton";
 import VariantSelector, {
   type SelectableVariant,
@@ -61,19 +62,21 @@ export default function ProductPurchasePanel({
 
   function handleAdd() {
     if (!activeVariant || !canPurchase) return;
-    for (let i = 0; i < qty; i++) {
-      addItem(
-        {
-          id: product.id,
-          variantId: activeVariant.id, // the selected variant — never variants[0]
-          name: product.name,
-          price: activeVariant.price,
-          image: product.images[0],
-          category: product.category,
-        },
-        isLoggedIn,
-      );
-    }
+    // ONE store update + ONE background sync however large the quantity (the
+    // old per-unit loop fired `qty` separate server actions when logged in).
+    // The store clamps the resulting line to CHECKOUT_MAX_QUANTITY.
+    addItem(
+      {
+        id: product.id,
+        variantId: activeVariant.id, // the selected variant — never variants[0]
+        name: product.name,
+        price: activeVariant.price,
+        image: product.images[0],
+        category: product.category,
+        quantity: qty,
+      },
+      isLoggedIn,
+    );
     setAdded(true);
     setTimeout(() => setAdded(false), 2500);
   }
@@ -128,8 +131,10 @@ export default function ProductPurchasePanel({
             {qty}
           </span>
           <button
-            onClick={() => setQty((q) => q + 1)}
-            disabled={!canPurchase}
+            onClick={() =>
+              setQty((q) => Math.min(CHECKOUT_MAX_QUANTITY, q + 1))
+            }
+            disabled={!canPurchase || qty >= CHECKOUT_MAX_QUANTITY}
             aria-label="Increase quantity"
             className="text-stone-400 transition-colors hover:text-stone-800 disabled:opacity-25"
           >
