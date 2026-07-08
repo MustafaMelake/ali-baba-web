@@ -276,7 +276,113 @@ export async function getDbCartAction(): Promise<CartActionResult<DbCartItem[]>>
   }
 }
 
-// ── 4. Clear the whole DB cart (intentional empty: checkout / "Clear cart") ──
+// ── 4. Re-price a GUEST cart from the live catalogue ────────────────────────
+
+/**
+ * One re-priced cart line. `price` is the live, discounted unit price — the
+ * exact figure `placeOrder` would bill right now. `compareAtPrice` mirrors the
+ * PDP fallback chain (live promo's base price, else the manual column) and
+ * `promotionName` names the applied promo so the UI can badge it if desired.
+ */
+export interface RepricedVariant {
+  variantId: string;
+  price: number;
+  compareAtPrice: number | null;
+  promotionName: string | null;
+  /** False when the variant OR its parent product has been switched off. */
+  isAvailable: boolean;
+}
+
+/** Ceiling on a single re-price request — keeps this public action's
+ *  `id IN (…)` query bounded no matter what a forged payload sends. */
+const MAX_REPRICE_IDS = 100;
+
+/**
+ * Public (no-auth) re-pricing for GUEST carts. A guest's cart lives only in
+ * localStorage, so a promotion that started or expired since the item was
+ * added leaves a stale price on screen — while `placeOrder` would correctly
+ * bill the live one. This action lets the client refresh its lines from the
+ * catalogue so the total the guest sees IS the total they'll be charged.
+ *
+ * Safe to expose without a session: it reveals only catalogue prices that
+ * every public product page already renders, the input is de-duplicated and
+ * capped at MAX_REPRICE_IDS, and nothing is written. Variants that no longer
+ * exist are simply absent from the response (the caller leaves those lines
+ * untouched; `placeOrder`'s availability guard remains the final gate).
+ *
+ * Logged-in carts never need this — `getDbCartAction` re-prices them on read.
+ */
+export async function rePriceGuestCart(
+  variantIds: string[],
+): Promise<CartActionResult<RepricedVariant[]>> {
+  const ids = [
+    ...new Set(
+      (variantIds ?? [])
+        .map((id) => (typeof id === "string" ? id.trim() : ""))
+        .filter(Boolean),
+    ),
+  ].slice(0, MAX_REPRICE_IDS);
+
+  if (ids.length === 0) return { success: true, data: [] };
+
+  // Single instant: every promotion level is filtered + evaluated against it,
+  // exactly as in getDbCartAction and placeOrder.
+  const now = new Date();
+
+  try {
+    // ONE batch read for all requested lines, carrying the full promotion
+    // hierarchy (variant → product → category) the Discount Engine needs.
+    const variants = await prisma.productVariant.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        price: true,
+        compareAtPrice: true,
+        isAvailable: true,
+        promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        product: {
+          select: {
+            isAvailable: true,
+            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+            category: {
+              select: {
+                promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const data: RepricedVariant[] = variants.map((v) => {
+      const priced = resolvePrice(
+        v.price,
+        gatherPromotions(
+          v.promotions,
+          v.product.promotions,
+          v.product.category?.promotions,
+        ),
+        now,
+      );
+      return {
+        variantId: v.id,
+        price: priced.finalPrice,
+        // Live promo → struck-through base price; otherwise the manual
+        // Compare-At column (the same fallback the PDP and cards use).
+        compareAtPrice: priced.hasDiscount ? priced.basePrice : v.compareAtPrice,
+        promotionName: priced.appliedPromotion?.name ?? null,
+        isAvailable: v.isAvailable && v.product.isAvailable,
+      };
+    });
+
+    return { success: true, data };
+  } catch (err) {
+    console.error("rePriceGuestCart failed:", err);
+    return { success: false, error: "Could not refresh prices. Please try again." };
+  }
+}
+
+// ── 5. Clear the whole DB cart (intentional empty: checkout / "Clear cart") ──
 
 /**
  * Wipes every cart line for the logged-in user. This is for *intentional*

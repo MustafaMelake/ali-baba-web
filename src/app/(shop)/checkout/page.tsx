@@ -456,7 +456,9 @@ function EmptyCart() {
 export default function CheckoutPage() {
   const cartItems = useCartStore((s) => s.items);
   const clearCart = useCartStore((s) => s.clearCart);
-  const isLoggedIn = !!useSession().data?.user;
+  const refreshPrices = useCartStore((s) => s.refreshPrices);
+  const { data: sessionData, isPending: sessionPending } = useSession();
+  const isLoggedIn = !!sessionData?.user;
 
   // The cart is persisted to localStorage and only rehydrates after mount, so the
   // first client render always sees an empty `items`. Track Zustand's hydration so
@@ -490,6 +492,9 @@ export default function CheckoutPage() {
   // Global pricing knobs (VAT + default delivery fee) — null until fetched so
   // the summary never flashes totals computed from stale hardcoded numbers.
   const [pricing, setPricing] = useState<PricingSettings | null>(null);
+  // Guest carts are frozen in localStorage — their line prices are re-read
+  // from the live catalogue before the summary first renders (see below).
+  const [guestRepriced, setGuestRepriced] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [placed, setPlaced] = useState(false);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
@@ -533,6 +538,39 @@ export default function CheckoutPage() {
       alive = false;
     };
   }, []);
+
+  // ── Guest stale-price fix ──────────────────────────────────────────────────
+  // A logged-in cart is re-priced from the DB by CartSyncProvider's hydrate;
+  // a GUEST cart is whatever localStorage says, so a promotion that started or
+  // expired since the item was added would show a stale price here while
+  // placeOrder bills the live one. Re-price every guest line on mount and hold
+  // the summary (via `guestRepriced`) until it settles, so the first total the
+  // guest sees is exactly what they'll be charged. Waits for cart hydration
+  // (items are empty before it) and for the session to resolve (a logged-in
+  // user mid-`isPending` must not be mistaken for a guest).
+  useEffect(() => {
+    if (!hydrated || sessionPending) return;
+    if (isLoggedIn || useCartStore.getState().items.length === 0) {
+      setGuestRepriced(true);
+      return;
+    }
+
+    let alive = true;
+    refreshPrices()
+      .then(({ updated }) => {
+        if (alive && updated > 0) {
+          toast.info("Cart prices were updated to reflect current offers.");
+        }
+      })
+      .finally(() => {
+        // Render either way — on failure the stale price shows, but placeOrder
+        // still bills the live price, and submission re-validates everything.
+        if (alive) setGuestRepriced(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [hydrated, sessionPending, isLoggedIn, refreshPrices]);
 
   function handleSubmit() {
     if (isPending || placed) return;
@@ -605,10 +643,12 @@ export default function CheckoutPage() {
     });
   }
 
-  // Hold the background until the cart has rehydrated AND the pricing settings
-  // have loaded — prevents an empty-cart flash for customers who already have
-  // items, and never shows a total computed from numbers about to change.
-  if (!hydrated || !pricing) {
+  // Hold the background until the cart has rehydrated, the pricing settings
+  // have loaded, AND (for guests) the cart lines have been re-priced from the
+  // live catalogue — prevents an empty-cart flash for customers who already
+  // have items, and never shows a total that differs from what placeOrder
+  // will bill.
+  if (!hydrated || !pricing || !guestRepriced) {
     return <div className="min-h-screen bg-[#FAFAFA]" />;
   }
 

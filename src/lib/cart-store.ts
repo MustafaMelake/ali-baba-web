@@ -8,6 +8,7 @@ import {
   mergeCartAction,
   syncCartItemAction,
   getDbCartAction,
+  rePriceGuestCart,
 } from "@/lib/actions/cart";
 import { CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
 
@@ -76,6 +77,16 @@ interface CartState {
    * freshly-merged, live-priced DB cart as the single source of truth.
    */
   mergeAndSyncCart: () => Promise<void>;
+
+  /**
+   * GUEST price refresh. A guest cart is frozen in localStorage, so a promo
+   * that started/expired since an item was added leaves a stale display price
+   * (placeOrder would still bill the live one). This re-reads every line's
+   * current price from the catalogue and updates only the lines that changed.
+   * Logged-in carts never need it — hydrate/merge already re-price from the DB.
+   * Returns how many lines changed so callers can tell the customer.
+   */
+  refreshPrices: () => Promise<{ updated: number }>;
 
   // Derived (computed inline)
   totalItems: () => number;
@@ -209,6 +220,36 @@ export const useCartStore = create<CartState>()(
         } else {
           console.error("mergeAndSyncCart: fetch failed —", dbCart.error);
         }
+      },
+
+      refreshPrices: async () => {
+        const variantIds = get().items.map((i) => i.variantId);
+        if (variantIds.length === 0) return { updated: 0 };
+
+        const res = await rePriceGuestCart(variantIds);
+        if (!res.success) {
+          // Non-fatal: the stale price stays on screen, and placeOrder still
+          // bills the live price — the next refresh reconciles the display.
+          console.error("refreshPrices failed:", res.error);
+          return { updated: 0 };
+        }
+
+        const liveById = new Map(res.data.map((v) => [v.variantId, v]));
+
+        // Re-read items AFTER the round-trip: lines the user added/removed
+        // meanwhile are preserved untouched (a just-added line is current by
+        // definition; a line missing from the response — deleted variant —
+        // is left alone for placeOrder's availability guard to report).
+        let updated = 0;
+        const next = get().items.map((item) => {
+          const live = liveById.get(item.variantId);
+          if (!live || live.price === item.price) return item;
+          updated++;
+          return { ...item, price: live.price };
+        });
+
+        if (updated > 0) set({ items: next });
+        return { updated };
       },
 
       totalItems: () => get().items.reduce((sum, i) => sum + i.quantity, 0),
