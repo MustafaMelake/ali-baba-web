@@ -5,9 +5,12 @@ import { prisma } from "@/lib/prisma";
 import CategoryPageTemplate from "@/components/CategoryPageTemplate";
 import { livePromotionWhere, PROMOTION_SELECT_FIELDS } from "@/lib/discounts";
 
-// CategoryPageTemplate seeds per-user wishlist state, so this page must render
-// per-request (never from a shared ISR cache that would leak one user's hearts).
-export const dynamic = "force-dynamic";
+// Shared ISR cache: this page is identical for every visitor (wishlist hearts
+// hydrate client-side from the shared store), so it regenerates at most once a
+// minute. 60s bounds promotion-window staleness; category mutations revalidate
+// this path directly, and promotion mutations bust the whole storefront tree
+// via revalidatePath("/", "layout").
+export const revalidate = 60;
 
 /**
  * Request-deduped category lookup. `generateMetadata` and the page component each

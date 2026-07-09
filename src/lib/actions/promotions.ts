@@ -13,9 +13,12 @@
 //     multi-select's "this is the full desired state" semantics)
 //   - delete → Prisma removes the implicit join rows automatically.
 //
-// NOTE: discounts aren't wired into storefront pricing yet (Phase 3), so we only
-// revalidate /admin/promotions here. Add the storefront paths when the engine
-// starts affecting displayed prices.
+// Discounts ARE live across all storefront pricing — product cards, the PDP,
+// the cart, checkout, and the homepage promo badges all price through
+// src/lib/discounts.ts. Every mutation here therefore busts the storefront
+// cache tree (revalidatePath("/", "layout")) in addition to the admin list, so
+// ISR'd catalog pages pick up a promotion change on their next request instead
+// of waiting out their revalidate window.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { revalidatePath } from "next/cache";
@@ -83,6 +86,17 @@ type ValidatedPromotion = {
 /** Drop empties + de-dupe an id list coming off a multi-select. */
 function cleanIds(ids: string[] | undefined): string[] {
   return Array.from(new Set((ids ?? []).filter(Boolean)));
+}
+
+/**
+ * Bust every surface a promotion can change. The layout-scoped "/" call
+ * invalidates the whole storefront route tree in one shot — home badges and
+ * the ISR'd category/product pages all re-render with the new promotion state
+ * on their next request, instead of serving a stale cached price.
+ */
+function revalidatePromotionSurfaces() {
+  revalidatePath("/admin/promotions");
+  revalidatePath("/", "layout");
 }
 
 /** Validate + normalize the shared promotion fields, or return a clean error. */
@@ -160,7 +174,7 @@ export async function createPromotion(
       select: { id: true },
     });
 
-    revalidatePath("/admin/promotions");
+    revalidatePromotionSurfaces();
     return { success: true, id: created.id };
   } catch (err) {
     if (prismaErrorCode(err) === "P2025") {
@@ -207,7 +221,7 @@ export async function updatePromotion(
       select: { id: true },
     });
 
-    revalidatePath("/admin/promotions");
+    revalidatePromotionSurfaces();
     return { success: true };
   } catch (err) {
     const code = prismaErrorCode(err);
@@ -237,7 +251,7 @@ export async function togglePromotionActive(
       select: { id: true },
     });
 
-    revalidatePath("/admin/promotions");
+    revalidatePromotionSurfaces();
     return { success: true };
   } catch (err) {
     if (prismaErrorCode(err) === "P2025") {
@@ -263,7 +277,7 @@ export async function deletePromotion(id: string): Promise<PromotionActionResult
   try {
     await prisma.promotion.delete({ where: { id } });
 
-    revalidatePath("/admin/promotions");
+    revalidatePromotionSurfaces();
     return { success: true };
   } catch (err) {
     if (prismaErrorCode(err) === "P2025") {

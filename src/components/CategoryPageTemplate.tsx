@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import ProductCard, { type ShopProduct } from "@/components/ProductCard";
-import { getWishlistedProductIds } from "@/lib/actions/wishlist";
 import {
   gatherPromotions,
   resolvePrice,
@@ -52,16 +51,15 @@ export interface CategoryPageTemplateProps {
  *
  * Server Component by default (no "use client") — it composes the client
  * `ProductCard` for interactivity (quick-add) while everything else streams
- * as server-rendered HTML.
+ * as server-rendered HTML. Deliberately reads NO per-user state (wishlist
+ * hearts hydrate client-side from the shared store), so the pages using it
+ * can be served from a shared ISR cache.
  */
-export default async function CategoryPageTemplate({
+export default function CategoryPageTemplate({
   title,
   description,
   products,
 }: CategoryPageTemplateProps) {
-  // Seed each card's heart from the live per-user wishlist (empty for guests).
-  const favorited = new Set(await getWishlistedProductIds());
-
   return (
     // Navbar/Footer (and the fixed-navbar clearance) come from the (shop)
     // layout — the header's top padding here is purely editorial spacing.
@@ -157,13 +155,7 @@ export default async function CategoryPageTemplate({
                   image: product.images[0] ?? "/placeholder.jpg",
                   tagline: product.description ?? undefined,
                 };
-                return (
-                  <ProductCard
-                    key={product.id}
-                    product={card}
-                    initialIsFavorited={favorited.has(product.id)}
-                  />
-                );
+                return <ProductCard key={product.id} product={card} />;
               })}
             </div>
           )}

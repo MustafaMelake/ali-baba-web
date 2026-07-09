@@ -78,9 +78,11 @@ export default async function WishlistPage() {
                       </div>
                     )}
 
-                    {/* Heart — pre-favorited; un-favoriting removes it on revalidate */}
+                    {/* Heart — hydrates from the shared wishlist store (every
+                        item here is favorited by definition); un-favoriting
+                        removes the card on revalidate */}
                     <div className="absolute right-3.5 top-3.5 z-10">
-                      <WishlistButton productId={product.id} initialIsFavorited />
+                      <WishlistButton productId={product.id} />
                     </div>
                   </div>
 

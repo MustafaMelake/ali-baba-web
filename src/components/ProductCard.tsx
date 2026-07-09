@@ -28,14 +28,7 @@ export interface ShopProduct {
   tagline?: string;
 }
 
-export default function ProductCard({
-  product,
-  initialIsFavorited,
-}: {
-  product: ShopProduct;
-  /** Server-resolved wishlist state — keeps the heart's first paint hydration-safe. */
-  initialIsFavorited: boolean;
-}) {
+export default function ProductCard({ product }: { product: ShopProduct }) {
   const addItem = useCartStore((s) => s.addItem);
   // When logged in, mutations also persist to the DB (cross-device cart).
   const isLoggedIn = !!useSession().data?.user;
@@ -92,13 +85,10 @@ export default function ProductCard({
           </div>
         )}
 
-        {/* Wishlist heart — sibling over the image, always visible */}
+        {/* Wishlist heart — sibling over the image, always visible. State
+            hydrates client-side from the shared wishlist store. */}
         <div className="absolute top-3 right-3 z-10">
-          <WishlistButton
-            variant="icon"
-            productId={product.id}
-            initialIsFavorited={initialIsFavorited}
-          />
+          <WishlistButton variant="icon" productId={product.id} />
         </div>
 
         {/* Quick-add — sibling over the image, slides up on hover */}

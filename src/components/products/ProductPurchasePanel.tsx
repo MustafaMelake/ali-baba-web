@@ -12,7 +12,8 @@ import VariantSelector, {
 } from "@/components/products/VariantSelector";
 
 export interface PurchaseVariant extends SelectableVariant {
-  /** Optional strikethrough "was" price. Schema-ready; null until promos ship. */
+  /** Strikethrough "was" price — the Discount Engine's base price when a live
+   *  promotion applies, else the variant's manual Compare-At column. */
   compareAtPrice?: number | null;
 }
 
@@ -24,14 +25,11 @@ export interface ProductPurchasePanelProps {
     category: string;
   };
   variants: PurchaseVariant[];
-  /** Server-resolved wishlist state — hydration-safe seed for the heart. */
-  initialIsFavorited: boolean;
 }
 
 export default function ProductPurchasePanel({
   product,
   variants,
-  initialIsFavorited,
 }: ProductPurchasePanelProps) {
   // Default to the cheapest AVAILABLE variant. `variants` arrives ordered price-asc
   // from the query, so the first available one is the lowest in-stock price.
@@ -196,12 +194,8 @@ export default function ProductPurchasePanel({
         )}
       </button>
 
-      {/* ─── Wishlist (live toggle) ──────────────────────────────────── */}
-      <WishlistButton
-        variant="labeled"
-        productId={product.id}
-        initialIsFavorited={initialIsFavorited}
-      />
+      {/* ─── Wishlist (live toggle — state from the shared client store) ── */}
+      <WishlistButton variant="labeled" productId={product.id} />
     </div>
   );
 }

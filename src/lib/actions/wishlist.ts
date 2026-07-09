@@ -159,9 +159,10 @@ export async function getWishlistItems(): Promise<GetWishlistResult> {
 /**
  * أخف استعلام ممكن: مجرد قائمة productIds الموجودة في مفضلة اليوزر الحالي.
  *
- * Returns `[]` for guests (and on error) so server components can seed every
- * <WishlistButton initialIsFavorited> deterministically without branching on
- * auth. Select a single column so Postgres only ships the ids we need.
+ * Consumed by the client wishlist store (src/lib/wishlist-store.ts) — ONE call
+ * per page hydrates every heart after the cached HTML paints. Returns `[]` for
+ * guests (and on error) so the caller never branches on auth. Select a single
+ * column so Postgres only ships the ids we need.
  */
 export async function getWishlistedProductIds(): Promise<string[]> {
   const session = await getServerSession();

@@ -1,18 +1,17 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useTransition } from "react";
 import { Heart } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { toggleWishlist } from "@/lib/actions/wishlist";
+import { useSession } from "@/lib/auth-client";
+import { useWishlistStore } from "@/lib/wishlist-store";
 import { cn } from "@/lib/utils";
 
 type WishlistButtonVariant = "icon" | "labeled";
 
 interface WishlistButtonProps {
   productId: string;
-  /** Initial server-resolved state — keeps first paint deterministic (no hydration drift). */
-  initialIsFavorited: boolean;
   /** `icon` = floating heart for product cards · `labeled` = inline text button for detail pages. */
   variant?: WishlistButtonVariant;
   className?: string;
@@ -21,18 +20,31 @@ interface WishlistButtonProps {
 /**
  * Luxury animated wishlist toggle.
  *
- * React 19 `useTransition` keeps the click responsive: we flip the heart
- * optimistically, fire the `toggleWishlist` server action in the background, then
- * reconcile with the server's returned state (and roll back on failure).
+ * Heart state lives in the shared client wishlist store (src/lib/
+ * wishlist-store.ts), NOT in a server-seeded prop — catalog pages are served
+ * from a shared cache, so the cached HTML paints un-favorited and the store
+ * hydrates the user's real hearts right after the session resolves (one fetch
+ * per page, shared by every button). Toggling is optimistic in the store and
+ * rolls back on failure, so all instances of a product stay in sync.
  */
 export default function WishlistButton({
   productId,
-  initialIsFavorited,
   variant = "icon",
   className,
 }: WishlistButtonProps) {
-  const [favorited, setFavorited] = useState(initialIsFavorited);
+  const { data: session, isPending: sessionPending } = useSession();
+  const userId = session?.user?.id ?? null;
+
+  const ensureLoaded = useWishlistStore((s) => s.ensureLoaded);
+  const toggle = useWishlistStore((s) => s.toggle);
+  const favorited = useWishlistStore((s) => s.ids.has(productId));
   const [isPending, startTransition] = useTransition();
+
+  // Hydrate the shared store once the session resolves. Idempotent — the
+  // first button on the page performs the single fetch; the rest are no-ops.
+  useEffect(() => {
+    if (!sessionPending) ensureLoaded(userId);
+  }, [sessionPending, userId, ensureLoaded]);
 
   function handleToggle(e: React.MouseEvent) {
     // Cards usually wrap content in a <Link> — never let the heart navigate.
@@ -40,20 +52,15 @@ export default function WishlistButton({
     e.stopPropagation();
     if (isPending) return;
 
-    const next = !favorited;
-    setFavorited(next); // optimistic flip
-
     startTransition(async () => {
-      const res = await toggleWishlist(productId);
+      // The store applies the optimistic flip synchronously and rolls back
+      // itself on failure — this handler only reports the outcome.
+      const res = await toggle(productId);
 
       if (!res.success) {
-        setFavorited(!next); // roll back
         toast.error(res.error);
         return;
       }
-
-      // Trust the server's resulting state over our optimistic guess.
-      setFavorited(res.added);
       toast.success(res.added ? "Added to Wishlist" : "Removed from Wishlist");
     });
   }

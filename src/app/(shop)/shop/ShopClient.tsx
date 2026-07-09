@@ -20,18 +20,9 @@ export interface ShopClientProps {
   categories: ShopCategory[];
   /** Already filtered server-side to the active category — rendered as-is. */
   products: ShopProduct[];
-  /** Product ids in the current user's wishlist (empty for guests). */
-  wishlistedIds: string[];
 }
 
-export default function ShopClient({
-  categories,
-  products,
-  wishlistedIds,
-}: ShopClientProps) {
-  // O(1) membership lookups when seeding each card's heart.
-  const favorited = new Set(wishlistedIds);
-
+export default function ShopClient({ categories, products }: ShopClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Keeps the UI interactive while the server refetches the filtered grid, and
@@ -169,10 +160,7 @@ export default function ShopClient({
                 exit={{ opacity: 0, scale: 0.94 }}
                 transition={{ duration: 0.45, ease: EASE }}
               >
-                <ProductCard
-                  product={product}
-                  initialIsFavorited={favorited.has(product.id)}
-                />
+                <ProductCard product={product} />
               </motion.div>
             ))}
           </AnimatePresence>

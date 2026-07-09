@@ -1,5 +1,4 @@
 import { prisma } from "@/lib/prisma";
-import { getWishlistedProductIds } from "@/lib/actions/wishlist";
 import type { ShopProduct } from "@/components/ProductCard";
 import {
   gatherPromotions,
@@ -9,8 +8,11 @@ import {
 } from "@/lib/discounts";
 import ShopClient from "./ShopClient";
 
-// Reads the per-user wishlist → must be dynamic (no shared ISR cache).
-export const dynamic = "force-dynamic";
+// No per-user data here anymore (wishlist hearts hydrate client-side from the
+// shared store), but this route still renders per-request BY DESIGN: the
+// server-side category filter reads `searchParams`, which is request-time
+// data — an ISR `revalidate` would be inert. The win over the old version is
+// the dropped session + wishlist queries on every anonymous hit.
 
 export default async function ShopPage({
   searchParams,
@@ -25,7 +27,7 @@ export default async function ShopPage({
   const { category: categoryParam } = await searchParams;
 
   // Run all queries concurrently.
-  const [categories, products, wishlistedIds] = await Promise.all([
+  const [categories, products] = await Promise.all([
     prisma.category.findMany({
       where: { type: "SHOP" },
       orderBy: { name: "asc" },
@@ -61,7 +63,6 @@ export default async function ShopPage({
       },
       orderBy: { createdAt: "desc" },
     }),
-    getWishlistedProductIds(),
   ]);
 
   const mappedProducts: ShopProduct[] = products.map((product) => {
@@ -93,11 +94,5 @@ export default async function ShopPage({
     };
   });
 
-  return (
-    <ShopClient
-      categories={categories}
-      products={mappedProducts}
-      wishlistedIds={wishlistedIds}
-    />
-  );
+  return <ShopClient categories={categories} products={mappedProducts} />;
 }

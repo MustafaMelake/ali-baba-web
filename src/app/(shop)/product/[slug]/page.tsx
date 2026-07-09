@@ -3,13 +3,9 @@ import { notFound } from "next/navigation";
 import { ChevronRight, MessageSquareQuote } from "lucide-react";
 import ProductGallery from "@/components/ProductGallery";
 import ProductPurchasePanel from "@/components/products/ProductPurchasePanel";
-import { LogIn } from "lucide-react";
 import StarRating from "@/components/StarRating";
-import ReviewForm from "@/components/ReviewForm";
+import ReviewGate from "@/components/ReviewGate";
 import { prisma } from "@/lib/prisma";
-import { getServerSession } from "@/lib/session";
-import { getWishlistedProductIds } from "@/lib/actions/wishlist";
-import { hasUserReviewedProduct } from "@/lib/actions/reviews";
 import { formatDate } from "@/lib/utils";
 import {
   gatherPromotions,
@@ -18,9 +14,12 @@ import {
   resolvePrice,
 } from "@/lib/discounts";
 
-// Rendered dynamically: the review panel is personalised to the signed-in user,
-// which requires reading the session (cookies/headers) per request.
-export const dynamic = "force-dynamic";
+// Shared ISR cache: the page reads NO per-user state — the wishlist heart and
+// the review panel's signed-in/already-reviewed gating both hydrate client-side
+// (wishlist store + <ReviewGate/>), so one cached render serves every visitor.
+// 60s bounds promo staleness; product mutations revalidate this path directly,
+// and promotion mutations bust the tree via revalidatePath("/", "layout").
+export const revalidate = 60;
 
 // ─── Page ────────────────────────────────────────────────────────
 // Driven by Prisma. The product is resolved by its unique `slug`.
@@ -39,50 +38,39 @@ export default async function ProductPage({
   // One instant drives every promotion filter + evaluation this request.
   const now = new Date();
 
-  const [product, session, wishlistedIds] = await Promise.all([
-    prisma.product.findUnique({
-      where: { slug },
-      include: {
-        // Category needs name + slug for the breadcrumb, plus its live promotions.
-        category: {
-          select: {
-            name: true,
-            slug: true,
-            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-          },
-        },
-        // Product-level live promotions.
-        promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-        variants: {
-          orderBy: { price: "asc" },
-          include: {
-            // Variant-level live promotions.
-            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-          },
-        },
-        // Only moderated (approved) reviews are ever surfaced publicly.
-        reviews: {
-          where: { isApproved: true },
-          orderBy: { createdAt: "desc" },
+  const product = await prisma.product.findUnique({
+    where: { slug },
+    include: {
+      // Category needs name + slug for the breadcrumb, plus its live promotions.
+      category: {
+        select: {
+          name: true,
+          slug: true,
+          promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
         },
       },
-    }),
-    getServerSession(),
-    getWishlistedProductIds(),
-  ]);
+      // Product-level live promotions.
+      promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+      variants: {
+        orderBy: { price: "asc" },
+        include: {
+          // Variant-level live promotions.
+          promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        },
+      },
+      // Only moderated (approved) reviews are ever surfaced publicly.
+      reviews: {
+        where: { isApproved: true },
+        orderBy: { createdAt: "desc" },
+      },
+    },
+  });
 
   if (!product) notFound();
 
   // Derived view-model (all real data, with safe fallbacks).
   const images = product.images.length ? product.images : ["/placeholder.jpg"];
   const badge = product.isFeatured ? "Featured" : null;
-  const initialIsFavorited = wishlistedIds.includes(product.id);
-
-  // Pre-emptive guard for the submission form: a user may review a product only
-  // once. Checked only for signed-in users (guests see the login gate anyway).
-  const hasReviewed = session
-    ? await hasUserReviewedProduct(product.id)
-    : false;
 
   // The full variant set drives the client selector (price / availability /
   // Add-to-Cart). Ordered price-asc by the query, so the first available one is
@@ -215,7 +203,6 @@ export default async function ProductPage({
                 category: product.category.name,
               }}
               variants={variants}
-              initialIsFavorited={initialIsFavorited}
             />
           </div>
 
@@ -317,33 +304,10 @@ export default async function ProductPage({
               )}
             </div>
 
-            {/* Submission form (authenticated users only) */}
+            {/* Submission form — session + already-reviewed gating resolve
+                client-side so this page stays cacheable (see ReviewGate). */}
             <div className="lg:sticky lg:top-24 lg:self-start">
-              {session ? (
-                <ReviewForm
-                  productId={product.id}
-                  hasExistingReview={hasReviewed}
-                />
-              ) : (
-                <div className="rounded-2xl border border-stone-200/80 bg-stone-50/40 p-6 md:p-8 text-center">
-                  <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
-                    <LogIn className="h-6 w-6" />
-                  </span>
-                  <h3 className="mt-4 font-serif text-2xl font-medium tracking-tight text-stone-900">
-                    Please log in to leave a review
-                  </h3>
-                  <p className="mt-1.5 font-sans text-sm text-stone-500">
-                    Sign in to your account to share your experience with this product.
-                  </p>
-                  <Link
-                    href="/login"
-                    className="mt-6 inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 font-sans text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary/90"
-                  >
-                    <LogIn className="h-4 w-4" />
-                    Log in to review
-                  </Link>
-                </div>
-              )}
+              <ReviewGate productId={product.id} />
             </div>
           </div>
         </div>
