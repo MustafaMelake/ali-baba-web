@@ -7,12 +7,16 @@ import { prisma } from "@/lib/prisma";
 import { livePromotionWhere } from "@/lib/discounts";
 import { DiscountType } from "@/generated/prisma/enums";
 
-// Fully dynamic: the slider categories (and their promotion badges) are
-// re-queried on every request, so a freshly-started/expired promotion is
-// reflected immediately — there's no cache window to lag behind. Category
-// mutations also call revalidatePath("/"). Switch to a positive `revalidate`
-// (e.g. 3600) to trade that immediacy for fewer DB reads on this hot route.
-export const revalidate = 0;
+// Shared ISR cache (60s), matching the PDP and category pages: this page reads
+// no per-user state, and every ADMIN action that can change it already busts
+// the cache directly — category mutations call revalidatePath("/") and
+// promotion mutations bust the whole storefront tree via
+// revalidatePath("/", "layout") — so changes still appear on the next request,
+// not after the window. The 60s window only bounds pure time-based promotion
+// liveness (a promo whose start/end date passes with no admin action can lag
+// up to a minute, exactly as it does on the PDP). The previous `revalidate = 0`
+// paid a Neon round-trip per visit on the hottest route for no correctness win.
+export const revalidate = 60;
 
 /**
  * Derives a short, eye-catching badge from a category's live promotions.

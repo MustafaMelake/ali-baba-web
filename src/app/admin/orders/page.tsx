@@ -8,6 +8,7 @@ import AdminOrderFilters, {
   type TabValue,
 } from "@/components/admin/AdminOrderFilters";
 import AdminOrdersTable from "@/components/admin/AdminOrdersTable";
+import AdminOrdersPagination from "@/components/admin/AdminOrdersPagination";
 
 export const metadata = {
   title: "Orders | Admin",
@@ -22,14 +23,22 @@ function parseStatus(raw?: string): TabValue {
   return "ALL";
 }
 
+/** Parse ?page= into a 1-based integer — anything invalid falls back to 1
+ *  (getOrders re-clamps defensively; this keeps the two in agreement). */
+function parsePage(raw?: string): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.trunc(n) : 1;
+}
+
 export default async function AdminOrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; query?: string }>;
+  searchParams: Promise<{ status?: string; query?: string; page?: string }>;
 }) {
   const sp = await searchParams;
   const activeStatus = parseStatus(sp.status);
   const q = sp.query?.trim() ?? "";
+  const page = parsePage(sp.page);
 
   // Fetch + branch RBAC live in getOrders: ADMIN sees every branch, a MANAGER is
   // filtered to their own. A throw means a MANAGER with no branch assigned.
@@ -38,6 +47,7 @@ export default async function AdminOrdersPage({
     result = await getOrders({
       status: activeStatus === "ALL" ? undefined : activeStatus,
       query: q,
+      page,
     });
   } catch {
     return (
@@ -99,6 +109,17 @@ export default async function AdminOrdersPage({
       ) : (
         <AdminOrdersTable orders={orders} />
       )}
+
+      {/* Prev/Next through the filtered list. Self-hides on a single page;
+          stays rendered on an out-of-range page (stale ?page= URL) so
+          "Previous" remains the recovery path back into the data. */}
+      <AdminOrdersPagination
+        page={result.page}
+        pageSize={result.pageSize}
+        total={result.total}
+        shown={orders.length}
+        hasMore={result.hasMore}
+      />
     </div>
   );
 }

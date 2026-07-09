@@ -190,22 +190,37 @@ export async function getDashboardStats(
   };
 }
 
+/** Rows per admin orders page — bounds both the RSC payload and the pager math. */
+export const ORDERS_PAGE_SIZE = 50;
+
 export type GetOrdersParams = {
   branchId?: string;
   /** Omit / undefined = all statuses. */
   status?: OrderStatus;
   query?: string;
+  /** 1-based page into the filtered list. Omitted/invalid values → page 1. */
+  page?: number;
 };
 
 export type GetOrdersResult = {
   orders: AdminOrderView[];
   counts: Record<TabValue, number>;
+  /** The (clamped) 1-based page this result actually represents. */
+  page: number;
+  pageSize: number;
+  /** Total rows matching the ACTIVE filter (status + search + branch scope). */
+  total: number;
+  /** True when a later page exists — drives the "Next" button. */
+  hasMore: boolean;
 };
 
 /**
  * Branch-scoped orders list + per-status counters for the admin orders board.
  * Same search/filter behaviour as before, with the caller's branch ANDed into
  * every query so a MANAGER physically cannot read another branch's orders.
+ * The list is paginated (ORDERS_PAGE_SIZE per page, newest first); the total
+ * for the active filter falls out of the same groupBy that feeds the tab
+ * counters, so pagination adds no extra query.
  */
 export async function getOrders(
   params?: GetOrdersParams,
@@ -213,6 +228,11 @@ export async function getOrders(
   const scope = await requireDashboardAccess();
   const branchId = resolveBranchScope(scope, params?.branchId);
   const branchWhere: Prisma.OrderWhereInput = branchId ? { branchId } : {};
+
+  // Defensive clamp: NaN, floats and non-positives from a hand-edited URL all
+  // collapse to page 1 (the caller pre-parses, but never trust the caller).
+  const rawPage = Number(params?.page);
+  const page = Number.isFinite(rawPage) ? Math.max(1, Math.trunc(rawPage)) : 1;
 
   const q = params?.query?.trim() ?? "";
 
@@ -251,7 +271,8 @@ export async function getOrders(
     prisma.order.findMany({
       where: listWhere,
       orderBy: { createdAt: "desc" },
-      take: 50,
+      skip: (page - 1) * ORDERS_PAGE_SIZE,
+      take: ORDERS_PAGE_SIZE,
       include: {
         user: { select: { email: true } },
         branch: { select: { name: true } },
@@ -287,6 +308,12 @@ export async function getOrders(
     counts.ALL += g._count._all;
   }
 
+  // Pagination metadata for the ACTIVE filter, read off the counters above —
+  // the groupBy ignores the status filter by design (it feeds every tab), so
+  // the list's total is simply the active tab's counter.
+  const total = params?.status ? counts[params.status] : counts.ALL;
+  const hasMore = page * ORDERS_PAGE_SIZE < total;
+
   // Serialize for the client table/drawer; VAT is the residual so receipts
   // reconcile to the canonical totalAmount.
   const view: AdminOrderView[] = orders.map((order) => ({
@@ -319,5 +346,12 @@ export async function getOrders(
     branchName: order.branch?.name ?? null,
   }));
 
-  return { orders: view, counts };
+  return {
+    orders: view,
+    counts,
+    page,
+    pageSize: ORDERS_PAGE_SIZE,
+    total,
+    hasMore,
+  };
 }

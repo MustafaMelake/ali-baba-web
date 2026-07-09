@@ -53,6 +53,9 @@ export default function AdminOrderFilters({
     pushParams((p) => {
       if (tab === "ALL") p.delete("status");
       else p.set("status", tab);
+      // A new filter is a new list — never carry the old page position into
+      // it (a stale ?page= could land past the shorter list's end).
+      p.delete("page");
     });
   }
 
@@ -65,6 +68,8 @@ export default function AdminOrderFilters({
       const params = new URLSearchParams(searchParams.toString());
       if (term.trim()) params.set("query", term.trim());
       else params.delete("query");
+      // Same rule as selectStatus: a changed search is a new list → page 1.
+      params.delete("page");
       const qs = params.toString();
       startTransition(() =>
         router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false }),
