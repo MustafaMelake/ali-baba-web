@@ -7,9 +7,11 @@ import { prisma } from "@/lib/prisma";
 import { livePromotionWhere } from "@/lib/discounts";
 import { DiscountType } from "@/generated/prisma/enums";
 
-// Re-fetch the slider categories at most once per hour (tune or remove as needed).
-// Note: promotion badges are resolved at cache time, so a freshly-started/expired
-// promotion can lag by up to this window.
+// Fully dynamic: the slider categories (and their promotion badges) are
+// re-queried on every request, so a freshly-started/expired promotion is
+// reflected immediately — there's no cache window to lag behind. Category
+// mutations also call revalidatePath("/"). Switch to a positive `revalidate`
+// (e.g. 3600) to trade that immediacy for fewer DB reads on this hot route.
 export const revalidate = 0;
 
 /**

@@ -21,7 +21,7 @@ export type EditableProduct = {
   isAvailable: boolean;
   isFeatured: boolean;
   categoryId: string;
-  menuPageId: string;
+  menuPageId: string | null;
   variants: {
     id: string;
     name: string;
@@ -138,7 +138,8 @@ export default function EditProductForm({
   const [slug, setSlug] = useState(product.slug);
   const [description, setDescription] = useState(product.description ?? "");
   const [categoryId, setCategoryId] = useState(product.categoryId);
-  const [menuPageId, setMenuPageId] = useState(product.menuPageId);
+  // Optional — a null (unassigned) MenuPage becomes the "None" option.
+  const [menuPageId, setMenuPageId] = useState(product.menuPageId ?? "");
   const [images, setImages] = useState<string[]>(product.images);
   const [isAvailable, setIsAvailable] = useState(product.isAvailable);
   const [isFeatured, setIsFeatured] = useState(product.isFeatured);
@@ -295,14 +296,14 @@ export default function EditProductForm({
             </select>
           </Field>
 
-          <Field label="Menu Page" htmlFor="menuPageId" error={errors.menuPageId} required>
+          <Field label="Menu Page (optional)" htmlFor="menuPageId">
             <select
               id="menuPageId"
               value={menuPageId}
               onChange={(e) => setMenuPageId(e.target.value)}
               className={inputClasses}
             >
-              {menuPages.length === 0 && <option value="">No menu pages</option>}
+              <option value="">None</option>
               {menuPages.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}

@@ -79,7 +79,8 @@ export default function NewProductForm({
   const [slugEdited, setSlugEdited] = useState(false);
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "");
-  const [menuPageId, setMenuPageId] = useState(menuPages[0]?.id ?? "");
+  // Optional — defaults to "None" (empty). MenuPage no longer gates a product.
+  const [menuPageId, setMenuPageId] = useState("");
   const [images, setImages] = useState<string[]>([]);
 
   // ── Dynamic Variants State ──────────────────────────────
@@ -89,7 +90,8 @@ export default function NewProductForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
-  const canSubmit = categories.length > 0 && menuPages.length > 0;
+  // Only a category is mandatory now — a product can ship without a MenuPage.
+  const canSubmit = categories.length > 0;
 
   function handleNameChange(value: string) {
     setName(value);
@@ -165,8 +167,8 @@ export default function NewProductForm({
 
       {!canSubmit && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-          You need at least one category and one menu page before adding a
-          product. Seed them first.
+          You need at least one category before adding a product. Seed one
+          first.
         </div>
       )}
 
@@ -251,21 +253,14 @@ export default function NewProductForm({
             </select>
           </Field>
 
-          <Field
-            label="Menu Page"
-            htmlFor="menuPageId"
-            error={errors.menuPageId}
-            required
-          >
+          <Field label="Menu Page (optional)" htmlFor="menuPageId">
             <select
               id="menuPageId"
               value={menuPageId}
               onChange={(e) => setMenuPageId(e.target.value)}
               className={inputClasses}
             >
-              {menuPages.length === 0 && (
-                <option value="">No menu pages</option>
-              )}
+              <option value="">None</option>
               {menuPages.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}

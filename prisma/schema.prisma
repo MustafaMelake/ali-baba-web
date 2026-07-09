@@ -246,9 +246,14 @@ model Product {
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
-  // Presentation (which menu page it appears on)
-  menuPageId String
-  menuPage   MenuPage @relation(fields: [menuPageId], references: [id], onDelete: Restrict)
+  // Presentation (which menu page it appears on) — OPTIONAL.
+  // No storefront surface reads MenuPage today, so a product may exist without
+  // one (admins are no longer forced to pick). onDelete: SetNull (was Restrict)
+  // so a MenuPage can be retired without being blocked by attached products —
+  // the link simply clears. Migrating this relation out entirely is the eventual
+  // follow-up; nullable is the safe, reversible first step.
+  menuPageId String?
+  menuPage   MenuPage? @relation(fields: [menuPageId], references: [id], onDelete: SetNull)
 
   variants ProductVariant[]
   reviews  Review[]
