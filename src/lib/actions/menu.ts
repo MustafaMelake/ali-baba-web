@@ -269,10 +269,15 @@ export type BulkAdjustResult =
 
 /**
  * Increases or decreases every item's price within a category by `percentage`
- * (e.g. `15` → +15%, `-10` → −10%), in a single atomic `updateMany`.
+ * (e.g. `15` → +15%, `-10` → −10%), in a single atomic SQL `UPDATE`.
  *
- * Prisma's atomic `multiply` operator does the arithmetic in the database, so
- * there is no read-modify-write race and the call scales to any item count.
+ * The arithmetic runs in the database (no read-modify-write race, scales to any
+ * item count), but — unlike Prisma's atomic `{ multiply }` operator — the new
+ * value is wrapped in `ROUND(…, 2)` so repeated adjustments can never accumulate
+ * binary-float drift (e.g. 19.99 → ×1.1 → 21.989 → 21.99, not 21.98900000001).
+ * `price` is a `double precision` column, so the product is cast to `numeric`
+ * before rounding (Postgres has no two-argument `round(double precision)`).
+ * `updatedAt` is set explicitly because raw SQL bypasses Prisma's `@updatedAt`.
  * Because all items are scaled by the same factor, a fixed-price category stays
  * internally consistent (every item remains equal).
  */
@@ -299,13 +304,17 @@ export async function bulkAdjustCategoryPrices(
   const factor = 1 + percentage / 100;
 
   try {
-    const result = await prisma.menuItem.updateMany({
-      where: { categoryId },
-      data: { price: { multiply: factor } },
-    });
+    // $executeRaw returns the number of rows affected — same shape as the old
+    // updateMany().count. The tagged template parameterises both values.
+    const count = await prisma.$executeRaw`
+      UPDATE "MenuItem"
+      SET "price" = ROUND(("price" * ${factor})::numeric, 2),
+          "updatedAt" = NOW()
+      WHERE "categoryId" = ${categoryId}
+    `;
 
     revalidateMenu();
-    return { success: true, count: result.count };
+    return { success: true, count };
   } catch (err) {
     console.error("bulkAdjustCategoryPrices failed:", err);
     return { success: false, error: "Could not adjust prices. Please try again." };

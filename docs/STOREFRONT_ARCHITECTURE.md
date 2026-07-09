@@ -85,7 +85,7 @@ Each row is mapped to the `CategorySlider` card shape: a presentational two-digi
 
 ### 1.2 Standard Categories & the Catalog Directory — `BUILT`
 
-A standard category (`isFeatured === false`, `type: "SHOP"`) doesn't get a slider slot, but it **does** get a landing page through the same dynamic route as featured ones (§1.3). It also surfaces in the **`/shop` catalog directory** ([`page.tsx`](../src/app/(shop)/shop/page.tsx) + [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx)), which uses **Server-Side Filtering driven by `searchParams`**:
+A standard category (`isFeatured === false`) doesn't get a slider slot, but it **does** get a landing page through the same dynamic route as featured ones (§1.3). It also surfaces in the **`/shop` catalog directory** ([`page.tsx`](../src/app/(shop)/shop/page.tsx) + [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx)), which uses **Server-Side Filtering driven by `searchParams`**:
 
 ```ts
 export default async function ShopPage({
@@ -97,12 +97,12 @@ export default async function ShopPage({
   const { category: categoryParam } = await searchParams;
 
   const [categories, products, wishlistedIds] = await Promise.all([
-    prisma.category.findMany({ where: { type: "SHOP" }, orderBy: { name: "asc" }, select: { name: true, slug: true } }),
+    prisma.category.findMany({ orderBy: { name: "asc" }, select: { name: true, slug: true } }),
     prisma.product.findMany({
       where: {
         isAvailable: true,
-        // Narrow by slug when ?category= is present; the SHOP type guard always holds.
-        category: categoryParam ? { type: "SHOP", slug: categoryParam } : { type: "SHOP" },
+        // Narrow by slug only when ?category= is present.
+        ...(categoryParam ? { category: { slug: categoryParam } } : {}),
       },
       include: {
         category: { select: { name: true, promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
@@ -141,7 +141,7 @@ function selectCategory(slug: string | null) {
 - **`router.push(..., { scroll: false })`** stops Next.js from jumping the viewport back to the top on every filter click, so the sticky filter bar stays where the customer clicked it.
 - **`framer-motion`'s `layout` + `AnimatePresence mode="popLayout"`** still own the grid reflow and card enter/exit animation — `useTransition` only governs *when* the new server-rendered list lands.
 
-> **Vestigial note:** `Category.type` (`SHOP | CAFE`) still exists and every storefront query filters `type: "SHOP"`, but the admin category actions never set `type` — every category created through the UI is `SHOP` by default, and no code path ever writes `CAFE`. The filter is currently a no-op guard; don't remove it (the enum may be re-activated), but don't rely on `CAFE` categories existing either.
+> **Removed (July 2026):** `Category.type` / `MenuPage.type` and the `CategoryType` (`SHOP | CAFE`) enum have been purged. The admin UI never exposed a "CAFE" type — every category was `SHOP` and no code path ever wrote `CAFE` — so the `type: "SHOP"` filters were dead no-op guards. Categories are now uniform; storefront queries carry no `type` predicate. See migration `20260709000001_drop_vestigial_category_type`.
 
 ### 1.3 The single dynamic category route — `BUILT`
 

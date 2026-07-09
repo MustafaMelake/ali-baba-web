@@ -29,19 +29,16 @@ export default async function ShopPage({
   // Run all queries concurrently.
   const [categories, products] = await Promise.all([
     prisma.category.findMany({
-      where: { type: "SHOP" },
       orderBy: { name: "asc" },
       select: { name: true, slug: true },
     }),
     prisma.product.findMany({
       // Server-side category filtering: narrow by slug when one is present, so
       // the grid only ever ships the products it renders (LCP scales with the
-      // page size, not the whole catalog). The SHOP type guard is always kept.
+      // page size, not the whole catalog).
       where: {
         isAvailable: true,
-        category: categoryParam
-          ? { type: "SHOP", slug: categoryParam }
-          : { type: "SHOP" },
+        ...(categoryParam ? { category: { slug: categoryParam } } : {}),
       },
       include: {
         // Category + its live promotions (name kept for the card label).

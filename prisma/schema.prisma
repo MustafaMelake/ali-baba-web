@@ -26,12 +26,6 @@ enum UserRole {
   MANAGER // Branch Manager — scoped to a single Branch via User.branchId.
 }
 
-/// Which storefront a category / menu page belongs to.
-enum CategoryType {
-  SHOP // Online patisserie shop
-  CAFE // Dine-in café menu
-}
-
 enum FulfillmentMethod {
   DELIVERY
   PICKUP
@@ -186,10 +180,9 @@ model Branch {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Category {
-  id   String       @id @default(cuid())
-  name String       @unique
-  slug String       @unique
-  type CategoryType @default(SHOP)
+  id   String @id @default(cuid())
+  name String @unique
+  slug String @unique
 
   // ── CategorySlider presentation fields ─────────────────────────────────────
   /// Short marketing tagline shown under the title in the slider card.
@@ -222,14 +215,11 @@ model MenuPage {
   description String?
   /// Optional unified starting price for the page (when variants aren't itemised).
   basePrice   Float?
-  type        CategoryType @default(SHOP)
-  isActive    Boolean      @default(true)
-  sortOrder   Int          @default(0)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
   products    Product[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-
-  @@index([type])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Product {
