@@ -14,8 +14,11 @@ import { getDbCartAction } from "@/lib/actions/cart";
  * `useSession()` ends up reporting a logged-in user:
  *
  *   • "Already logged in on mount" (page load / refresh / new device): the
- *     localStorage cart and the DB cart may overlap. Merging here would SUM the
- *     two and double-count. → We HYDRATE: pull the DB cart and overwrite local.
+ *     localStorage cart and the DB cart may overlap. Quantity-summing here
+ *     would double-count. → We HYDRATE: pull the DB cart and adopt it via
+ *     `adoptDbCart`, which replays any UNSYNCED local intent (pendingOps —
+ *     e.g. a fire-and-forget sync that failed offline) over the payload
+ *     instead of blindly overwriting it away.
  *
  *   • "Guest → Logged in" (a real sign-in this session): the localStorage cart
  *     is the guest's work that must be folded into the account exactly once.
@@ -43,16 +46,18 @@ export default function CartSyncProvider({
   const knownUserId = useRef<string | null>(null);
 
   /**
-   * Pull the DB cart and adopt it as the source of truth. `setState` is
-   * Zustand's built-in setter; it also writes through the `persist` middleware,
-   * so localStorage is updated to match. (`mergeAndSyncCart` sources its own
-   * items from the store, which is why this provider never subscribes to
-   * `items` — doing so would re-run the effect on every cart edit.)
+   * Pull the DB cart and adopt it as the source of truth. Adoption goes
+   * through the store's `adoptDbCart`, which is merge-aware: unsynced local
+   * intent (pendingOps) is replayed over the server payload and re-synced in
+   * the background, so a sync that failed in a previous page-life can't be
+   * silently erased by this hydrate. (`mergeAndSyncCart`/`adoptDbCart` source
+   * their own items from the store, which is why this provider never
+   * subscribes to `items` — doing so would re-run the effect on every edit.)
    */
   const hydrateFromDb = useCallback(async () => {
     const res = await getDbCartAction();
     if (res.success) {
-      useCartStore.setState({ items: res.data });
+      useCartStore.getState().adoptDbCart(res.data);
     } else {
       console.error("CartSyncProvider: hydrate failed —", res.error);
     }
@@ -64,8 +69,9 @@ export default function CartSyncProvider({
 
     // ── First resolution after mount ────────────────────────────────────────
     // This is "state on load", not a transition. If a user is already logged
-    // in, hydrate strictly from the DB (NO merge → no double-count). If it's a
-    // guest, leave the local cart exactly as persisted.
+    // in, hydrate from the DB (no quantity-SUM → no double-count; unsynced
+    // local intent still replays on top — see adoptDbCart). If it's a guest,
+    // leave the local cart exactly as persisted.
     if (firstResolve.current) {
       firstResolve.current = false;
       knownUserId.current = userId;

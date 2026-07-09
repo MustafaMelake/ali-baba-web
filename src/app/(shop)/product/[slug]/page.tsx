@@ -21,6 +21,13 @@ import {
 // and promotion mutations bust the tree via revalidatePath("/", "layout").
 export const revalidate = 60;
 
+// How many of the newest approved reviews ship with the initial page. The
+// header's count and average come from a DB aggregate over the FULL approved
+// set, so this cap only bounds the RSC payload — never the numbers. Paging
+// through the rest is a future client fetch ("load more") over the same query
+// with a growing skip.
+const REVIEWS_PAGE_SIZE = 20;
+
 // ─── Page ────────────────────────────────────────────────────────
 // Driven by Prisma. The product is resolved by its unique `slug`.
 //
@@ -38,33 +45,47 @@ export default async function ProductPage({
   // One instant drives every promotion filter + evaluation this request.
   const now = new Date();
 
-  const product = await prisma.product.findUnique({
-    where: { slug },
-    include: {
-      // Category needs name + slug for the breadcrumb, plus its live promotions.
-      category: {
-        select: {
-          name: true,
-          slug: true,
-          promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+  // Product, the first page of reviews, and the review aggregate all filter by
+  // the same unique slug, so they run CONCURRENTLY — one parallel round-trip
+  // instead of "product first, then its unbounded reviews".
+  const [product, reviews, reviewStats] = await Promise.all([
+    prisma.product.findUnique({
+      where: { slug },
+      include: {
+        // Category needs name + slug for the breadcrumb, plus its live promotions.
+        category: {
+          select: {
+            name: true,
+            slug: true,
+            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+          },
+        },
+        // Product-level live promotions.
+        promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        variants: {
+          orderBy: { price: "asc" },
+          include: {
+            // Variant-level live promotions.
+            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+          },
         },
       },
-      // Product-level live promotions.
-      promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-      variants: {
-        orderBy: { price: "asc" },
-        include: {
-          // Variant-level live promotions.
-          promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-        },
-      },
-      // Only moderated (approved) reviews are ever surfaced publicly.
-      reviews: {
-        where: { isApproved: true },
-        orderBy: { createdAt: "desc" },
-      },
-    },
-  });
+    }),
+    // Only moderated (approved) reviews are ever surfaced publicly — and only
+    // the newest page of them ships in the payload (was: every row).
+    prisma.review.findMany({
+      where: { isApproved: true, product: { slug } },
+      orderBy: { createdAt: "desc" },
+      take: REVIEWS_PAGE_SIZE,
+    }),
+    // Count + average computed by Postgres over the FULL approved set, so the
+    // header stays exact no matter how few rows the page itself loads.
+    prisma.review.aggregate({
+      where: { isApproved: true, product: { slug } },
+      _avg: { rating: true },
+      _count: { id: true },
+    }),
+  ]);
 
   if (!product) notFound();
 
@@ -93,13 +114,10 @@ export default async function ProductPage({
     };
   });
 
-  // Review aggregates computed server-side from the approved set.
-  const reviews = product.reviews;
-  const reviewCount = reviews.length;
-  const averageRating =
-    reviewCount > 0
-      ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount
-      : 0;
+  // Review aggregates come straight from the DB aggregate (full approved set) —
+  // never recomputed in JS from the capped page of rows.
+  const reviewCount = reviewStats._count.id;
+  const averageRating = reviewStats._avg.rating ?? 0;
 
   return (
     // Navbar clearance is provided once by the (shop) layout's <main>.
@@ -301,6 +319,16 @@ export default async function ProductPage({
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {/* More approved reviews exist beyond the first page. Kept as a
+                  truthful caption (not a dead button) until a "load more"
+                  client fetch pages through the rest via a server action. */}
+              {reviewCount > reviews.length && (
+                <p className="mt-8 text-center font-sans text-[11px] font-medium uppercase tracking-[0.2em] text-stone-400">
+                  Showing the {reviews.length} most recent of {reviewCount}{" "}
+                  reviews
+                </p>
               )}
             </div>
 
