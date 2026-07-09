@@ -10,6 +10,7 @@ import {
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
+  roundMoney,
 } from "@/lib/discounts";
 import { getStoreSettings } from "@/lib/store-settings";
 import { checkoutSchema } from "@/lib/validators";
@@ -176,8 +177,10 @@ export async function placeOrder(
       // VAT غير مخزّن في عمود مستقل — مدموج في totalAmount، وبيتحسب كـ residual
       // وقت العرض (totalAmount - subtotal - deliveryFee) فيفضل دايماً متسق،
       // حتى لو الأدمن غيّر النسبة أو قفل الضريبة بعد ما الأوردر اتعمل.
+      // 2-dp money rounding (NOT Math.round to whole EGP) so the tax keeps its
+      // piastres and totalAmount reconciles exactly with the shown summary.
       const vat = settings.isVatEnabled
-        ? Math.round(subtotal * settings.vatRate)
+        ? roundMoney(subtotal * settings.vatRate)
         : 0;
       const totalAmount = subtotal + deliveryFee + vat;
 

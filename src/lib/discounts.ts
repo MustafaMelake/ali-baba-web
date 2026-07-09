@@ -58,8 +58,9 @@ export const PROMOTION_SELECT_FIELDS = {
 };
 
 /** Round to 2 decimals (money). Identical rounding everywhere keeps the shown
- *  price and the billed price in lock-step. */
-function roundMoney(n: number): number {
+ *  price and the billed price in lock-step — reused by `placeOrder` (VAT) and the
+ *  checkout summary preview so a piastre is never silently dropped. */
+export function roundMoney(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 

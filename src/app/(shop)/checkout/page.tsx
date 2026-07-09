@@ -24,6 +24,7 @@ import {
 import { clearDbCartAction } from "@/lib/actions/cart";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
 import { checkoutSchema, fieldErrors } from "@/lib/validators";
+import { roundMoney } from "@/lib/discounts";
 import { cn, formatMoney } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
@@ -81,6 +82,9 @@ function FieldLabel({
 }) {
   return (
     <label
+      // Stable id lets a custom (non-native) control reference this label via
+      // `aria-labelledby` — e.g. BranchSelect, whose trigger is a <button>.
+      id={`${htmlFor}-label`}
       htmlFor={htmlFor}
       className="block font-sans text-[10px] font-bold uppercase tracking-[0.25em] text-stone-400 mb-2.5"
     >
@@ -174,10 +178,14 @@ function FulfillmentToggle({
 // Driven by the live Branch table (ids resolved server-side), so the value it
 // emits is a real `branchId` ready to stamp onto the order.
 function BranchSelect({
+  id,
   branches,
   value,
   onChange,
 }: {
+  /** Matches the <FieldLabel htmlFor>, so clicking the label opens this control
+   *  (a <button> is a labelable element — the click is forwarded to it). */
+  id: string;
   branches: BranchOption[];
   value: string;
   onChange: (v: string) => void;
@@ -186,7 +194,10 @@ function BranchSelect({
 
   if (branches.length === 0) {
     return (
-      <p className="border-b border-stone-200 pb-3 font-sans text-sm text-stone-400">
+      <p
+        id={id}
+        className="border-b border-stone-200 pb-3 font-sans text-sm text-stone-400"
+      >
         No branches are available for pickup right now.
       </p>
     );
@@ -197,7 +208,13 @@ function BranchSelect({
   return (
     <div className="relative">
       <button
+        id={id}
         type="button"
+        // Custom listbox semantics: announce the popup + expanded state, and name
+        // the trigger from the field label PLUS its own text (the selected branch).
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-labelledby={`${id}-label ${id}`}
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center justify-between border-b border-stone-300 pb-3 text-left focus:outline-none focus:border-primary transition-colors group"
       >
@@ -285,7 +302,9 @@ function OrderSummary({
   // Mirrors placeOrder's math exactly: discounted subtotal → VAT on it → fee.
   const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
   const delivery = deliveryFee;
-  const tax = pricing.isVatEnabled ? Math.round(subtotal * pricing.vatRate) : 0;
+  // Same 2-dp rounding as placeOrder (see @/lib/discounts#roundMoney), so the
+  // previewed VAT/total is exactly what the server bills — piastres and all.
+  const tax = pricing.isVatEnabled ? roundMoney(subtotal * pricing.vatRate) : 0;
   const total = subtotal + delivery + tax;
   // Human label — trims trailing zeros (0.14 → "14", 0.1425 → "14.25").
   const vatPercent = +(pricing.vatRate * 100).toFixed(2);
@@ -856,6 +875,7 @@ export default function CheckoutPage() {
                       <div>
                         <FieldLabel htmlFor="area">Delivery Area</FieldLabel>
                         <BranchSelect
+                          id="area"
                           branches={[...branches, OTHER_AREAS_OPTION]}
                           value={deliveryAreaId}
                           onChange={setDeliveryAreaId}
@@ -884,6 +904,7 @@ export default function CheckoutPage() {
                   >
                     <FieldLabel htmlFor="branch">Choose Your Branch</FieldLabel>
                     <BranchSelect
+                      id="branch"
                       branches={branches}
                       value={branchId}
                       onChange={setBranchId}

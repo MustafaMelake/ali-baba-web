@@ -47,7 +47,10 @@ async function getSliderCategories() {
 
   const categories = await prisma.category.findMany({
     where: { isFeatured: true },
-    orderBy: { sliderOrder: "asc" },
+    // Secondary `createdAt: "desc"` tie-break so categories sharing a
+    // `sliderOrder` (the default 0, or any collision) keep a stable, deterministic
+    // order instead of Postgres shuffling them arbitrarily between requests.
+    orderBy: [{ sliderOrder: "asc" }, { createdAt: "desc" }],
     include: {
       promotions: {
         where: livePromotionWhere(now),

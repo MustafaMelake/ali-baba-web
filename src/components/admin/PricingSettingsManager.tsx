@@ -19,6 +19,9 @@ export type BranchFeeRow = {
   name: string;
   slug: string;
   deliveryFee: number;
+  /** Inactive branches are still editable here (rendered dimmed) so a stale fee
+   *  can be fixed before the branch is reactivated. */
+  isActive: boolean;
 };
 
 /**
@@ -229,21 +232,31 @@ export default function PricingSettingsManager({
         <div className="mt-6 space-y-3">
           {branches.length === 0 ? (
             <p className="rounded-xl border border-dashed border-stone-200 px-4 py-6 text-center text-sm text-stone-400">
-              No active branches — add one under Branches to set per-area fees.
+              No branches yet — add one under Branches to set per-area fees.
             </p>
           ) : (
             branches.map((branch) => (
               <div
                 key={branch.id}
-                className="flex items-center justify-between gap-4 rounded-xl border border-stone-200 px-4 py-3"
+                className={cn(
+                  "flex items-center justify-between gap-4 rounded-xl border border-stone-200 px-4 py-3",
+                  // Dim inactive branches so they read as "not currently offered"
+                  // while staying fully editable (the input is left interactive).
+                  !branch.isActive && "opacity-50",
+                )}
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
                     <Building2 className="h-4 w-4" />
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-stone-900">
+                    <p className="flex items-center gap-2 truncate text-sm font-medium text-stone-900">
                       {branch.name}
+                      {!branch.isActive && (
+                        <span className="shrink-0 rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-500 ring-1 ring-stone-500/20">
+                          Inactive
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs text-stone-400">/{branch.slug}</p>
                   </div>

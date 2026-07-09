@@ -13,8 +13,10 @@ import VariantSelector, {
 } from "@/components/products/VariantSelector";
 
 export interface PurchaseVariant extends SelectableVariant {
-  /** Strikethrough "was" price — the Discount Engine's base price when a live
-   *  promotion applies, else the variant's manual Compare-At column. */
+  /** Strikethrough "was" price. The Discount Engine is fully live: this is the
+   *  engine's pre-discount base price whenever an active promotion applies,
+   *  otherwise it falls back to the variant's manual Compare-At column. Null
+   *  only when there is neither a live promotion nor a manual Compare-At. */
   compareAtPrice?: number | null;
 }
 

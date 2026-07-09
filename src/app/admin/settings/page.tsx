@@ -13,16 +13,23 @@ export const metadata = {
 export default async function AdminSettingsPage() {
   await requireAdminPage();
 
-  // Footer links, the global pricing settings (VAT + default delivery fee),
-  // and the active branches whose per-area fees the admin edits here. Active
-  // only — these are exactly the rows the checkout selectors offer.
+  // Footer links, the global pricing settings (VAT + default delivery fee), and
+  // ALL branches whose per-area fees the admin edits here. Inactive branches are
+  // included (rendered dimmed) so a fee can be corrected before reactivation —
+  // otherwise a stale fee would silently resurrect the moment a branch is
+  // toggled back on. Active branches sort first; inactive fall to the bottom.
   const [footerLinks, pricingSettings, branches] = await Promise.all([
     getFooterLinks(),
     getStoreSettings(),
     prisma.branch.findMany({
-      where: { isActive: true },
-      orderBy: { name: "asc" },
-      select: { id: true, name: true, slug: true, deliveryFee: true },
+      orderBy: [{ isActive: "desc" }, { name: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        deliveryFee: true,
+        isActive: true,
+      },
     }),
   ]);
 
