@@ -482,7 +482,6 @@ export default function CheckoutPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
   const [apartment, setApartment] = useState("");
   const [notes, setNotes] = useState("");
@@ -758,29 +757,18 @@ export default function CheckoutPage() {
                 </div>
               </div>
 
-              <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-8">
-                <div>
-                  <FieldLabel htmlFor="phone">Phone Number</FieldLabel>
-                  <Input
-                    id="phone"
-                    type="tel"
-                    autoComplete="tel"
-                    placeholder="+20 100 000 0000"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <FieldLabel htmlFor="email">Email Address</FieldLabel>
-                  <Input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    placeholder="ahmed@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                </div>
+              {/* Phone is the notification channel (WhatsApp) — full width,
+                  mirroring the Street Address field below. */}
+              <div className="mt-8">
+                <FieldLabel htmlFor="phone">Phone Number</FieldLabel>
+                <Input
+                  id="phone"
+                  type="tel"
+                  autoComplete="tel"
+                  placeholder="+20 100 000 0000"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                />
               </div>
             </section>
 

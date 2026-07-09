@@ -3,7 +3,6 @@ import { unstable_cache } from "next/cache";
 import { FaInstagram, FaFacebook, FaTwitter } from "react-icons/fa";
 import { prisma } from "@/lib/prisma";
 import { CategoryType } from "@/generated/prisma/enums";
-import NewsletterForm from "./NewsletterForm";
 
 /**
  * Footer — a React Server Component.
@@ -15,8 +14,7 @@ import NewsletterForm from "./NewsletterForm";
  * column + the static columns below, so the layout is never empty.
  *
  * Everything renders on the server: no framer-motion, no client hooks → zero JS
- * shipped for the footer (the only interactive bit, the newsletter, uses a
- * progressively-enhanced Server Action form, so it also needs no client bundle).
+ * shipped for the footer.
  *
  * Cache: both queries are wrapped in `unstable_cache` — categories tagged
  * `"categories"`, managed links tagged `"footer-links"` — so the footer is
@@ -170,30 +168,12 @@ export default async function Footer() {
           </p>
         </div>
 
-        {/* ─── Newsletter + Nav ────────────────────────────── */}
-        <div className="py-16 md:py-20 grid grid-cols-1 lg:grid-cols-5 gap-16 lg:gap-12 border-b border-white/10">
-          {/* Newsletter col */}
-          <div className="lg:col-span-2">
-            <p className="text-[10px] font-sans font-bold uppercase tracking-[0.3em] text-white/35 mb-5">
-              Inner Circle
-            </p>
-            <h3 className="font-serif text-2xl md:text-3xl font-medium text-white/90 leading-snug mb-3">
-              Be the first to know <br />
-              <em className="not-italic text-primary">our next chapter.</em>
-            </h3>
-            <p className="font-sans text-sm text-white/40 leading-relaxed mb-9 max-w-xs">
-              Seasonal drops, exclusive tastings, and stories from our kitchen —
-              delivered quietly to your inbox.
-            </p>
-
-            {/* Ultra-minimal underline form — isolated client island */}
-            <NewsletterForm />
-          </div>
-
-          {/* Nav link groups */}
+        {/* ─── Nav ─────────────────────────────────────────── */}
+        <div className="py-16 md:py-20 border-b border-white/10">
+          {/* Nav link groups — spread across the full row. */}
           <nav
             aria-label="Footer navigation"
-            className="lg:col-span-3 grid grid-cols-2 md:grid-cols-4 gap-10"
+            className="grid grid-cols-2 gap-10 md:grid-cols-4 lg:gap-12"
           >
             {navGroups.map((group) => (
               <div key={group.heading}>
