@@ -12,7 +12,8 @@ import LoginClient from "./LoginClient";
  */
 function LoginFallback() {
   return (
-    <main className="min-h-screen w-full bg-[#FAFAFA] lg:grid lg:grid-cols-2" aria-hidden="true">
+    // <div>, not <main> — the (shop) layout already provides the one <main> landmark.
+    <div className="min-h-screen w-full bg-[#FAFAFA] lg:grid lg:grid-cols-2" aria-hidden="true">
       <aside className="hidden lg:block bg-stone-100" />
       <section className="flex items-center justify-center px-6 py-16 sm:px-10 md:py-20">
         <div className="w-full max-w-md animate-pulse space-y-8">
@@ -28,7 +29,7 @@ function LoginFallback() {
           </div>
         </div>
       </section>
-    </main>
+    </div>
   );
 }
 

@@ -154,7 +154,7 @@ export default function MenuClient({
   }, [sectionKey]);
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA] pt-16 md:pt-20">
+    <div className="min-h-screen bg-[#FAFAFA]">
       {/* ─── Editorial header ─────────────────────────────── */}
       <header className="max-w-3xl mx-auto px-6 pt-0 md:pt-0 pb-8 text-center">
         <motion.span

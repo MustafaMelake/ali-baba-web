@@ -22,7 +22,7 @@ export default async function WishlistPage() {
   const items = result.success ? result.data : [];
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA] pt-16 md:pt-20">
+    <div className="min-h-screen bg-[#FAFAFA]">
       <div className="mx-auto max-w-screen-xl px-6 py-12 md:px-10 lg:px-14 md:py-16">
         {/* ── Header ─────────────────────────────────────────── */}
         <header className="mb-12">

@@ -423,7 +423,7 @@ function OrderSummary({
 // ─── Empty cart state ─────────────────────────────────────────────
 function EmptyCart() {
   return (
-    <div className="min-h-screen bg-[#FAFAFA] pt-16 md:pt-20 flex items-center justify-center px-6">
+    <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center px-6">
       <motion.div
         className="text-center max-w-md"
         initial={{ opacity: 0, scale: 0.96 }}
@@ -659,7 +659,7 @@ export default function CheckoutPage() {
 
   if (placed) {
     return (
-      <div className="min-h-screen bg-[#FAFAFA] pt-16 md:pt-20 flex items-center justify-center px-6">
+      <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center px-6">
         <motion.div
           className="text-center max-w-md"
           initial={{ opacity: 0, scale: 0.96 }}
@@ -713,7 +713,7 @@ export default function CheckoutPage() {
         : pricing.defaultDeliveryFee;
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA] pt-16 md:pt-20">
+    <div className="min-h-screen bg-[#FAFAFA]">
       <div className="max-w-7xl mx-auto px-6 md:px-10 lg:px-14 py-10 md:py-14">
         {/* Breadcrumb */}
         <div className="mb-10 flex items-center gap-2">

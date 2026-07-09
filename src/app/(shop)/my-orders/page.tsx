@@ -89,7 +89,7 @@ export default async function MyOrdersPage({
   const isFiltered = activeStatus !== "ALL";
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA] pt-16 md:pt-20">
+    <div className="min-h-screen bg-[#FAFAFA]">
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
         {/* ── Header ─────────────────────────────────────────── */}
         <header className="mb-8">

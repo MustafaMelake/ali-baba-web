@@ -1,9 +1,7 @@
 import BranchSelector from "@/components/BranchSelector";
 import CategorySlider from "@/components/CategorySlider";
 import FeaturesBar from "@/components/FeaturesBar";
-import Footer from "@/components/layout/Footer";
 import Hero from "@/components/Hero";
-import Navbar from "@/components/Navbar";
 import OurStory from "@/components/OurStory";
 import { prisma } from "@/lib/prisma";
 import { livePromotionWhere } from "@/lib/discounts";
@@ -74,22 +72,19 @@ export default async function ShopHomePage() {
   const sliderCategories = await getSliderCategories();
 
   return (
+    // Navbar + Footer come from the (shop) layout, which also owns the <main>
+    // landmark and the fixed-navbar clearance padding.
     <div className="min-h-screen bg-background font-sans" dir="ltr">
-      <Navbar />
+      <Hero />
 
-      <main>
-        <Hero />
+      <CategorySlider categories={sliderCategories} />
 
-        <CategorySlider categories={sliderCategories} />
-
-        <div className="max-w-7xl mx-auto px-6 py-12">
-          <BranchSelector />
-        </div>
-      </main>
+      <div className="max-w-7xl mx-auto px-6 py-12">
+        <BranchSelector />
+      </div>
 
       <OurStory />
       <FeaturesBar />
-      <Footer />
     </div>
   );
 }

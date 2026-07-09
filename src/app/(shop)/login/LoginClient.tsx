@@ -66,7 +66,8 @@ export default function LoginClient() {
   }
 
   return (
-    <main className="min-h-screen w-full bg-[#FAFAFA] lg:grid lg:grid-cols-2">
+    // <div>, not <main> — the (shop) layout already provides the one <main> landmark.
+    <div className="min-h-screen w-full bg-[#FAFAFA] lg:grid lg:grid-cols-2">
       {/* ─── Visual panel ───────────────────────────────────── */}
       <aside className="relative hidden lg:block overflow-hidden">
         <motion.div
@@ -249,6 +250,6 @@ export default function LoginClient() {
           </motion.p>
         </div>
       </section>
-    </main>
+    </div>
   );
 }

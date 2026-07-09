@@ -114,8 +114,8 @@ export default async function ProductPage({
       : 0;
 
   return (
-    // pt clears the fixed Navbar (h-16 md:h-20)
-    <div className="pt-16 md:pt-20 bg-white">
+    // Navbar clearance is provided once by the (shop) layout's <main>.
+    <div className="bg-white">
       {/* ─── Breadcrumb ──────────────────────────────────── */}
       <nav
         aria-label="Breadcrumb"

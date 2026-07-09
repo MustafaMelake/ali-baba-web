@@ -1,7 +1,5 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
-import Navbar from "@/components/Navbar";
-import Footer from "@/components/layout/Footer";
 import ProductCard, { type ShopProduct } from "@/components/ProductCard";
 import { getWishlistedProductIds } from "@/lib/actions/wishlist";
 import {
@@ -65,13 +63,12 @@ export default async function CategoryPageTemplate({
   const favorited = new Set(await getWishlistedProductIds());
 
   return (
+    // Navbar/Footer (and the fixed-navbar clearance) come from the (shop)
+    // layout — the header's top padding here is purely editorial spacing.
     <div className="min-h-screen bg-white font-sans" dir="ltr">
-      <Navbar />
-
-      <main>
-        {/* ─── Editorial header ─────────────────────────────── */}
-        <header className="relative overflow-hidden border-b border-stone-100 bg-[#FAFAFA]">
-          <div className="mx-auto max-w-screen-xl px-6 pb-12 pt-28 text-center md:px-10 md:pb-16 md:pt-36 lg:px-14">
+      {/* ─── Editorial header ─────────────────────────────── */}
+      <header className="relative overflow-hidden border-b border-stone-100 bg-[#FAFAFA]">
+        <div className="mx-auto max-w-screen-xl px-6 pb-12 pt-12 text-center md:px-10 md:pb-16 md:pt-16 lg:px-14">
             {/* Breadcrumb */}
             <nav
               aria-label="Breadcrumb"
@@ -171,9 +168,6 @@ export default async function CategoryPageTemplate({
             </div>
           )}
         </section>
-      </main>
-
-      <Footer />
     </div>
   );
 }

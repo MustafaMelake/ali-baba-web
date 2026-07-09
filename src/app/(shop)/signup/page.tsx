@@ -63,7 +63,8 @@ export default function SignupPage() {
   }
 
   return (
-    <main className="min-h-screen w-full bg-[#FAFAFA] lg:grid lg:grid-cols-2">
+    // <div>, not <main> — the (shop) layout already provides the one <main> landmark.
+    <div className="min-h-screen w-full bg-[#FAFAFA] lg:grid lg:grid-cols-2">
       {/* ─── Form panel (left on desktop) ───────────────────── */}
       <section className="order-2 lg:order-1 flex items-center justify-center px-6 py-16 sm:px-10 md:py-20">
         <div className="w-full max-w-md">
@@ -258,6 +259,6 @@ export default function SignupPage() {
           </p>
         </motion.div>
       </aside>
-    </main>
+    </div>
   );
 }
