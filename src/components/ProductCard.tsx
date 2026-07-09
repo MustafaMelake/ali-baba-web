@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Check, ArrowUpRight } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
+import { formatMoney } from "@/lib/utils";
 import WishlistButton from "@/components/products/WishlistButton";
 
 export interface ShopProduct {
@@ -145,7 +146,7 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
         <div className="mt-4 flex items-center justify-between border-t border-stone-100 pt-3.5">
           <span className="flex items-baseline gap-2">
             <span className="font-serif text-lg font-medium text-stone-900">
-              {product.price.toLocaleString("en-EG")}
+              {formatMoney(product.price)}
               <span className="ml-1 font-sans text-xs font-normal text-stone-400">
                 ج.م
               </span>
@@ -153,9 +154,9 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
             {onSale && (
               <span
                 className="font-sans text-xs tabular-nums text-stone-400 line-through"
-                aria-label={`Original price ${product.compareAtPrice!.toLocaleString("en-EG")} EGP`}
+                aria-label={`Original price ${formatMoney(product.compareAtPrice!)} EGP`}
               >
-                {product.compareAtPrice!.toLocaleString("en-EG")}
+                {formatMoney(product.compareAtPrice!)}
               </span>
             )}
           </span>

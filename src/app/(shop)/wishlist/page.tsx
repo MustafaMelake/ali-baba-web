@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Heart, ArrowUpRight } from "lucide-react";
 import { getServerSession } from "@/lib/session";
 import { getWishlistItems } from "@/lib/actions/wishlist";
+import { formatMoney } from "@/lib/utils";
 import WishlistButton from "@/components/products/WishlistButton";
 import EmptyState from "@/components/EmptyState";
 
@@ -100,14 +101,14 @@ export default async function WishlistPage() {
                     <div className="mt-4 flex items-center justify-between border-t border-stone-100 pt-3.5">
                       <span className="flex items-baseline gap-2">
                         <span className="font-serif text-lg font-medium text-stone-900">
-                          {product.price.toLocaleString("en-EG")}
+                          {formatMoney(product.price)}
                           <span className="ml-1 font-sans text-xs font-normal text-stone-400">
                             ج.م
                           </span>
                         </span>
                         {onSale && (
                           <span className="font-sans text-xs tabular-nums text-stone-400 line-through">
-                            {product.compareAtPrice!.toLocaleString("en-EG")}
+                            {formatMoney(product.compareAtPrice!)}
                           </span>
                         )}
                       </span>

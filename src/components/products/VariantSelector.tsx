@@ -1,5 +1,7 @@
 "use client";
 
+import { formatMoney } from "@/lib/utils";
+
 /**
  * Single-axis, pill-based variant picker for the PDP.
  *
@@ -93,7 +95,7 @@ export default function VariantSelector({
                       : "text-stone-400",
                 ].join(" ")}
               >
-                {variant.price.toLocaleString("en-EG")}
+                {formatMoney(variant.price)}
               </span>
             </button>
           );

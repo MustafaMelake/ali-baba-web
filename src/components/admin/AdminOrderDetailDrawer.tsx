@@ -19,7 +19,7 @@ import {
 import { toast } from "sonner";
 import { OrderStatus, FulfillmentMethod } from "@/generated/prisma/enums";
 import { updateOrderStatus } from "@/lib/actions/orders";
-import { formatEGP, prettyLabel } from "@/lib/utils";
+import { formatEGP, formatMoney, prettyLabel } from "@/lib/utils";
 import StatusPill from "@/components/orders/StatusPill";
 import type { AdminOrderView } from "./order-types";
 
@@ -304,10 +304,10 @@ export default function AdminOrderDetailDrawer({
                         {item.quantity}
                       </span>
                       <span className="text-right font-sans text-sm tabular-nums text-stone-600">
-                        {item.unitPrice.toLocaleString("en-EG")}
+                        {formatMoney(item.unitPrice)}
                       </span>
                       <span className="text-right font-sans text-sm font-semibold tabular-nums text-stone-900">
-                        {item.lineTotal.toLocaleString("en-EG")}
+                        {formatMoney(item.lineTotal)}
                       </span>
                     </div>
                   ))}

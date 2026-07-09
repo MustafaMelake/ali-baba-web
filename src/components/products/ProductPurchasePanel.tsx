@@ -6,6 +6,7 @@ import { Minus, Plus, ShoppingBag, Check } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
+import { formatMoney } from "@/lib/utils";
 import WishlistButton from "@/components/products/WishlistButton";
 import VariantSelector, {
   type SelectableVariant,
@@ -88,15 +89,15 @@ export default function ProductPurchasePanel({
           variants — or a discount appearing/disappearing — never shifts the row. */}
       <div className="flex items-baseline gap-2.5">
         <span className="font-serif text-4xl font-medium tracking-tight tabular-nums text-stone-900">
-          {unitPrice.toLocaleString("en-EG")}
+          {formatMoney(unitPrice)}
         </span>
 
         {showCompareAt && (
           <span
             className="font-mono text-base tabular-nums text-stone-400 line-through"
-            aria-label={`Original price ${activeVariant!.compareAtPrice!.toLocaleString("en-EG")} EGP`}
+            aria-label={`Original price ${formatMoney(activeVariant!.compareAtPrice!)} EGP`}
           >
-            {activeVariant!.compareAtPrice!.toLocaleString("en-EG")}
+            {formatMoney(activeVariant!.compareAtPrice!)}
           </span>
         )}
 
@@ -151,7 +152,7 @@ export default function ProductPurchasePanel({
             ? "Selected option is sold out"
             : added
               ? "Added to cart"
-              : `Add ${qty} to cart for ${lineTotal.toLocaleString("en-EG")} EGP`
+              : `Add ${qty} to cart for ${formatMoney(lineTotal)} EGP`
         }
       >
         {!canPurchase ? (
@@ -185,7 +186,7 @@ export default function ProductPurchasePanel({
                 Add to Cart
                 <span className="opacity-70">—</span>
                 <span className="tabular-nums">
-                  {lineTotal.toLocaleString("en-EG")}
+                  {formatMoney(lineTotal)}
                 </span>
                 ج.م
               </motion.span>

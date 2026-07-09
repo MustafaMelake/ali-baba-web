@@ -24,7 +24,7 @@ import {
 import { clearDbCartAction } from "@/lib/actions/cart";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
 import { checkoutSchema, fieldErrors } from "@/lib/validators";
-import { cn } from "@/lib/utils";
+import { cn, formatMoney } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
@@ -336,7 +336,7 @@ function OrderSummary({
               </p>
             </div>
             <span className="shrink-0 font-sans text-sm font-semibold text-stone-900 tabular-nums">
-              {(item.price * item.quantity).toLocaleString("en-EG")}
+              {formatMoney(item.price * item.quantity)}
               <span className="font-normal text-stone-400 text-xs ml-0.5">
                 ج.م
               </span>
@@ -356,7 +356,7 @@ function OrderSummary({
               </span>
             ) : (
               <span className="font-sans text-sm text-stone-700 tabular-nums">
-                {value.toLocaleString("en-EG")}
+                {formatMoney(value)}
                 <span className="text-stone-400 text-xs ml-0.5">ج.م</span>
               </span>
             )}
@@ -368,7 +368,7 @@ function OrderSummary({
             Total
           </span>
           <span className="font-serif text-2xl font-medium text-stone-900 tabular-nums">
-            {total.toLocaleString("en-EG")}
+            {formatMoney(total)}
             <span className="font-sans font-normal text-sm text-stone-500 ml-1">
               ج.م
             </span>
@@ -407,7 +407,7 @@ function OrderSummary({
             >
               Place Order
               <span className="opacity-60">·</span>
-              {total.toLocaleString("en-EG")} ج.م
+              {formatMoney(total)} ج.م
             </motion.span>
           )}
         </AnimatePresence>

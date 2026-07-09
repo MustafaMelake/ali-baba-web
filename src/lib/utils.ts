@@ -5,9 +5,21 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/**
+ * THE money figure formatter — every price node in the app renders through
+ * this. Strictly "en-EG" (Western digits) so the same amount never switches
+ * numeral systems between surfaces (the cart drawer once used "ar-EG" —
+ * Eastern Arabic digits — while checkout used "en-EG"). Bare number only:
+ * the currency mark (ج.م / EGP) is rendered by the caller so it can be styled
+ * as its own element. Capped at 2 fraction digits — money, not floats.
+ */
+export function formatMoney(amount: number): string {
+  return amount.toLocaleString("en-EG", { maximumFractionDigits: 2 })
+}
+
 /** Money formatter for the admin UI. Prices are stored as Floats (EGP). */
 export function formatEGP(amount: number) {
-  return `EGP ${amount.toLocaleString("en-EG", { maximumFractionDigits: 2 })}`
+  return `EGP ${formatMoney(amount)}`
 }
 
 /** Compact, locale-stable date — e.g. "20 Jun 2026". */

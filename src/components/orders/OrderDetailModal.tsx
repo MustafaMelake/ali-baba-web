@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, User, Phone, StickyNote, MapPin, Truck, Store } from "lucide-react";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
-import { formatEGP, prettyLabel } from "@/lib/utils";
+import { formatEGP, formatMoney, prettyLabel } from "@/lib/utils";
 import StatusPill from "./StatusPill";
 import type { OrderView } from "./types";
 
@@ -183,10 +183,10 @@ export default function OrderDetailModal({
                         {item.quantity}
                       </span>
                       <span className="text-right font-sans text-sm tabular-nums text-stone-600">
-                        {item.unitPrice.toLocaleString("en-EG")}
+                        {formatMoney(item.unitPrice)}
                       </span>
                       <span className="text-right font-sans text-sm font-semibold tabular-nums text-stone-900">
-                        {item.lineTotal.toLocaleString("en-EG")}
+                        {formatMoney(item.lineTotal)}
                       </span>
                     </div>
                   ))}

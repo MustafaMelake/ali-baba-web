@@ -9,6 +9,7 @@ import { useCartStore } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { clearDbCartAction } from "@/lib/actions/cart";
 import { CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
+import { formatMoney } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.32, 0.72, 0, 1];
 
@@ -128,7 +129,7 @@ function CartLineItem({
 
           {/* Line total */}
           <span className="font-sans text-sm font-semibold text-stone-900">
-            {(item.price * item.quantity).toLocaleString("ar-EG")} ج.م
+            {formatMoney(item.price * item.quantity)} ج.م
           </span>
         </div>
       </div>
@@ -247,7 +248,7 @@ export default function CartSidebar() {
                       Subtotal
                     </span>
                     <span className="font-sans text-sm font-medium text-stone-900">
-                      {total.toLocaleString("ar-EG")} ج.م
+                      {formatMoney(total)} ج.م
                     </span>
                   </div>
                   <p className="font-sans text-xs text-stone-400 mb-6 leading-relaxed">
