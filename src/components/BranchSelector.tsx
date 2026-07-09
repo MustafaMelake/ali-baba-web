@@ -1,9 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
 import { motion, Variants } from "framer-motion";
-import { MapPin, Clock, ArrowRight } from "lucide-react";
+import { Clock } from "lucide-react";
 
 // إعدادات الأنيميشن لظهور العناصر بسلاسة عند السكرول
 const fadeUpVariant: Variants = {
@@ -103,15 +102,6 @@ export default function BranchSelector() {
                 selection of custom cakes, delicate tarts, and our signature
                 oriental pastries crafted daily.
               </p>
-
-              <Link
-                href="/branches/menouf"
-                className="group inline-flex items-center gap-2 text-primary font-medium mt-2 w-fit"
-              >
-                <MapPin className="w-4 h-4" />
-                <span>View on map</span>
-                <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-              </Link>
             </div>
 
             {/* Image */}
@@ -168,15 +158,6 @@ export default function BranchSelector() {
                 and refreshing signature drinks. The perfect atmosphere to
                 unwind or connect.
               </p>
-
-              <Link
-                href="/branches/beba"
-                className="group inline-flex items-center gap-2 text-primary font-medium mt-2 w-fit"
-              >
-                <MapPin className="w-4 h-4" />
-                <span>View on map</span>
-                <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-              </Link>
             </div>
           </motion.article>
         </div>
