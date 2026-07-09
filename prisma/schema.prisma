@@ -507,8 +507,10 @@ model Promotion {
 //
 // Global pricing knobs read by the checkout preview AND by `placeOrder` (the
 // authoritative pricing path). The table holds exactly ONE row with the fixed
-// id "store" — readers upsert it into existence (see src/lib/store-settings.ts)
-// so no seed step is required.
+// id "store". Readers NEVER create it — a missing row is answered from the
+// in-memory defaults in src/lib/store-settings.ts (which mirror the column
+// defaults below); the row is created by the admin's first save in
+// src/lib/actions/store-settings.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 model StoreSettings {

@@ -7,8 +7,11 @@
 // `resolvePrice`: one reader means the preview and the bill can't disagree
 // about what the settings ARE (the math stays in each caller).
 //
-// The row is upserted into existence on first read (fixed id "store"), so a
-// fresh database needs no seed step and callers never handle a missing row.
+// STRICTLY READ-ONLY. This runs on hot public paths (every checkout mount),
+// so it must never write: a missing row is answered from the in-memory
+// DEFAULT_PRICING_SETTINGS below, not upserted into existence. The singleton
+// row is created only by the ADMIN-gated mutations in
+// src/lib/actions/store-settings.ts when an admin first saves the form.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { prisma } from "@/lib/prisma";
@@ -27,14 +30,26 @@ export type PricingSettings = {
 };
 
 /**
- * Read the global pricing settings, creating the singleton row with its schema
- * defaults on first use. An empty `update` makes this a pure read-or-create.
+ * Served when the singleton row doesn't exist yet (fresh database, admin has
+ * never saved). MUST mirror the schema defaults on the StoreSettings model —
+ * the row an admin's first partial save creates fills unspecified columns from
+ * those same defaults, so preview, billing, and the eventual row all agree.
+ */
+export const DEFAULT_PRICING_SETTINGS: Readonly<PricingSettings> = Object.freeze({
+  vatRate: 0.14,
+  isVatEnabled: true,
+  defaultDeliveryFee: 35,
+});
+
+/**
+ * Read the global pricing settings. Pure read — a primary-key lookup, no row
+ * lock, no write compute (Neon-friendly). Falls back to the in-memory schema
+ * defaults when the row is absent; it NEVER creates the row.
  */
 export async function getStoreSettings(): Promise<PricingSettings> {
-  return prisma.storeSettings.upsert({
+  const row = await prisma.storeSettings.findUnique({
     where: { id: STORE_SETTINGS_ID },
-    update: {},
-    create: { id: STORE_SETTINGS_ID },
     select: { vatRate: true, isVatEnabled: true, defaultDeliveryFee: true },
   });
+  return row ?? DEFAULT_PRICING_SETTINGS;
 }
