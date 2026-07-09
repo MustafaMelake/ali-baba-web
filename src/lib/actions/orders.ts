@@ -19,6 +19,19 @@ import { checkoutSchema } from "@/lib/validators";
 // رسوم التوصيل من الـ Branch المختار (أو defaultDeliveryFee لـ "مناطق أخرى")،
 // والضريبة من StoreSettings — نفس القيم اللي الـ checkout بيعرضها كـ preview.
 
+/**
+ * [H-1] Abuse throttle — ceiling on simultaneously-PENDING orders per customer
+ * phone number. `placeOrder` is deliberately guest-writable, so without a gate
+ * a script can fill the table with fake orders; capping *unconfirmed* orders
+ * per phone means each junk identity stalls after this many rows, while a
+ * legitimate repeat customer frees a slot the moment staff confirm an order
+ * (PENDING → PREPARING/…). Phone-keyed because no Edge KV/IP infrastructure is
+ * configured and the phone is the field the business actually calls back;
+ * being client-supplied, it raises the cost of abuse rather than eliminating
+ * it (a rotating-phone bot needs a fresh number per 3 orders).
+ */
+const MAX_PENDING_ORDERS_PER_PHONE = 3;
+
 export interface CheckoutPayload {
   items: { variantId: string; quantity: number }[];
   fulfillment: FulfillmentMethod;
@@ -61,6 +74,28 @@ export async function placeOrder(
   const data = parsed.data;
 
   try {
+    // ── [H-1] Per-phone pending-order throttle ─────────────────────────────
+    // Runs FIRST — before the branch/settings reads and the transaction — so
+    // a throttled request costs one indexed COUNT and nothing else. The match
+    // is exact on the schema-trimmed phone string and counts only PENDING
+    // orders: confirmed/cancelled orders never block a customer. (Count-then-
+    // create is not atomic — a burst of parallel requests can land slightly
+    // over the cap. Fine for a throttle; the ceiling still holds within one
+    // request of the limit.)
+    const pendingCount = await prisma.order.count({
+      where: {
+        customerPhone: data.customerPhone,
+        status: OrderStatus.PENDING,
+      },
+    });
+    if (pendingCount >= MAX_PENDING_ORDERS_PER_PHONE) {
+      return {
+        success: false,
+        error:
+          "Too many pending orders. Please wait for your current orders to be confirmed.",
+      };
+    }
+
     // Defensive branch resolution: only stamp a REAL, ACTIVE branch (the pickup
     // choice or the delivery auto-route). A stale / invalid / inactive id falls
     // back to null so the order never fails — it just surfaces to the Super Admin.
