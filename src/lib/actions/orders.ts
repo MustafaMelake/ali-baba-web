@@ -167,22 +167,38 @@ export async function placeOrder(
         });
       }
 
+      // Money hygiene: every unit price is 2-dp (resolvePrice → roundMoney),
+      // but a binary-float ACCUMULATION of them can still drift — 3 × 33.33
+      // sums to 99.99000000000001, and that drift would otherwise be stored
+      // and compound in revenue aggregates. Round the final sum ONCE, here,
+      // so the persisted subtotal is the exact 2-dp figure the summary shows
+      // (per-line rounding is already done; re-rounding each line would be a
+      // no-op, and rounding only at the end keeps parity with the preview's
+      // own reduce-then-display math).
+      subtotal = roundMoney(subtotal);
+
       // DELIVERY → the fulfilling branch's own fee; branchless delivery
       // ("Other Areas", or a branch that went inactive mid-checkout) → the
-      // global default. PICKUP is always free.
+      // global default. PICKUP is always free. The admin mutations already
+      // persist fees rounded to 2dp — roundMoney here is defensive, so a
+      // legacy/hand-edited Branch row can't smuggle drift into the order.
       const deliveryFee =
         data.fulfillment === FulfillmentMethod.DELIVERY
-          ? branch?.deliveryFee ?? settings.defaultDeliveryFee
+          ? roundMoney(branch?.deliveryFee ?? settings.defaultDeliveryFee)
           : 0;
       // VAT غير مخزّن في عمود مستقل — مدموج في totalAmount، وبيتحسب كـ residual
       // وقت العرض (totalAmount - subtotal - deliveryFee) فيفضل دايماً متسق،
       // حتى لو الأدمن غيّر النسبة أو قفل الضريبة بعد ما الأوردر اتعمل.
       // 2-dp money rounding (NOT Math.round to whole EGP) so the tax keeps its
       // piastres and totalAmount reconciles exactly with the shown summary.
+      // Computed from the ROUNDED subtotal — the same base the customer saw.
       const vat = settings.isVatEnabled
         ? roundMoney(subtotal * settings.vatRate)
         : 0;
-      const totalAmount = subtotal + deliveryFee + vat;
+      // Sum of three clean 2-dp values, rounded once more: binary addition of
+      // 2-dp floats can itself reintroduce an epsilon (the 0.1 + 0.2 class),
+      // and this is the last stop before the value hits the Float column.
+      const totalAmount = roundMoney(subtotal + deliveryFee + vat);
 
       // إنشاء الأوردر مع سطوره في عملية واحدة (nested write).
       return tx.order.create({
