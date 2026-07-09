@@ -9,7 +9,7 @@ import {
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
 } from "@/lib/discounts";
-import { CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
+import { CHECKOUT_MAX_ITEMS, CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
 
 /**
  * Cart synchronization Server Actions.
@@ -57,6 +57,12 @@ export type CartActionResult<T = null> =
  *  hold a line the order pipeline would reject. */
 const MAX_QUANTITY = CHECKOUT_MAX_QUANTITY;
 
+/** Hard ceiling on how many DISTINCT lines one merge may carry — the SAME
+ *  shared limit `checkoutSchema` puts on an order's item list, so the merge
+ *  transaction's `id IN (…)` reads and its upsert loop are bounded no matter
+ *  what a forged payload sends (mirrors MAX_REPRICE_IDS below). */
+const MAX_MERGE_LINES = CHECKOUT_MAX_ITEMS;
+
 const PLACEHOLDER_IMAGE = "/placeholder.jpg";
 
 /** Reads a Prisma known-request error code without importing the error class. */
@@ -76,8 +82,12 @@ function clampQuantity(quantity: number): number {
 
 /**
  * Normalises a raw local cart: drops blank ids and non-positive quantities,
- * clamps each quantity, and de-duplicates by `variantId` (summing) so a
- * malformed payload can't smuggle two rows for the same variant into the loop.
+ * clamps each quantity, de-duplicates by `variantId` (summing) so a malformed
+ * payload can't smuggle two rows for the same variant into the loop, and caps
+ * the result at MAX_MERGE_LINES distinct lines (first-seen order, matching the
+ * checkout ceiling) so a forged payload can't drag the merge into unbounded
+ * database work. A UI-built guest cart never exceeds the cap; lines past it
+ * would be unsubmittable at checkout anyway.
  */
 function sanitizeLocalLines(localItems: LocalCartLine[]): LocalCartLine[] {
   const byVariant = new Map<string, number>();
@@ -95,7 +105,9 @@ function sanitizeLocalLines(localItems: LocalCartLine[]): LocalCartLine[] {
     );
   }
 
-  return [...byVariant].map(([variantId, quantity]) => ({ variantId, quantity }));
+  return [...byVariant]
+    .slice(0, MAX_MERGE_LINES)
+    .map(([variantId, quantity]) => ({ variantId, quantity }));
 }
 
 // ── 1. Merge: guest cart → DB (sum on conflict) ─────────────────────────────
@@ -103,12 +115,18 @@ function sanitizeLocalLines(localItems: LocalCartLine[]): LocalCartLine[] {
 /**
  * Merges a guest's local cart into the authenticated user's persisted cart.
  *
- * Runs in a single transaction so the merge is all-or-nothing. For each local
- * line we UPSERT: when a `(userId, variantId)` row already exists its quantity
- * is **incremented** by the local quantity (the required "sum" semantics);
- * otherwise a new row is created. Variants that no longer exist in the catalogue
- * are skipped up-front (rather than triggering a mid-loop FK error that would
- * abort the whole merge).
+ * Runs in a single transaction so the merge is all-or-nothing, and the
+ * transaction's work is strictly bounded: `sanitizeLocalLines` caps the payload
+ * at MAX_MERGE_LINES distinct lines, so this is two bounded `id IN (…)` reads
+ * plus at most that many upserts. For each local line the DB quantity and the
+ * local quantity are SUMMED (the required merge semantics) and the result is
+ * **clamped to MAX_QUANTITY** before writing — a blind `{ increment }` can't
+ * enforce a ceiling, and a merged line above the cap would be rejected by
+ * `checkoutSchema` at checkout. Writing the exact clamped value keeps every
+ * synced line submittable. (Two concurrent merges can collapse to one SET —
+ * the same "absolute value beats increment races" trade `syncCartItemAction`
+ * makes.) Variants that no longer exist in the catalogue are skipped up-front
+ * (rather than triggering a mid-loop FK error that would abort the whole merge).
  */
 export async function mergeCartAction(
   localItems: LocalCartLine[],
@@ -123,23 +141,43 @@ export async function mergeCartAction(
 
   try {
     await prisma.$transaction(async (tx) => {
+      const variantIds = lines.map((l) => l.variantId);
+
       // Validate all referenced variants in one query so unknown/stale ids are
       // filtered out instead of throwing a P2003 partway through the loop.
       const known = await tx.productVariant.findMany({
-        where: { id: { in: lines.map((l) => l.variantId) } },
+        where: { id: { in: variantIds } },
         select: { id: true },
       });
       const validIds = new Set(known.map((v) => v.id));
 
+      // The user's existing rows for these variants, read inside the
+      // transaction: the merged quantity is computed and clamped in JS because
+      // Prisma's atomic `increment` cannot express a ceiling.
+      const existing = await tx.cartItem.findMany({
+        where: { userId, variantId: { in: variantIds } },
+        select: { variantId: true, quantity: true },
+      });
+      const dbQuantityByVariant = new Map(
+        existing.map((row) => [row.variantId, row.quantity]),
+      );
+
       for (const line of lines) {
         if (!validIds.has(line.variantId)) continue;
 
+        // SUM (DB + local), clamped to the shared per-line ceiling. Always
+        // ≥ 1 — sanitizeLocalLines dropped non-positive quantities.
+        const quantity = Math.min(
+          (dbQuantityByVariant.get(line.variantId) ?? 0) + line.quantity,
+          MAX_QUANTITY,
+        );
+
         await tx.cartItem.upsert({
           where: { userId_variantId: { userId, variantId: line.variantId } },
-          // Existing row → SUM (DB quantity + local quantity).
-          update: { quantity: { increment: line.quantity } },
-          // Missing row → create fresh.
-          create: { userId, variantId: line.variantId, quantity: line.quantity },
+          // Existing row → the exact merged-and-clamped quantity.
+          update: { quantity },
+          // Missing row → create fresh at the same computed value.
+          create: { userId, variantId: line.variantId, quantity },
         });
       }
     });
