@@ -20,6 +20,8 @@
 > 1. **The homepage slider is now a fully dynamic CMS.** The `CategoryIdentifier` enum (the old five fixed slots: `ORIENTAL_SWEETS … BAKERY`) has been **deleted from the schema**. Featuring a category is now an admin toggle — `Category.isFeatured` + `Category.sliderOrder` — with **no cap on the number of featured categories** and no migration needed to reorder. The slider cards also gained an **animated live-promotion badge** ("20% OFF" / "SALE") resolved from the Discount Engine at render time. The old §1.1 (enum ordering, `transferIdentifier`, "at most one row per slot") is obsolete in its entirety and has been rewritten.
 > 2. **All pricing constants moved from code to the database.** The hardcoded VAT rate and flat delivery fee are gone. A singleton `StoreSettings` row (`vatRate`, `isVatEnabled`, `defaultDeliveryFee`) plus a per-branch `Branch.deliveryFee` column now drive both the checkout **preview** and `placeOrder`'s **authoritative billing**, edited live from `/admin/settings → Pricing` (§5.6–§5.7).
 > 3. **Per-branch delivery fees** are editable from two admin surfaces (the Branch modal and the Settings fee sheet) and are re-read server-side per order — the fee shipped to the client is display-only.
+>
+> **Hardening wave (July 2026).** A platform-wide hardening pass landed after the wave above: every money column migrated from `Float` to **`Decimal`** (server code coerces with `.toNumber()` before values cross to the client); the orphaned `MenuPage` model and the unread `ProductVariant.sortOrder` column were **deleted**; the homepage moved from fully-dynamic to **ISR (`revalidate = 60`)**; the cart gained a **50-distinct-line DB cap** with optimistic rollback and a persisted pending-ops ledger; guest carts **re-price at checkout mount** (`rePriceGuestCart`); `placeOrder` validates through the shared `checkoutSchema` (DELIVERY now requires an address) and batches its variant reads; signup honors `?redirect=`; shared action infrastructure was consolidated into [`src/lib/action-utils.ts`](../src/lib/action-utils.ts); and replaced/orphaned UploadThing files are purged post-commit via [`src/lib/uploadthing-server.ts`](../src/lib/uploadthing-server.ts). The affected sections below have been updated in place.
 
 ---
 
@@ -54,12 +56,15 @@ There is **no enum, no fixed slot count, and no single-slot "transfer" semantics
 const now = new Date();
 const categories = await prisma.category.findMany({
   where: { isFeatured: true },
-  orderBy: { sliderOrder: "asc" },
+  // Secondary createdAt tie-break keeps categories sharing a sliderOrder stable.
+  orderBy: [{ sliderOrder: "asc" }, { createdAt: "desc" }],
   include: {
     promotions: { where: livePromotionWhere(now), select: { type: true, value: true } },
   },
 });
 ```
+
+`Promotion.value` is a `Decimal` column, so the badge math coerces it first (`p.value.toNumber()`).
 
 Each row is mapped to the `CategorySlider` card shape: a presentational two-digit watermark id (`"01"`, `"02"`, …), `title`/`subtitle`, `href: /category/${slug}`, `image ?? "/placeholder.jpg"`, and a **`discountLabel`**.
 
@@ -71,7 +76,7 @@ Each row is mapped to the `CategorySlider` card shape: a presentational two-digi
 
 [`CategorySlider.tsx`](../src/components/CategorySlider.tsx) renders it as a glassmorphic pill (Sparkles icon, top-right of the card) that slides in on scroll and then **pulses gently on an infinite loop** (`animate={{ scale: [1, 1.06, 1] }}`). Note the badge is *advisory*, not the pricing contract — actual prices are still resolved per-variant by `resolvePrice` (§2.5), where a fixed-amount promo can legitimately beat the advertised percentage.
 
-**Rendering freshness.** The page declares `export const revalidate = 0` — the homepage renders **per-request**, so a promotion starting or expiring is reflected immediately. (The code comment above it still says "at most once per hour"; the comment is stale — the value is authoritative. See the audit note in §7 before changing either.) Every category mutation additionally calls `revalidatePath("/")`.
+**Rendering freshness.** The page declares `export const revalidate = 60` — a shared 60-second ISR cache, matching the PDP and category pages. This is safe because every admin action that can change the page busts the cache directly: category mutations call `revalidatePath("/")` and promotion mutations bust the whole storefront tree via `revalidatePath("/", "layout")`, so edits appear on the next request, not after the window. The 60s window only bounds pure time-based promotion liveness (a promo whose start/end date passes with no admin action can lag up to a minute). The previous `revalidate = 0` paid a Neon round-trip per visit on the hottest route for no correctness win.
 
 **Handling zero featured categories — graceful hide, not a placeholder.** The query filters `isFeatured: true`, so an unfeatured catalog simply produces an empty (or shorter) card list. The Embla carousel (`loop: false`, `dragFree: true`, `containScroll: "trimSnaps"`) renders exactly the cards it receives — no "Coming Soon" tile, no skeleton, no layout gap on the customer side. Keep it that way.
 
@@ -82,6 +87,8 @@ Each row is mapped to the `CategorySlider` card shape: a presentational two-digi
 - `deleteCategory(id)` — pre-checks `product.count` and refuses deletion while products reference the category (`Product.category` is `onDelete: Restrict`); the P2003 catch covers the race.
 - `sliderOrder` is sanitized server-side (`sanitizeSliderOrder`: non-finite → 0, floored, clamped ≥ 0).
 - Every mutation revalidates `/`, `/admin/categories`, and fires `updateTag("categories")` so the footer's cached category column updates read-your-own-writes (§1.3). `updateCategory` also revalidates `/category/${slug}`.
+- Like every admin action module, the category actions gate and translate errors through the centralized [`src/lib/action-utils.ts`](../src/lib/action-utils.ts) helpers (`ensureAdmin` RBAC gate, `prismaErrorCode`, `slugify`) — the previously copy-pasted per-file versions are gone.
+- **Bucket hygiene:** replacing or deleting a category image purges the old UploadThing file via `deleteUploadedFiles` ([`src/lib/uploadthing-server.ts`](../src/lib/uploadthing-server.ts), a `UTApi` wrapper). Purges run strictly **post-commit and best-effort** — a failed bucket delete never rolls back or fails the DB write, it only logs. Product image mutations do the same.
 
 ### 1.2 Standard Categories & the Catalog Directory — `BUILT`
 
@@ -214,10 +221,10 @@ Both have a 1-hour safety TTL. If no managed links exist yet (or the DB read thr
 | Entry point | Source | Shows |
 |---|---|---|
 | Homepage slider | `Category.findMany({ isFeatured: true })`, `sliderOrder` asc | Every featured category, with a live category-promo badge |
-| `/shop` | `Category` (type SHOP, all) + `Product` (type SHOP, available, narrowed by `?category=slug`) | Discount-priced catalog, **server-filtered** per request |
+| `/shop` | `Category` (all) + `Product` (available, narrowed by `?category=slug`) | Discount-priced catalog, **server-filtered** per request |
 | `/category/[slug]` | `getCategoryBySlug(slug)` → products by `categoryId` | **Any** category's landing page (featured or standard), one route |
 
-**Also on the homepage:** `Hero`, `OurStory`, `FeaturesBar`, and [`BranchSelector`](../src/components/BranchSelector.tsx) — an "Our Locations" editorial section with Schema.org `Bakery`/`CafeOrCoffeeShop` JSON-LD. Note `BranchSelector` is **hardcoded** (Menouf Boutique + Beba Café, static copy, static images, links to `/branches/[slug]`) — it is *not* driven by the `Branch` table, and the `/branches/*` routes it links to **do not exist yet** (`GAP`, see §7).
+**Also on the homepage:** `Hero`, `OurStory`, `FeaturesBar`, and [`BranchSelector`](../src/components/BranchSelector.tsx) — an "Our Locations" editorial section with Schema.org `Bakery`/`CafeOrCoffeeShop` JSON-LD. Note `BranchSelector` is **hardcoded editorial content** (Menouf Boutique + Beba Café, static copy, static images) — it is *not* driven by the `Branch` table. The dead `/branches/[slug]` links it used to carry were **purged** in the July 2026 dead-link sweep; it links nowhere today.
 
 ---
 
@@ -275,15 +282,14 @@ It passes `variants` (plus minimal product identity and `initialIsFavorited`) to
 
 ```prisma
 model ProductVariant {
-  id             String  @id @default(cuid())
+  id             String   @id @default(cuid())
   productId      String
-  name           String           // free text, e.g. "Half Kilo", "1 Piece / 250g"
-  sku            String? @unique
-  price          Float            // the catalogue base price (the Discount Engine reads from this)
-  compareAtPrice Float?           // optional MANUAL strikethrough "was" price (admin-set)
-  isAvailable    Boolean @default(true)
-  sortOrder      Int     @default(0)
-  promotions     Promotion[]      // variant-level Discount Engine targets
+  name           String            // free text, e.g. "Half Kilo", "1 Piece / 250g"
+  sku            String?  @unique
+  price          Decimal           // catalogue base price — Decimal, so currency never drifts on binary rounding
+  compareAtPrice Decimal?          // optional MANUAL strikethrough "was" price (admin-set)
+  isAvailable    Boolean  @default(true)
+  promotions     Promotion[]       // variant-level Discount Engine targets
 }
 ```
 
@@ -292,7 +298,7 @@ Shape facts the islands honor:
 1. **Variants are a flat list, not a size × color matrix.** `name` is one free-text string per row. The selector is a **single-axis** pill list over `variants[]`. True independent axes would be a schema change; the UI does not simulate it by parsing `name` strings.
 2. **Images live on `Product`, not `ProductVariant`.** Switching the selected variant updates **price, availability, and the Add-to-Cart payload** — it does *not* swap the photo gallery.
 3. **There are TWO independent sources of a strikethrough price.** A live `Promotion` (the Discount Engine, §2.5) discounts the live `price` and surfaces the catalogue base price as the "was" figure. Separately, `compareAtPrice` is a **manual** per-variant column exposed in both admin product forms ([`NewProductForm`](../src/components/admin/NewProductForm.tsx) / [`EditProductForm`](../src/components/admin/EditProductForm.tsx), "Compare-At Price"), validated by the shared Zod schema ([`validators.ts`](../src/lib/validators.ts)): it must be **strictly greater than the selling price** or the form rejects it. On the PDP the engine wins when a promo is live; the manual `compareAtPrice` is only the fallback when no promotion applies.
-4. **`sortOrder` is written by the admin forms (on-screen row order) but every storefront query orders variants by `price` asc** — the admin's arrangement is currently *not* what customers see. See §7.
+4. **Money is `Decimal` end-to-end in the database; the client sees plain numbers.** `price` and `compareAtPrice` are Prisma `Decimal` columns, so every Server Component / action that hands a price to a client island coerces first (`.toNumber()`, and the Discount Engine's `resolvePrice` returns plain 2-dp numbers). Never pass a raw `Decimal` across the RSC boundary — it doesn't serialize. (`sortOrder` no longer exists: the column was written by the old admin forms but never read on the storefront — every storefront query orders variants by `price` asc — so it was deleted.)
 
 ### 2.3 [`ProductPurchasePanel.tsx`](../src/components/products/ProductPurchasePanel.tsx) — the client island
 
@@ -314,7 +320,7 @@ const showCompareAt = activeVariant?.compareAtPrice != null && activeVariant.com
 - **No drift by construction.** Price, sold-out state, line total, and the cart payload are all computed from `activeVariant`. There is no second `useState` holding "the current price" that a fast double-click could desync from the selected pill.
 - **`tabular-nums` on every numeric node — a free CLS win.** The hero price, the `compareAtPrice` strikethrough, the quantity readout, and the CTA's line total all use fixed-width digits, so changing variant or a discount toggling never reflows the surrounding layout.
 - **Accessible compare-at pricing.** When `compareAtPrice > price`, the original is struck-through with `aria-label="Original price … EGP"`. The CTA carries a dynamic `aria-label` describing quantity and line total (or "Selected option is sold out").
-- **Add-to-Cart sends the *selected* variant — and the price the customer saw.** `handleAdd` calls `addItem({ id: product.id, variantId: activeVariant.id, price: activeVariant.price, … }, isLoggedIn)` — `activeVariant.id`, never `variants[0].id`. A sold-out active variant disables the stepper and CTA outright. *Implementation nuance:* the current code loops `addItem` once per unit of the chosen quantity, which fires one background DB sync per unit for logged-in users — see the hardening note in §7.
+- **Add-to-Cart sends the *selected* variant — and the price the customer saw.** `handleAdd` calls `addItem({ id: product.id, variantId: activeVariant.id, price: activeVariant.price, quantity, … }, isLoggedIn)` — `activeVariant.id`, never `variants[0].id`. A sold-out active variant disables the stepper and CTA outright. The chosen quantity is passed **in one call**: one store update and one background DB sync however large the quantity (the old per-unit loop that fired `qty` racing syncs is gone), with the resulting line clamped to `CHECKOUT_MAX_QUANTITY`.
 
 ### 2.4 [`VariantSelector.tsx`](../src/components/products/VariantSelector.tsx) — stateless, single-axis pills
 
@@ -380,12 +386,10 @@ model MenuCategory {
   isFixedPrice Boolean @default(false)
   items        MenuItem[]
 }
-model MenuItem { id String @id @default(cuid()); name String; price Float; order Int @default(0); categoryId String }
+model MenuItem { id String @id @default(cuid()); name String; price Decimal; order Int @default(0); categoryId String }
 ```
 
-This separation is deliberate: the café menu is a **read-only, dine-in/pickup price list**, not something that flows into the cart, checkout, or the Discount Engine. Don't wire an "Add to Cart" button onto a `MenuItem`, and don't expect a `Promotion` to discount one.
-
-> **Do not confuse `MenuCategory`/`MenuItem` (this page) with the `MenuPage` model.** `MenuPage` is a *shop-catalog* presentation grouping that every `Product` must reference (`Product.menuPageId` is required), but **no storefront route currently renders it and there is no admin CRUD for it** — see the gap analysis in §7.
+This separation is deliberate: the café menu is a **read-only, dine-in/pickup price list**, not something that flows into the cart, checkout, or the Discount Engine. Don't wire an "Add to Cart" button onto a `MenuItem`, and don't expect a `Promotion` to discount one. (`MenuItem.price` is a `Decimal` money column like every other price in the schema. The old orphaned `MenuPage` model — a shop-catalog grouping no route ever rendered — has been **deleted entirely**; `MenuCategory`/`MenuItem` are the only menu models.)
 
 **Caching:** the route uses ISR — `export const revalidate = 3600` — and every admin menu mutation ([`src/lib/actions/menu.ts`](../src/lib/actions/menu.ts)) calls `revalidatePath("/menu")`, so edits appear immediately while anonymous traffic is served from cache. This works because `/menu` renders nothing personalized (unlike the product surfaces, which are `force-dynamic` for wishlist seeding).
 
@@ -487,7 +491,7 @@ export function sanitizeRedirect(path: string | null): string {
 
 Only a single-slash, same-origin relative path survives; absolute URLs and the protocol-relative `//host` trick collapse to `"/"`. On a successful `signIn.email`, navigation is **`router.push(redirectTo)` followed by `router.refresh()`** — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only honored by redirect-based flows), so the explicit push is what returns the user to the page the proxy bounced them from. The refresh lets [`CartSyncProvider`](../src/components/providers/CartSyncProvider.tsx) observe the new session and fold the guest cart into the account (§5.4).
 
-> **Signup asymmetry (`GAP`).** [`/signup`](../src/app/(shop)/signup/page.tsx) does **not** read `?redirect=` — after `signUp.email` it always does `router.push("/")`. A guest bounced off `/wishlist` who chooses "create an account" instead of signing in loses the return-to-destination intent. The cart merge still fires (the session transition is what triggers it, §5.4). Wiring `sanitizeRedirect` into signup is a one-import fix.
+> **Signup symmetry — `BUILT`.** [`/signup`](../src/app/(shop)/signup/page.tsx) now mirrors the login flow: `SignupClient` reads `?redirect=` through the same shared `sanitizeRedirect` guard and pushes the sanitized destination after `signUp.email`. A guest bounced off `/wishlist` who chooses "create an account" lands back where they intended, and the cart merge still fires (the session transition is what triggers it, §5.4).
 
 ### 4.5 Wishlist flow — `BUILT`
 
@@ -525,18 +529,22 @@ export interface CartItem {
 }
 ```
 
-Every mutating action takes an optional `isLoggedIn` flag (the caller reads it from `useSession()`); when true the action mirrors the change to the DB via a fire-and-forget `syncCartItemAction` (§5.4). The optimistic local update always lands first:
+Every mutating action takes an optional `isLoggedIn` flag (the caller reads it from `useSession()`); when true the action mirrors the change to the DB via a background `syncCartItemAction` (§5.4). The optimistic local update always lands first:
 
 ```ts
-addItem:        (item, isLoggedIn?)            // local merge by variantId, then fireSync(SET)
+addItem:        (item, isLoggedIn?)            // adds item.quantity units (default 1) in ONE update + ONE sync; line clamped to CHECKOUT_MAX_QUANTITY
 removeItem:     (variantId, isLoggedIn?)       // local filter, then fireSync(DELETE)
 updateQuantity: (variantId, qty, isLoggedIn?)  // local map (<1 → removeItem), then fireSync(SET)
-clearCart:      ()                             // local-only empty — callers pair it with clearDbCartAction()
-clearLocalCart: ()                             // LOGOUT-only wipe: local + persisted, DB untouched
+clearCart:      ()                             // local-only empty (drops pendingOps) — callers pair it with clearDbCartAction()
+clearLocalCart: ()                             // LOGOUT-only wipe: local + persisted + pendingOps, DB untouched
 mergeAndSyncCart: () => Promise<void>          // guest → auth bridge (§5.4)
+adoptDbCart:    (dbItems)                      // adopt a fetched DB cart, REPLAYING any unsynced pendingOps over it
+refreshPrices:  () => Promise<{ updated }>     // GUEST re-price from the live catalogue (rePriceGuestCart)
 ```
 
-**SSR-safe persistence.** The `persist` middleware uses a custom storage resolver: real `localStorage` in the browser, a **no-op storage** on the server (`SERVER_NOOP_STORAGE`). This matters because the default storage *throws* server-side, which would strip the `.persist` API off the store — and the checkout page reads `useCartStore.persist.onFinishHydration` during render. `partialize` persists only `items`, never `isOpen` or session-derived data — SSR renders `items: []`, the client rehydrates after mount, no hydration mismatch.
+**Record-then-confirm sync (`pendingOps`).** The store keeps an **unsynced-intent ledger** — `pendingOps: Record<variantId, { quantity, action }>` — written *before* each logged-in sync leaves and cleared only when the server confirms that exact op. A sync that fails (offline, timeout, tab closed mid-flight) leaves its op behind, and the next `adoptDbCart` (login hydrate / post-merge) **replays** it over the server payload instead of letting a blind overwrite silently drop the change. One rejection is terminal by design: when `syncCartItemAction` refuses a new line because the DB cart is at its **50-distinct-line cap**, the store matches the shared `CART_LIMIT_ERROR` string, **rolls the optimistic line back, drops its pending op, and toasts** — no replay can ever satisfy that rejection (§5.4).
+
+**SSR-safe persistence.** The `persist` middleware uses a custom storage resolver: real `localStorage` in the browser, a **no-op storage** on the server (`SERVER_NOOP_STORAGE`). This matters because the default storage *throws* server-side, which would strip the `.persist` API off the store — and the checkout page reads `useCartStore.persist.onFinishHydration` during render. `partialize` persists `items` **and `pendingOps`** (so intent from a page-life that died mid-sync survives the reload) — never `isOpen` or session-derived data. SSR renders `items: []`, the client rehydrates after mount, no hydration mismatch.
 
 ### 5.2 Every operation keys on `variantId` — `BUILT`
 
@@ -562,7 +570,7 @@ Keep `id` (product id) on the line item for display grouping and PDP links — j
 The cart never does discount math itself, yet it always shows discounted prices:
 
 - **Local adds** carry the price the customer saw — quick-add from a card and Add-to-Cart from the PDP both pass the Discount-Engine output as `price` (§2.5).
-- **DB reads re-resolve, never store.** `CartItem` persists only `{ userId, variantId, quantity }` — **no price column.** [`getDbCartAction`](../src/lib/actions/cart.ts) joins each line to its variant + product + category live promotions and runs `resolvePrice`, so the hydrated price is the *current* discount. A promotion that started or ended since the item was added is reflected the moment the cart hydrates. *(Corollary: a **guest** cart has no hydrate step, so its display prices can go stale until checkout submission — the server still bills correctly; see §7.)*
+- **DB reads re-resolve, never store.** `CartItem` persists only `{ userId, variantId, quantity }` — **no price column.** [`getDbCartAction`](../src/lib/actions/cart.ts) joins each line to its variant + product + category live promotions and runs `resolvePrice`, so the hydrated price is the *current* discount. A promotion that started or ended since the item was added is reflected the moment the cart hydrates. **Guest carts are covered too:** they have no hydrate step, so the checkout page calls the store's `refreshPrices()` on mount, which hits the public [`rePriceGuestCart`](../src/lib/actions/cart.ts) action (input de-duped and capped at 100 ids, read-only) and updates only the lines whose price changed — the total a guest sees *is* the total `placeOrder` will bill.
 - **The server is still the only pricing authority.** `placeOrder` re-resolves every line server-side (§5.5); a stale or tampered client price can never reach the order.
 
 ### 5.4 Guest → authenticated bridge & `CartSyncProvider` — `BUILT`
@@ -571,32 +579,33 @@ The cart never does discount math itself, yet it always shows discounted prices:
 
 | Situation | Detected via | Action |
 |---|---|---|
-| **Already logged in on mount** (refresh / new device) | `firstResolve` ref, first non-pending session reading | **HYDRATE** — `getDbCartAction()` and overwrite local. Never merge (would double-count an overlapping local + DB cart). |
-| **Guest → logged in** (a real sign-in this session) | `knownUserId` ref transitions `null → id` | **MERGE** — `mergeAndSyncCart()`: push the guest's local lines up (server **SUMs** onto existing rows via upsert + `increment`), then adopt the freshly-merged DB cart wholesale. |
+| **Already logged in on mount** (refresh / new device) | `firstResolve` ref, first non-pending session reading | **HYDRATE** — `getDbCartAction()` then `adoptDbCart` (any unsynced `pendingOps` are replayed over the payload, §5.1). Never merge (would double-count an overlapping local + DB cart). |
+| **Guest → logged in** (a real sign-in this session) | `knownUserId` ref transitions `null → id` | **MERGE** — `mergeAndSyncCart()`: push the guest's local lines up (server **SUMs** onto existing rows, clamped to the shared ceilings), then adopt the freshly-merged DB cart through `adoptDbCart`. |
 | **Logged in → guest** (logout) | transition `id → null` | `clearLocalCart()` — wipe local + persisted storage; **DB cart left intact** for the next sign-in. |
 | **Account switch A → B** | transition `idA → idB` | `clearLocalCart()` then HYDRATE B's DB cart. |
 
 The two refs make each transition fire **exactly once**, and the provider deliberately never subscribes to `items`, so a cart edit doesn't re-run the effect.
 
-Server-side hygiene in [`cart.ts`](../src/lib/actions/cart.ts): `mergeCartAction` sanitizes the payload (`sanitizeLocalLines`: drops blanks, clamps each quantity to **1–99**, de-dupes by variant summing), pre-validates all variant ids in one query so stale ids are skipped instead of aborting the transaction, and treats an empty guest cart as success. `syncCartItemAction` upserts to the *absolute* quantity (`SET` is idempotent — a late-arriving SET simply overwrites) and uses `deleteMany` for removals so a no-op delete is silent. A sync failure only logs — the next hydrate/merge reconciles.
+Server-side hygiene in [`cart.ts`](../src/lib/actions/cart.ts): `mergeCartAction` sanitizes the payload (`sanitizeLocalLines`: drops blanks, clamps each quantity to **1–99** = `CHECKOUT_MAX_QUANTITY`, de-dupes by variant summing, and caps the merge at **50 distinct lines** = `CHECKOUT_MAX_ITEMS` — the same shared limits `checkoutSchema` enforces at checkout), pre-validates all variant ids in one query so stale ids are skipped instead of aborting the transaction, sums DB + local quantities **clamped to the ceiling** inside one transaction, and treats an empty guest cart as success. `syncCartItemAction` upserts to the *absolute* quantity (`SET` is idempotent — a late-arriving SET simply overwrites) and uses `deleteMany` for removals so a no-op delete is silent. It also enforces the **50-distinct-line DB cap**: a `SET` that would introduce a *new* line beyond `CHECKOUT_MAX_ITEMS` is rejected with the shared `CART_LIMIT_ERROR` (updating an existing line's quantity is always allowed, so a full cart can still be re-quantified or emptied) — the client store rolls the optimistic line back and toasts on that specific rejection (§5.1). Transient sync failures keep their `pendingOps` entry and surface a toast; the next hydrate/merge replays and reconciles them.
 
 > **Why this is safe with the price model.** None of these paths trust a client price: the write actions store only `{ variantId, quantity }`, and `getDbCartAction` re-prices on read. Cross-device consistency is about **identity and intent**, never money.
 
 ### 5.5 Server-side price integrity — preserve this — `BUILT`
 
-[`placeOrder`](../src/lib/actions/orders.ts) accepts only `{ variantId, quantity }` pairs and re-resolves price, **the best live discount**, availability, and parent-product availability **server-side**, inside a transaction — the client never sends a price. For each line it re-reads the variant plus its variant/product/category live promotions, applies `resolvePrice`, and **snapshots the discounted `finalPrice`** onto the `OrderItem`.
+[`placeOrder`](../src/lib/actions/orders.ts) accepts only `{ variantId, quantity }` pairs and re-resolves price, **the best live discount**, availability, and parent-product availability **server-side**, inside a transaction — the client never sends a price. The payload is first validated by the **same shared `checkoutSchema`** the form runs (empty cart, 1–50 items, quantity 1–99, name/phone, and the conditional rule a tampered client could bypass: **a DELIVERY order must carry a non-empty `addressLine`**). A per-phone throttle then caps simultaneously-`PENDING` orders (3) before any pricing work. Inside the transaction the variant reads are **batched into one `findMany` (`id IN …`)** — two statements total regardless of cart size — each line's live variant/product/category promotions go through `resolvePrice`, and the **discounted `finalPrice` is snapshotted** onto the `OrderItem`.
 
-The money math is now **fully DB-driven** (no hardcoded constants):
+The money math is **fully DB-driven** (no hardcoded constants) and rounded with the Discount Engine's shared `roundMoney` (2-dp) at every accumulation point before it reaches the `Decimal` money columns:
 
 ```ts
 const settings = await getStoreSettings();          // vatRate, isVatEnabled, defaultDeliveryFee
 
+subtotal = roundMoney(subtotal);                    // Σ discounted lines, rounded once after summing
 const deliveryFee =
   payload.fulfillment === "DELIVERY"
-    ? branch?.deliveryFee ?? settings.defaultDeliveryFee   // branch fee, or the "Other Areas" default
-    : 0;                                                   // PICKUP is always free
-const vat = settings.isVatEnabled ? Math.round(subtotal * settings.vatRate) : 0;
-const totalAmount = subtotal + deliveryFee + vat;
+    ? roundMoney(branch?.deliveryFee ?? settings.defaultDeliveryFee) // branch fee, or the "Other Areas" default
+    : 0;                                                             // PICKUP is always free
+const vat = settings.isVatEnabled ? roundMoney(subtotal * settings.vatRate) : 0; // 2-dp, keeps its piastres
+const totalAmount = roundMoney(subtotal + deliveryFee + vat);
 ```
 
 VAT is **not stored in its own column** — it's folded into `totalAmount` and derived as the residual at display time, so a later settings change can't retroactively skew old receipts. When touching the cart or checkout, don't start threading the client's `price` into the order payload "for convenience" — the flow's entire price-integrity guarantee rests on the server being the only pricing source. On success, `placeOrder` revalidates `/admin`, `/admin/orders`, and (for signed-in users) `/my-orders`.
@@ -616,25 +625,27 @@ On mount the page loads, in one `Promise.all`: **active branches** via [`getActi
 
 > **Legacy compatibility.** `Order.deliveryCity` (a `DeliveryLocation?`) and the enum itself **remain in the schema**, but the checkout flow no longer writes them — they exist purely so historical orders still render. The admin order drawer shows the legacy `deliveryCity` defensively for those rows, and the assigned branch name for new ones. Don't reintroduce the enum into checkout.
 
-**Hydration UX:** the page tracks Zustand's `persist` hydration with `useSyncExternalStore(useCartStore.persist.onFinishHydration, …)` and holds a neutral background until **both** the cart has rehydrated **and** the pricing settings have loaded — a customer with items never flashes "Your Cart is Empty", and a total is never rendered from numbers about to change. If the settings fetch fails, a `FALLBACK_PRICING` constant (mirroring the schema defaults) keeps the *preview* alive — billing is unaffected because `placeOrder` reads the real rows. On success the page runs `clearCart()` locally and, when logged in, `clearDbCartAction()` so the placed cart doesn't re-hydrate. The same local+DB pair backs the drawer's "Clear cart" button ([`CartSidebar.tsx`](../src/components/CartSidebar.tsx)).
+**Hydration UX:** the page tracks Zustand's `persist` hydration with `useSyncExternalStore(useCartStore.persist.onFinishHydration, …)` and holds a neutral background until the cart has rehydrated, the pricing settings have loaded, **and (for guests) the cart lines have been re-priced from the live catalogue** (`refreshPrices()`, §5.3) — a customer with items never flashes "Your Cart is Empty", and a total is never rendered from numbers about to change. If the settings fetch fails, a `FALLBACK_PRICING` constant (mirroring the schema defaults) keeps the *preview* alive — billing is unaffected because `placeOrder` reads the real rows. On success the page runs `clearCart()` locally and, when logged in, `clearDbCartAction()` so the placed cart doesn't re-hydrate. The same local+DB pair backs the drawer's "Clear cart" button ([`CartSidebar.tsx`](../src/components/CartSidebar.tsx)).
 
 ### 5.7 Store pricing settings (VAT + delivery fees) — `BUILT` (new since the last revision)
 
 ```prisma
 model StoreSettings {
   id                 String  @id @default("store")   // fixed singleton id — never create a second row
-  vatRate            Float   @default(0.14)          // a FRACTION (0.14 = 14%); admin edits it as a percentage
+  vatRate            Float   @default(0.14)          // a FRACTION (0.14 = 14%) — deliberately kept Float: a rate, not currency
   isVatEnabled       Boolean @default(true)          // master switch — false ⇒ no VAT shown or charged anywhere
-  defaultDeliveryFee Float   @default(35)            // fee for branchless ("Other Areas") DELIVERY orders
+  defaultDeliveryFee Decimal @default(35)            // fee for branchless ("Other Areas") DELIVERY orders — Decimal money
 }
 
 model Branch {
   ...
-  deliveryFee Float @default(35)   // flat fee (EGP) when this branch fulfils a DELIVERY order
+  deliveryFee Decimal @default(35)  // flat fee (EGP) when this branch fulfils a DELIVERY order — Decimal money
 }
 ```
 
-**One reader, many consumers.** [`getStoreSettings()`](../src/lib/store-settings.ts) is the single access path — an `upsert` with an empty `update`, so the singleton row is **created on first read** with schema defaults and no seed step is ever required. `placeOrder`, the admin Settings page, and the public checkout preview all read through it, exactly like every price flows through `resolvePrice`: one reader means the preview and the bill can't disagree about what the settings *are*.
+Note the deliberate type split: **money columns are `Decimal`** (like every price in the schema), while `vatRate` stays `Float` because it is a *rate/fraction*, not a currency amount. `getStoreSettings()` coerces `defaultDeliveryFee` with `.toNumber()` so consumers always receive plain serializable numbers.
+
+**One reader, many consumers — and it is strictly read-only.** [`getStoreSettings()`](../src/lib/store-settings.ts) is the single access path: a primary-key `findUnique` that runs on hot public paths (every checkout mount) and therefore **never writes**. A missing row is answered from the in-memory `DEFAULT_PRICING_SETTINGS` (frozen, mirroring the schema column defaults); the singleton row is created only by the ADMIN-gated mutations in [`store-settings.ts`](../src/lib/actions/store-settings.ts) when an admin first saves the form. `placeOrder`, the admin Settings page, and the public checkout preview all read through it, exactly like every price flows through `resolvePrice`: one reader means the preview and the bill can't disagree about what the settings *are*.
 
 **The action surface** ([`src/lib/actions/store-settings.ts`](../src/lib/actions/store-settings.ts)):
 
@@ -646,11 +657,11 @@ model Branch {
 
 **Two admin surfaces edit `Branch.deliveryFee`** — the per-branch modal ([`BranchModal`](../src/components/admin/BranchModal.tsx) → [`manage-branches.ts`](../src/lib/actions/manage-branches.ts), which validates `fee ≥ 0` and defaults a missing value to 35) and the Settings fee sheet ([`PricingSettingsManager`](../src/components/admin/PricingSettingsManager.tsx), which lists **active** branches only). Both round to 2dp; note the ceilings differ (see §7).
 
-**Checkout consumption:** the client treats every fetched number as display-only. The `OrderSummary` mirrors `placeOrder`'s math exactly — discounted subtotal → `Math.round(subtotal * vatRate)` when enabled → resolved delivery fee — and renders the VAT row only when `isVatEnabled` (labelled with the trimmed percentage, e.g. "VAT (14%)").
+**Checkout consumption:** the client treats every fetched number as display-only. The `OrderSummary` mirrors `placeOrder`'s math exactly — discounted subtotal → 2-dp `roundMoney(subtotal * vatRate)` when enabled → resolved delivery fee — and renders the VAT row only when `isVatEnabled` (labelled with the trimmed percentage, e.g. "VAT (14%)").
 
 ### 5.8 `/cart` route — `GAP` (drawer-only today)
 
-`src/app/(shop)/cart/` is an empty directory — there's no full-page cart view, only the slide-out [`CartSidebar.tsx`](../src/components/CartSidebar.tsx) drawer (opened from the navbar cart icon, or automatically on `addItem`). Worth a dedicated full page if a deep-linkable, shareable cart view is ever needed — noted so the empty directory isn't mistaken for an oversight.
+There is no `/cart` route — no full-page cart view, only the slide-out [`CartSidebar.tsx`](../src/components/CartSidebar.tsx) drawer (opened from the navbar cart icon, or automatically on `addItem`). (The stray empty `src/app/(shop)/cart/` directory that used to invite confusion has been removed.) Worth a dedicated full page if a deep-linkable, shareable cart view is ever needed.
 
 ---
 
@@ -661,12 +672,12 @@ model Branch {
 | **LCP** | Server Components fetch with Prisma at render time — hero image, cards, **and resolved discount prices** arrive in the initial HTML, no client-fetch waterfall | `(shop)/page.tsx`, `/category/[slug]`, `/shop` |
 | **LCP** | `next/image` with per-breakpoint `sizes`, `remotePatterns` scoped to the UploadThing CDN (`utfs.io`, `*.ufs.sh`) | [`next.config.ts`](../next.config.ts), `CategorySlider.tsx` |
 | **CLS** | `tabular-nums` on **every** price node that can change at runtime — PDP hero price, strikethroughs, variant pills, quantity stepper, CTA line total, menu prices | `ProductPurchasePanel`, `VariantSelector`, `MenuRow` |
-| **CLS** | Pulse-skeleton for the navbar auth state while `useSession()` is `isPending`; matching skeleton as the `/login` Suspense fallback; checkout holds its background until the cart store rehydrates **and** pricing settings load | `Navbar.tsx`, `LoginFallback`, `checkout/page.tsx` |
+| **CLS** | Pulse-skeleton for the navbar auth state while `useSession()` is `isPending`; matching skeleton as the `/login` Suspense fallback; checkout holds its background until the cart store rehydrates, pricing settings load, **and** (guests) the cart is re-priced | `Navbar.tsx`, `LoginFallback`, `checkout/page.tsx` |
 | **INP** | `IntersectionObserver` for the menu scroll-spy instead of a `scroll` handler | `MenuClient.tsx` |
-| **INP** | Every mutation (wishlist toggle, add-to-cart, cart sync) runs with optimistic local state — UI responds before the round-trip; DB sync is fire-and-forget | wishlist, `ProductPurchasePanel`, `cart-store.ts` |
+| **INP** | Every mutation (wishlist toggle, add-to-cart, cart sync) runs with optimistic local state — UI responds before the round-trip; the DB cart sync is backgrounded via a record-then-confirm `pendingOps` ledger (§5.1), not awaited | wishlist, `ProductPurchasePanel`, `cart-store.ts` |
 | **INP** | `/shop` category filtering is server-side (`?category=` narrows the Prisma query); `useTransition` + `router.push(..., { scroll: false })` keep the pill click non-blocking and scroll-stable | `ShopClient.tsx` |
 | **TTFB** | React `cache()` dedupes the per-request category lookup across `generateMetadata` + page — one Postgres round-trip, not two | `/category/[slug]` |
-| **TTFB / caching** | `/menu` is ISR (`revalidate = 3600`) + `revalidatePath("/menu")` on admin edits; the footer's two queries are `unstable_cache`d behind the `"footer-links"` / `"categories"` tags. The homepage is **fully dynamic** (`revalidate = 0`) so promo badges are always live — see the note in §7 before changing this | `menu/page.tsx`, `Footer.tsx`, `(shop)/page.tsx` |
+| **TTFB / caching** | `/menu` is ISR (`revalidate = 3600`) + `revalidatePath("/menu")` on admin edits; the footer's two queries are `unstable_cache`d behind the `"footer-links"` / `"categories"` tags. The homepage is **ISR (`revalidate = 60`)** — admin mutations bust it directly (`revalidatePath("/")`, promotions via `revalidatePath("/", "layout")`), so the 60s window only bounds pure time-based promo liveness | `menu/page.tsx`, `Footer.tsx`, `(shop)/page.tsx` |
 | **Bundle size** | Embla Carousel (~6 KB) instead of a heavier carousel; Zustand (~1 KB) for cart state; the discount resolver is pure TS with no runtime deps; the footer ships zero JS (Server Component; the newsletter input is the only client island) | `CategorySlider.tsx`, `cart-store.ts`, `discounts.ts`, `Footer.tsx` |
 | **Hydration correctness** | Wishlist heart state, the PDP's default variant, and discount prices are computed/derived deterministically server-side — never from a client-only `useEffect` fetch that reintroduces a flash-of-wrong-state | `getWishlistedProductIds()`, `ProductPurchasePanel`, `discounts.ts` |
 
@@ -674,23 +685,11 @@ model Branch {
 
 ## 7. Open Items for Engineering
 
-The historical blocking work (variant selector, `variantId` cart, edge proxy, dynamic category route, Discount Engine, DB cart, branch checkout, footer CMS, `sanitizeRedirect`, dynamic slider CMS, DB pricing settings) is **all shipped**. What remains is hardening and gap closure:
+The historical blocking work (variant selector, `variantId` cart, edge proxy, dynamic category route, Discount Engine, DB cart, branch checkout, footer CMS, `sanitizeRedirect`, dynamic slider CMS, DB pricing settings) is **all shipped** — and so is nearly all of the hardening backlog this table used to track. Closed by the July 2026 hardening wave: delivery-address enforcement (shared `checkoutSchema` `superRefine`, §5.5), the discarded checkout email field (input removed), the per-unit `addItem` loop (quantity-based single sync, §2.3), the dead `/branches/[slug]` links (purged, §1.3), the orphaned `MenuPage` model (deleted, §3), the cosmetic newsletter form (removed from the footer), the homepage caching contradiction (ISR 60 + storefront-wide promo revalidation, §1.1), stale guest cart prices (`rePriceGuestCart` at checkout mount, §5.3), `placeOrder` robustness (batched `findMany`, schema ceilings 1–50 items × 1–99 qty, per-phone throttle, §5.5), `ProductVariant.sortOrder` (column deleted, §2.2), signup's ignored `?redirect=` (§4.4), money as `Float` (all money columns migrated to `Decimal`), and the stale-comment/dead-code sweep (mostly done — one remnant below). What remains:
 
 | # | Item | Section | Severity |
 |---|---|---|---|
-| 1 | **Delivery orders accept an empty address** — checkout validates only name+phone; `placeOrder` never requires `addressLine` for `DELIVERY`. Enforce it on both sides. | §5.6 | High |
-| 2 | **Checkout's email field is silently discarded** — collected in the form, absent from `CheckoutPayload` and the `Order` model. Drop the input or add the column. | §5.6 | Medium |
-| 3 | **`handleAdd` loops `addItem` per unit** — N racing fire-and-forget `SET` syncs for one click; out-of-order arrival can persist a lower quantity than local. Add a quantity parameter to `addItem` and fire one sync. | §2.3 | Medium |
-| 4 | **`/branches/[slug]` routes don't exist** — the hardcoded homepage `BranchSelector` and the footer's static fallback link to them (404). Either build the branch pages (schema already has `address`/`phone`, currently unexposed) or point the links elsewhere. | §1.3 | Medium |
-| 5 | **`MenuPage` is an orphaned model** — required on every product, no admin CRUD, no storefront rendering. On an empty table, product creation is blocked outright. Build CRUD + a rendering surface, or make the FK optional and retire the form field. | §3 | Medium |
-| 6 | **Newsletter form is cosmetic** — it fakes a success state; no Server Action, no storage (the `Footer.tsx` docstring claiming otherwise is stale). Wire it or remove it. | §1.3 | Medium |
-| 7 | **Homepage caching decision** — `revalidate = 0` (fully dynamic) contradicts its own "once per hour" comment. If it moves to ISR, promotion mutations must start revalidating `/` (today they only revalidate `/admin/promotions` — the stale "discounts aren't wired yet" header comment in `promotions.ts` should go too). | §1.1 | Low |
-| 8 | **Guest checkout can preview stale prices** — logged-in carts re-price on hydrate; guest carts keep add-time prices until submission (the bill is still correct). A public re-pricing action at checkout mount closes the gap. | §5.3 | Low |
-| 9 | **`placeOrder` robustness** — per-line `findUnique` inside the transaction (batch with one `findMany` id-in); no ceiling on `quantity` or `items.length` (the cart actions clamp 1–99, the order action doesn't). | §5.5 | Low |
-| 10 | **`ProductVariant.sortOrder` is written but never read on the storefront** (everything orders by `price` asc). Use it or drop it from the form. | §2.2 | Low |
-| 11 | **Fee-validation ceilings disagree** — Settings fee sheet caps at 10 000; the Branch modal path has no upper bound. Align on one rule (share the `parseFee` helper). | §5.7 | Low |
-| 12 | **Signup ignores `?redirect=`** — import `sanitizeRedirect`, mirror the login flow. | §4.4 | Low |
-| 13 | **Pickup with zero active branches still submits** — yields an unassigned order with no pickup label. Disable submit for that state. | §5.6 | Low |
-| 14 | **Money as `Float`** — prices/fees are Postgres double precision; the 2dp rounding discipline papers over it, but `Decimal` is the durable fix. | schema | Low |
-| 15 | Full-page `/cart` view if a deep-linkable cart is ever needed (empty directory today). | §5.8 | Low |
-| 16 | Dead code sweep: `categoryUpdateSchema` (unused), stale comments in `ProductPurchasePanel` ("null until promos ship"), `promotions.ts` header, homepage revalidate comment. | — | Low |
+| 1 | **Fee-validation ceilings disagree** — the Settings fee sheet (`parseFee`) caps at 10 000; the Branch modal path (`validateBranchInput` in `manage-branches.ts`) still has no upper bound. Align on one rule (share the `parseFee` helper). | §5.7 | Low |
+| 2 | **Pickup with zero active branches still submits** — the selector renders an "unavailable" notice, but `checkoutSchema` doesn't require a branch for `PICKUP`, so submission yields an unassigned order with no pickup label. Disable submit for that state. | §5.6 | Low |
+| 3 | Full-page `/cart` view if a deep-linkable cart is ever needed (drawer-only today). | §5.8 | Low |
+| 4 | Dead code remnant: `categoryUpdateSchema` in `validators.ts` is exported but referenced nowhere. | — | Low |

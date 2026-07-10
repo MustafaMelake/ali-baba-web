@@ -14,13 +14,13 @@ Ali Baba is a server-rendered, server-validated e-commerce platform for a patiss
 | Framework | **Next.js 16.2** (App Router) | Server Components as the default data layer; Server Actions replace a separate REST/GraphQL API; the request interceptor is `src/proxy.ts` (Next 16's renamed middleware — see §2). |
 | UI runtime | **React 19.2** | `useTransition` for every mutation; `cache()` for request-level dedupe; no legacy `useEffect`-driven loading state. |
 | Styling | **Tailwind CSS v4** | Utility-first, design-token driven (serif headings, `stone-*` neutral palette, a single turquoise `primary` accent, rounded-full pills). |
-| Database | **PostgreSQL (Neon)** via **Prisma 7** (`@prisma/adapter-pg` driver adapter) | Serverless-friendly connection handling; typed queries; raw SQL escape hatch when the typed query builder can't express something (see §3.2 and §5.7). |
+| Database | **PostgreSQL (Neon)** via **Prisma 7** (`@prisma/adapter-pg` driver adapter) | Serverless-friendly connection handling; typed queries; raw SQL escape hatch when the typed query builder can't express something (see §5.2 and §5.7). **Every money column is `Decimal`** (never `Float`) — `ProductVariant.price`/`compareAtPrice`, `Order.subtotal`/`deliveryFee`/`totalAmount`, `OrderItem.unitPrice`, `Promotion.value`, `Branch.deliveryFee`, `StoreSettings.defaultDeliveryFee`, `MenuItem.price` — so currency never drifts on binary rounding; server code coerces with `.toNumber()` before a value crosses to the client. (`StoreSettings.vatRate` deliberately stays `Float`: it's a rate/fraction, not currency.) |
 | Auth & RBAC | **Better Auth 1.6** | Session-based; a `role` field on `User` (`USER` \| `ADMIN` \| `MANAGER`) gates the admin console. `ADMIN` is the Super Admin (sees everything); `MANAGER` is scoped to a single `Branch` via `User.branchId`. Always read through the project's `@/lib/session` wrapper (`getServerSession` / `requireAdmin` / `requireAdminPage` / `requireDashboardAccess`) on the server, or `@/lib/auth-client` on the client — never import session helpers from `better-auth` directly. See §5.5. |
 | Client state | **Zustand 5** (`persist` middleware) | Used narrowly, for the cart only ([`src/lib/cart-store.ts`](../src/lib/cart-store.ts)). The cart is keyed by **`variantId`** — the purchasable unit — not the parent product id (see §4). Everything else — admin tables, filters, wishlist counts — is server state, re-fetched through Server Components rather than cached on the client. |
 | Pricing | **Discount Engine** ([`src/lib/discounts.ts`](../src/lib/discounts.ts)) | A pure, dependency-free price resolver. The same math runs on the storefront, the cart, the checkout summary **and** inside `placeOrder`, so a customer is always billed exactly the price they were shown (see §6). |
 | Motion / feedback | `framer-motion`, `sonner` | Inline transitions, sliding tab/pill indicators, slide-over drawers, and toast feedback for every mutation. |
 
-**Design philosophy:** every page — storefront or admin — renders fully populated on first load. There is no spinner-then-fetch pattern anywhere in the app, because data comes from Prisma queries running directly inside Server Components. Every mutation (place an order, toggle a wishlist heart, change an order's status, edit a product, moderate a review, run a promotion) happens through a Server Action invoked from a small Client Component, wrapped in `useTransition` so the UI never blocks or full-page-reloads. The result feels like a single-page app while staying server-rendered, server-validated, and credential-free on the client: prices, statuses, branch scope, and permissions are never trusted from the browser. The platform is **multi-branch** — every order is routed to a fulfilling `Branch`, branch managers see only their own branch's data, and every promotional price is resolved server-side by the Discount Engine before VAT and delivery are ever added.
+**Design philosophy:** every page — storefront or admin — renders fully populated on first load. There is no spinner-then-fetch pattern anywhere in the app, because data comes from Prisma queries running directly inside Server Components. Every mutation (place an order, toggle a wishlist heart, change an order's status, edit a product, moderate a review, run a promotion) happens through a Server Action invoked from a small Client Component, wrapped in `useTransition` so the UI never blocks or full-page-reloads. The result feels like a single-page app while staying server-rendered, server-validated, and credential-free on the client: prices, statuses, branch scope, and permissions are never trusted from the browser. The platform is **multi-branch** — every order is routed to a fulfilling `Branch`, branch managers see only their own branch's data, and every promotional price is resolved server-side by the Discount Engine before VAT and delivery are ever added. Two formalized business rules run through every reporting surface: **revenue strictly counts `DELIVERED` orders only** (unconfirmed cash is never reported as revenue), and **every business "day" is an `Africa/Cairo` calendar day** — date bucketing converts Cairo wall-clock boundaries into exact UTC instants via [`src/lib/timezone.ts`](../src/lib/timezone.ts), never the Node server's local midnight (see §5.1, §5.7).
 
 ---
 
@@ -101,7 +101,7 @@ Two App Router route groups, two dynamic segment routes:
 | `src/app/(shop)/**` | — | Public storefront; account routes gated by the proxy + in-page check |
 | `src/app/admin/**` | — | Staff console for **ADMIN + branch-scoped MANAGER**; the layout admits both roles, and the per-page/per-action guards (`requireAdminPage` / `requireDashboardAccess`) enforce the finer scope (§5.5) |
 | `(shop)/product/[slug]/page.tsx` | `Product.slug` (`@unique`) | Product detail page |
-| `(shop)/category/[slug]/page.tsx` | `Category.slug` (`@unique`) | **The single** category landing route — one file serves every core and standard category (§3.1) |
+| `(shop)/category/[slug]/page.tsx` | `Category.slug` (`@unique`) | **The single** category landing route — one file serves every category, featured or standard (§3.1) |
 
 ---
 
@@ -109,7 +109,7 @@ Two App Router route groups, two dynamic segment routes:
 
 ### 3.1 Dynamic category routing + `cache()` dedupe
 
-There is exactly **one** category route, [`src/app/(shop)/category/[slug]/page.tsx`](../src/app/(shop)/category/[slug]/page.tsx) — the previous five hand-written `category/<core-slug>/page.tsx` files (one per `CategoryIdentifier`) have been removed entirely. The dynamic route resolves any category by its unique `slug`, so it serves both core categories (those carrying a `CategoryIdentifier`) and standard ones with a single render path.
+There is exactly **one** category route, [`src/app/(shop)/category/[slug]/page.tsx`](../src/app/(shop)/category/[slug]/page.tsx) — the previous five hand-written per-category page files have been removed entirely (along with the `CategoryIdentifier` enum that named them; featuring is now the `Category.isFeatured`/`sliderOrder` toggle, §3.2). The dynamic route resolves any category by its unique `slug`, so it serves featured and standard categories with a single render path.
 
 The route is the platform's reference example of **request-level query deduplication**. Both `generateMetadata` (for SEO `<title>`/canonical/OpenGraph tags) and the page component need the same `Category` row. Wrapping the lookup in React's `cache()` collapses what would be two identical Postgres reads into one:
 
@@ -119,13 +119,13 @@ const getCategoryBySlug = cache((slug: string) =>
 );
 ```
 
-Both `generateMetadata` and `CategoryPage` call `getCategoryBySlug(slug)`; the second call within a request is served from React's memo — **one** round-trip per request. A miss renders `notFound()` (HTTP 404) and a `"Category Not Found"` title. Products are filtered by the resolved, indexed `categoryId` FK (not re-derived from `identifier`), their variants and live promotions are included so the grid can price each card through the Discount Engine (§6), and the page is `export const dynamic = "force-dynamic"` because [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx) seeds per-user wishlist hearts — it must never render from a shared ISR cache that would leak one user's state to the next.
+Both `generateMetadata` and `CategoryPage` call `getCategoryBySlug(slug)`; the second call within a request is served from React's memo — **one** round-trip per request. A miss renders `notFound()` (HTTP 404) and a `"Category Not Found"` title. Products are filtered by the resolved, indexed `categoryId` FK, their variants and live promotions are included so the grid can price each card through the Discount Engine (§6), and the page is `export const dynamic = "force-dynamic"` because [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx) seeds per-user wishlist hearts — it must never render from a shared ISR cache that would leak one user's state to the next.
 
 **Footer links — now DB-backed, not a coupling caveat.** [`Footer.tsx`](../src/components/layout/Footer.tsx) no longer links into this route via a hardcoded constant array. The main nav columns are now driven by the `FooterLink` model (see §5.8), so an admin-authored link's `url` is whatever the admin typed — not derived from a category's current `name`/`slug` — and a category rename in the admin can no longer silently 404 a footer link. (If no managed links exist yet, the footer falls back to a live `prisma.category.findMany` read for its "Collection" column, not the old static array.)
 
 ### 3.2 Homepage slider & `/shop` directory
 
-The homepage ([`(shop)/page.tsx`](../src/app/(shop)/page.tsx)) projects up to five `Category` rows where `identifier` is non-null, ordered by the enum's declaration order, into the Embla [`CategorySlider`](../src/components/CategorySlider.tsx). The `/shop` catalog directory relies on high-performance **Server-Side filtering via URL `searchParams`**: `ShopPage` reads `?category=slug` and narrows the `Product` query in Postgres (`...(categoryParam ? { category: { slug: categoryParam } } : {})`) — there is no in-memory `.filter()` over a fully-loaded product array. This keeps the data layer clean and prevents a client-side bottleneck as the catalog scales: `/shop` and `/shop?category=bakery` are two genuinely different, narrowly-scoped reads, so the grid only ever ships the rows it renders, no matter how large the catalog grows. [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx) keeps the pill-click UX instant despite the server round-trip by wrapping the URL navigation in `useTransition` and pushing with `router.push(..., { scroll: false })`, so the sticky filter bar and Framer Motion's grid animation are never disrupted by a hard reload. Full detail (the `CategoryIdentifier` mechanism, slot-transfer semantics, the `useTransition`/`searchParams` filtering pattern) is in [`STOREFRONT_ARCHITECTURE.md` §1](./STOREFRONT_ARCHITECTURE.md).
+The homepage ([`(shop)/page.tsx`](../src/app/(shop)/page.tsx)) projects **every `Category` row an admin has featured** (`isFeatured: true`, ordered by `sliderOrder` asc with a `createdAt` tie-break — no cap, no enum, the old `CategoryIdentifier` slot mechanism is gone) into the Embla [`CategorySlider`](../src/components/CategorySlider.tsx), each card carrying a live-promotion badge resolved from the Discount Engine. The page is **ISR (`revalidate = 60`)**; category and promotion mutations bust the cache directly (`revalidatePath("/")` / `revalidatePath("/", "layout")`). The `/shop` catalog directory relies on high-performance **Server-Side filtering via URL `searchParams`**: `ShopPage` reads `?category=slug` and narrows the `Product` query in Postgres (`...(categoryParam ? { category: { slug: categoryParam } } : {})`) — there is no in-memory `.filter()` over a fully-loaded product array. This keeps the data layer clean and prevents a client-side bottleneck as the catalog scales: `/shop` and `/shop?category=bakery` are two genuinely different, narrowly-scoped reads, so the grid only ever ships the rows it renders, no matter how large the catalog grows. [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx) keeps the pill-click UX instant despite the server round-trip by wrapping the URL navigation in `useTransition` and pushing with `router.push(..., { scroll: false })`, so the sticky filter bar and Framer Motion's grid animation are never disrupted by a hard reload. Full detail (the featured-slider CMS, the `useTransition`/`searchParams` filtering pattern) is in [`STOREFRONT_ARCHITECTURE.md` §1](./STOREFRONT_ARCHITECTURE.md).
 
 ### 3.3 Product Detail Page — multi-variant client islands
 
@@ -150,24 +150,27 @@ Regardless of auth state, **Zustand is always the thing the UI reads from** — 
 ```ts
 // src/lib/cart-store.ts
 addItem: (newItem, isLoggedIn) => {
+  // Adds `newItem.quantity` units (default 1) in ONE update + ONE background
+  // sync, clamped to the shared CHECKOUT_MAX_QUANTITY (99) ceiling.
+  const amount = Math.max(1, Math.floor(newItem.quantity ?? 1));
   const existing = get().items.find((i) => i.variantId === newItem.variantId);
-  const newQuantity = existing ? existing.quantity + 1 : 1;
+  const newQuantity = Math.min((existing?.quantity ?? 0) + amount, CHECKOUT_MAX_QUANTITY);
 
   set((s) => ({
     items: existing
       ? s.items.map((i) => i.variantId === newItem.variantId ? { ...i, quantity: newQuantity } : i)
-      : [...s.items, { ...newItem, quantity: 1 }],
+      : [...s.items, { ...newItem, quantity: newQuantity }],
     isOpen: true,
   }));
 
-  // Fire-and-forget DB mirror — only when authenticated. The optimistic local
+  // Background DB mirror — only when authenticated. The optimistic local
   // state above has already applied; this just keeps Postgres in step.
   if (isLoggedIn) fireSync(newItem.variantId, newQuantity, "SET");
 },
 // removeItem(variantId, isLoggedIn) and updateQuantity(variantId, qty, isLoggedIn) follow the same pattern.
 ```
 
-`fireSync` calls [`syncCartItemAction`](../src/lib/actions/cart.ts) (`"use server"`) and only logs on failure — it never rolls back the optimistic UI, since the next hydrate/merge cycle (§4.3) reconciles any divergence. `SET` upserts the line to an **absolute** quantity (idempotent — a late-arriving `SET` simply overwrites, sidestepping increment races), and `DELETE` uses `deleteMany` so removing an already-gone row is silent rather than throwing.
+`fireSync` is **record-then-confirm**, not blind fire-and-forget: before the request leaves it writes the op into a persisted **`pendingOps` ledger** (`Record<variantId, { quantity, action }>`, included in the `localStorage` partialize), and clears the entry only when [`syncCartItemAction`](../src/lib/actions/cart.ts) confirms that exact op. A transient failure (offline, timeout, tab closed mid-flight) leaves the op behind and surfaces a toast — the next hydrate/merge (§4.3) **replays** it via `adoptDbCart` instead of silently dropping the un-synced change. One rejection is terminal: the server enforces a **50-distinct-line cap** on the DB cart (`CHECKOUT_MAX_ITEMS` — a `SET` introducing a *new* line beyond it is refused with the shared `CART_LIMIT_ERROR`; re-quantifying an existing line is always allowed), and on that specific error the store **rolls the optimistic line back**, drops its pending op, and toasts. `SET` upserts the line to an **absolute** quantity (idempotent — a late-arriving `SET` simply overwrites, sidestepping increment races), and `DELETE` uses `deleteMany` so removing an already-gone row is silent rather than throwing.
 
 Critically, **`CartItem` stores only identity and intent** — `{ userId, variantId, quantity }`, no price column. Reading it back ([`getDbCartAction`](../src/lib/actions/cart.ts)) joins each line to its live variant/product/category and re-resolves price (including any active discount, §6) at read time, so a hydrated cart always reflects the *current* catalogue, never a stale snapshot.
 
@@ -208,8 +211,8 @@ All React keys in the cart drawer and the checkout summary map over `variantId`,
 
 | Transition | Detected as | Action |
 |---|---|---|
-| Already logged in on mount (refresh / new device) | First non-pending session reading, `userId` already set | **Hydrate**: pull the DB cart and overwrite local. *Never* merge here — the local and DB carts may already overlap, and summing them would double-count. |
-| Guest → logged in (a real sign-in this session) | `null → id` transition | **Merge**: push local lines up via [`mergeCartAction`](../src/lib/actions/cart.ts) (server **sums** onto any existing DB rows via upsert + `increment`), then adopt the merged DB cart wholesale as the new local state. |
+| Already logged in on mount (refresh / new device) | First non-pending session reading, `userId` already set | **Hydrate**: pull the DB cart and adopt it via `adoptDbCart` — a plain overwrite when nothing is unsynced, with any `pendingOps` **replayed** over the server payload first (§4.1). *Never* merge here — the local and DB carts may already overlap, and summing them would double-count. |
+| Guest → logged in (a real sign-in this session) | `null → id` transition | **Merge**: push local lines up via [`mergeCartAction`](../src/lib/actions/cart.ts) (server **sums** local + DB quantities per line, clamped to the shared 99 ceiling, payload capped at 50 distinct lines, all in one transaction), then adopt the merged DB cart through `adoptDbCart`. |
 | Logged in → guest (logout) | `id → null` transition | `clearLocalCart()` — wipe local + `localStorage` so the next person on this device starts clean. The DB cart is **left intact** for the user's next sign-in or another device. |
 | Account switch A → B | `idA → idB` transition | `clearLocalCart()`, then hydrate B's cart fresh from the DB. |
 
@@ -223,6 +226,8 @@ The provider deliberately never subscribes to `items`, so editing the cart doesn
 
 The entire `/admin/*` surface is gated in [`src/app/admin/layout.tsx`](../src/app/admin/layout.tsx): a signed-out visitor is sent to `/login`, and anyone who is neither `ADMIN` nor `MANAGER` is sent to `/`. This is the **coarse** role gate only — a MANAGER is admitted here so they can reach the dashboard and orders, but each loader/action re-checks the role and resolves the branch scope from the database (§5.5), so a manager only ever sees their own branch, and Super-Admin-only pages bounce them with `requireAdminPage()`.
 
+**Shared action infrastructure.** The Server Actions behind this surface share one consolidated helper module, [`src/lib/action-utils.ts`](../src/lib/action-utils.ts): `ensureAdmin()` (the ADMIN RBAC gate that returns a standard `{ error }` envelope instead of throwing, so action UIs toast rather than crash — plus the session-returning `ensureAdminSession()` for actions that need the caller's identity, e.g. manage-users' self-demotion guard), `prismaErrorCode()` (uniform `P2002`/`P2003`/`P2025` reading), and `slugify()`. These were previously copy-pasted across the action files (×11 / ×5 / ×3); every admin action module now imports them from this single home.
+
 ### 5.1 Dashboard Overview (branch-scoped)
 
 The landing page at `/admin` ([`src/app/admin/page.tsx`](../src/app/admin/page.tsx)) is marked `export const dynamic = "force-dynamic"` — it opts out of route caching, because a stale revenue number or order count would actively mislead whoever's looking at it. All of its data comes from a single server-only loader, `getDashboardStats()` in [`src/lib/actions/dashboard.ts`](../src/lib/actions/dashboard.ts), which authorizes the caller (`requireDashboardAccess`) and **scopes every order query to their branch** before running them.
@@ -231,10 +236,15 @@ The landing page at `/admin` ([`src/app/admin/page.tsx`](../src/app/admin/page.t
 
 | Metric | Source |
 |---|---|
-| Total Revenue | Sum of `totalAmount` across all non-cancelled orders **in scope** (`prisma.order.aggregate`) |
-| Orders Today | Count of in-scope orders created since local midnight |
+| Total Revenue | Sum of `totalAmount` across **`DELIVERED` orders only, in scope** (`prisma.order.aggregate`) |
+| Orders Today | Count of in-scope orders (any status) created since **Cairo midnight** (`storeMidnight(0)`) |
 | Active Products | Count of products flagged `isAvailable: true` (store-wide) |
 | Customers | Count of `User` rows with `role: "USER"` (store-wide) |
+
+Two formalized rules govern these numbers:
+
+1. **Revenue strictly counts `DELIVERED` orders** — not merely "non-cancelled." Unconfirmed `PENDING`/`PREPARING`/`SHIPPED` cash is never reported as revenue; every revenue aggregate (all-time, last-30, previous-30, and the chart series) carries the `{ status: DELIVERED }` filter. Order-**volume** counters (Orders Today / Yesterday) deliberately stay status-agnostic — they measure activity, not money.
+2. **Every time window is an `Africa/Cairo` calendar day, expressed as an exact UTC instant.** "Today," "yesterday," and the 30-day windows come from [`src/lib/timezone.ts`](../src/lib/timezone.ts) (`storeMidnight`, `storeMonthStart`, `storeDayKey` over the shared `STORE_TZ` constant), which converts Cairo wall-clock midnights into UTC instants for Prisma `gte`/`lt` ranges — **DST-safely** (Egypt reinstated DST in 2023, so a hardcoded UTC+2 offset would be wrong for part of the year) and never from the Node server's local clock, which is an accident of the deployment region. The raw-SQL analytics rollups (§5.7) do the equivalent conversion inside Postgres with `AT TIME ZONE`, importing the same `STORE_TZ` constant so the two sides can't disagree about what "the store day" means.
 
 **Branch scoping.** Orders and revenue carry a `branchId`, so they are filtered:
 - **ADMIN** → unrestricted (all branches), or one branch if a `branchId` param is supplied.
@@ -246,7 +256,7 @@ Each metric is paired with a trend badge. Revenue and Orders compare the current
 
 All of this — the four metrics, their comparison-period counterparts, the recent-orders list, the revenue chart's raw data, and the branch-name label — is fetched in **one parallel `Promise.all` batch**, not a sequence of awaited queries: the loader issues its full set of reads to Postgres at once and waits for the slowest one.
 
-The **revenue chart** (Recharts, via [`RevenueChart.tsx`](../src/components/admin/RevenueChart.tsx)) is fed by pulling every in-scope non-cancelled order from the last 30 days and bucketing its `totalAmount` into the calendar day it was created, in application code — a true day-by-day series, not a sampled or estimated one.
+The **revenue chart** (Recharts, via [`RevenueChart.tsx`](../src/components/admin/RevenueChart.tsx)) is fed by pulling every in-scope **`DELIVERED`** order from the last 30 days and bucketing its `totalAmount` into the **Cairo calendar day** it was created (`storeDayKey(order.createdAt)`), in application code — a true day-by-day series, not a sampled or estimated one. Buckets are built in calendar space (DST-free), so a 23h/25h DST-transition day can never split or merge a bucket; `totalAmount` is a `Decimal` column and is coerced (`.toNumber()`) before summing.
 
 Both `placeOrder` and `updateOrderStatus` (§5.2) call `revalidatePath("/admin")` alongside their own route, which is what keeps this dashboard's revenue and counters instantly in sync with order activity happening elsewhere in the app — no polling, no manual refresh.
 
@@ -254,14 +264,17 @@ Both `placeOrder` and `updateOrderStatus` (§5.2) call `revalidatePath("/admin")
 
 `/admin/orders` ([`src/app/admin/orders/page.tsx`](../src/app/admin/orders/page.tsx)) is the highest-traffic admin screen — it's where staff spend most of their time triaging incoming orders — so it's built around an **"inbox-zero" UX philosophy**: get from "see an order" to "act on it" to "it's off the list" in as few interactions as possible, with zero full-page reloads. Its data also comes from a branch-scoped loader, `getOrders()` in [`src/lib/actions/dashboard.ts`](../src/lib/actions/dashboard.ts).
 
-#### URL-driven filtering & search
+#### URL-driven filtering, search & cursor pagination
 
-The page is a Server Component that accepts `searchParams: Promise<{ status?: string; query?: string }>` — filter and search state lives **in the URL**, not in client component state. This means a filtered/searched view is bookmarkable, shareable, and survives a refresh, and the server can run exactly one targeted Prisma query per request instead of fetching everything and filtering client-side.
+The page is a Server Component that accepts `searchParams: Promise<{ status?: string; query?: string; cursor?: string; dir?: string }>` — filter, search, **and pagination** state all live **in the URL**, not in client component state. This means a filtered/searched view is bookmarkable, shareable, and survives a refresh, and the server can run exactly one targeted Prisma query per request instead of fetching everything and filtering client-side.
 
 - `status` is validated against the `OrderStatus` enum before use (`parseStatus()` in the page) — an invalid or missing value always falls back to the synthetic `"ALL"` tab. The raw URL string is never trusted directly in a `where` clause.
 - `query` searches `customerName` (case-insensitive `contains`) and `customerPhone` (`contains`), OR'd together with the order-number match described below.
+- `cursor` + `dir` drive the pager (below); changing the filter or search deletes the cursor pair, since a cursor row may not exist under the new filter.
 
-[`AdminOrderFilters.tsx`](../src/components/admin/AdminOrderFilters.tsx) is the client-side control surface that *drives* those params: it pushes `router.push(pathname + "?" + params, { scroll: false })` inside a `useTransition`, so navigating between tabs or typing a search term never triggers a hard reload or loses scroll position. The search box is **debounced 400ms** before it touches the URL, so fast typing doesn't fire a query per keystroke. Both the status filter and the search query coexist in the same `URLSearchParams` object — switching tabs while a search is active narrows within those results, rather than clearing it.
+**Cursor pagination — no offsets.** The list is paginated at **`ORDERS_PAGE_SIZE = 50`** rows per page, newest first, using Prisma's **cursor** mechanism (`cursor: { id }`, `skip: 1` to exclude the cursor row itself, and a `take` of `±(pageSize + 1)` — the sentinel row detects whether the walk can continue, and a *negative* take walks backwards for "Previous"). There is **no offset `skip`-based pagination**: the cost of fetching a page is independent of how deep it sits in the list. `getOrders()` returns `{ pageSize, total, hasMore, hasPrevious, startCursor, endCursor }` alongside the rows — the client passes `endCursor` back as `cursor` with direction `"next"` to walk older orders, or `startCursor` with `"prev"` to walk back — and [`AdminOrdersPagination.tsx`](../src/components/admin/AdminOrdersPagination.tsx) renders the controls. Ordering is the deterministic compound `[{ createdAt: "desc" }, { id: "desc" }]`, so same-timestamp rows can never be skipped or repeated across page boundaries, and the active filter's `total` falls out of the same `groupBy` that feeds the tab counters — pagination adds no extra query.
+
+[`AdminOrderFilters.tsx`](../src/components/admin/AdminOrderFilters.tsx) is the client-side control surface that *drives* those params: it pushes `router.push(pathname + "?" + params, { scroll: false })` inside a `useTransition`, so navigating between tabs or typing a search term never triggers a hard reload or loses scroll position. The search box is **debounced 400ms** before it touches the URL, so fast typing doesn't fire a query per keystroke. Both the status filter and the search query coexist in the same `URLSearchParams` object — switching tabs while a search is active narrows within those results, rather than clearing it (and either change resets pagination to the first page).
 
 #### Branch RBAC, live counters & sliding tabs
 
@@ -371,12 +384,12 @@ CRUD lives in [`src/lib/actions/promotions.ts`](../src/lib/actions/promotions.ts
 
 `/admin/analytics` ([`src/app/admin/analytics/page.tsx`](../src/app/admin/analytics/page.tsx)) is a cross-branch performance suite reserved for the Super Admin — the page calls `requireAdminPage()` and the loader (`getAnalytics()` in [`src/lib/actions/analytics.ts`](../src/lib/actions/analytics.ts)) calls `requireAdmin()`, so a manager is bounced before any query runs (managers get their own branch dashboard, not the cross-branch comparison).
 
-The defining characteristic is that **every metric is computed in the database** — Prisma `groupBy` aggregations plus a couple of grouped `$queryRaw` rollups — so the loader never pulls raw order rows into Node. Cancelled orders are excluded from every figure (mirroring the dashboard's `notCancelled` rule), and only orders actually attached to a branch are counted. Four datasets are returned and fetched in one `Promise.all`:
+The defining characteristic is that **every metric is computed in the database** — Prisma `groupBy` aggregations plus a couple of grouped `$queryRaw` rollups — so the loader never pulls raw order rows into Node. Only orders actually attached to a branch are counted, and the same two formalized rules from the dashboard (§5.1) apply: the **revenue** datasets (branch sales, star of the month, top products) strictly count **`DELIVERED`** orders, while the pure-**volume** peak-hours dataset keeps the broader not-`CANCELLED` filter since it measures activity, not money. All wall-clock/month bucketing uses the shared **`Africa/Cairo`** store timezone (`STORE_TZ` / `storeMonthStart` from [`src/lib/timezone.ts`](../src/lib/timezone.ts)), the same constant the dashboard converts its day boundaries with — never the Node server's clock. Four datasets are returned and fetched in one `Promise.all`:
 
-1. **Branch sales comparison** — all-time revenue (`_sum.totalAmount`) and order count per active branch, via `prisma.order.groupBy({ by: ["branchId"] })`, sorted high-to-low.
-2. **Peak hours** — orders bucketed by branch × hour-of-day, computed in the store's local wall clock (`Africa/Cairo`). A raw query does the timezone math in SQL — `EXTRACT(HOUR FROM "createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Cairo')` — and casts `COUNT(*)` to `int` to avoid `BigInt` serialization; the rows are then pivoted in JS into one point per hour carrying a column per branch, with the x-axis trimmed to the active trading window.
-3. **Top selling products per branch** — units sold and revenue per branch × product, via a raw query joining `OrderItem → Order` to reach `branchId` and rolling up `SUM(quantity)` / `SUM(quantity * unitPrice)`; the top 3 per branch are sliced in JS.
-4. **Star of the month** — the highest-revenue branch for the current calendar month, plus its share of the month's total.
+1. **Branch sales comparison** — all-time `DELIVERED` revenue (`_sum.totalAmount`) and order count per active branch, via `prisma.order.groupBy({ by: ["branchId"] })`, sorted high-to-low.
+2. **Peak hours** (volume, not-`CANCELLED`) — orders bucketed by branch × hour-of-day, computed in the store's `Africa/Cairo` wall clock. A raw query does the timezone math in SQL — `EXTRACT(HOUR FROM "createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Cairo')`, the Postgres equivalent of the JS `timezone.ts` conversion so both agree on the store day — and casts `COUNT(*)` to `int` to avoid `BigInt` serialization; the rows are then pivoted in JS into one point per hour carrying a column per branch, with the x-axis trimmed to the active trading window.
+3. **Top selling products per branch** (`DELIVERED`) — units sold and revenue per branch × product, via a raw query joining `OrderItem → Order` to reach `branchId` and rolling up `SUM(quantity)` / `SUM(quantity * unitPrice)`; the top 3 per branch are sliced in JS.
+4. **Star of the month** (`DELIVERED`) — the highest-revenue branch for the current `Africa/Cairo` calendar month (`storeMonthStart`), plus its share of the month's total.
 
 A stable colour is assigned per branch (by name-sorted order, via `branchColor`) so every chart in the suite agrees on which colour means which branch. The page renders these into a "Star of the Month" hero card, a branch-sales bar chart, a multi-series peak-hours line chart, and per-branch best-seller cards with share bars.
 
@@ -423,7 +436,7 @@ model Promotion {
   id        String       @id @default(cuid())
   name      String
   type      DiscountType
-  value     Float
+  value     Decimal      // Decimal for money-safety; PERCENTAGE → percent off, FIXED_AMOUNT → EGP off
   startDate DateTime
   endDate   DateTime
   isActive  Boolean      @default(true)
@@ -493,30 +506,27 @@ Arabic sub-labels in the dropdown are presentational only (keyed by branch `slug
 
 ### 7.2 The transaction
 
-`placeOrder` wraps the whole order in `prisma.$transaction`. First it does a **defensive branch resolution**: a supplied `branchId` is only stamped if it matches a **real, active** branch (`findFirst({ where: { id, isActive: true } })`); a stale, invalid, or deactivated id silently falls back to `null` so the order never fails — it just routes to the Super Admin. Then, for each cart line, it re-reads the `ProductVariant` row (price, availability, parent product availability) **and that variant's live promotions at the variant / product / category levels** (filtered by `livePromotionWhere(now)`) directly from the database — never trusting anything the browser sent — and rejects the whole order if any item has gone unavailable since it was added to the cart.
+Before any pricing work, the payload is validated by the **same shared `checkoutSchema`** the form runs (empty cart, 1–50 items × 1–99 quantity, name/phone, and the conditional rule a tampered client could bypass: **a DELIVERY order MUST carry a non-empty `addressLine`**), and a per-phone throttle caps simultaneously-`PENDING` orders (3) so guest-writable checkout can't be flooded.
+
+`placeOrder` then wraps the whole order in `prisma.$transaction`. First it does a **defensive branch resolution**: a supplied `branchId` is only stamped if it matches a **real, active** branch (`findFirst({ where: { id, isActive: true } })`); a stale, invalid, or deactivated id silently falls back to `null` so the order never fails — it just routes to the Super Admin. The transaction itself is kept deliberately **short — two statements regardless of cart size**: one **batched `findMany` (`id IN …`)** reads every line's `ProductVariant` (price, availability, parent product availability) **and its live promotions at the variant / product / category levels** (filtered by `livePromotionWhere(now)`) in a single query — never trusting anything the browser sent — and the loop then does no DB work at all, rejecting the whole order if any item has gone unavailable since it was added to the cart. (This replaced an N+1 `findUnique`-per-line that held the transaction open in proportion to cart size.)
 
 The best live discount is then applied per line via `resolvePrice` (§6), and **the discounted `finalPrice` is what gets snapshotted** onto the `OrderItem` (`productName`, `variantName`, `unitPrice`, `quantity` at the moment of purchase), so a later catalogue price change *or a promotion ending* never rewrites history on an already-placed order. Either every line and the order header are created together, or none of it is.
 
 ### 7.3 Canonical pricing — discount first, then VAT & delivery
 
-**Canonical pricing constants**, enforced only here — never on the client:
-
-```ts
-const DELIVERY_FEE = 35;   // EGP, flat, DELIVERY fulfillment only
-const VAT_RATE = 0.14;     // 14%
-```
+**Pricing is now fully DB-driven — the hardcoded `DELIVERY_FEE`/`VAT_RATE` constants are gone.** The VAT rate and default delivery fee come from the singleton `StoreSettings` row, and the per-order delivery fee from the fulfilling `Branch.deliveryFee` — all read fresh, server-side, per order (`getStoreSettings()`, §5.7 of `STOREFRONT_ARCHITECTURE.md`), never from the client's preview. Every accumulation point is rounded 2-dp with the Discount Engine's shared `roundMoney` before it reaches the `Decimal` money columns.
 
 The order of operations matters: **the per-line discount is applied before anything else**, the subtotal is the sum of the *discounted* lines, and VAT is computed on that discounted subtotal — VAT and delivery never apply to the pre-discount price.
 
 ```
-lineFinal    = resolvePrice(variant.price, livePromotions, now).finalPrice  — per line, server-side
-subtotal     = Σ (lineFinal × quantity)        — discounted lines, read from the DB, not the client
-deliveryFee  = 35 if fulfillment === DELIVERY, else 0
-vat          = round(subtotal × 0.14)          — on the DISCOUNTED subtotal
-totalAmount  = subtotal + deliveryFee + vat
+lineFinal    = resolvePrice(variant.price, livePromotions, now).finalPrice   — per line, server-side
+subtotal     = roundMoney(Σ (lineFinal × quantity))         — discounted lines, read from the DB, not the client
+deliveryFee  = DELIVERY ? roundMoney(branch.deliveryFee ?? settings.defaultDeliveryFee) : 0
+vat          = settings.isVatEnabled ? roundMoney(subtotal × settings.vatRate) : 0   — on the DISCOUNTED subtotal
+totalAmount  = roundMoney(subtotal + deliveryFee + vat)
 ```
 
-The checkout UI's visual order summary mirrors this exact formula (and prices its lines through the same engine), so what the customer sees before placing the order matches what the server actually charges — but the enforcement boundary is the server action, not the UI's arithmetic. On success, `placeOrder` revalidates `/admin`, `/admin/orders`, and (for signed-in customers) `/my-orders`, so the dashboard, the staff board, and the customer's own history all reflect the new order immediately.
+So the fee is the fulfilling branch's own `deliveryFee` (branchless "Other Areas" delivery, or a branch that went inactive mid-checkout, falls back to `settings.defaultDeliveryFee`; PICKUP is always free), and VAT is charged only when the master `isVatEnabled` switch is on. The checkout UI's visual order summary mirrors this exact formula (and prices its lines through the same engine and the same settings), so what the customer sees before placing the order matches what the server actually charges — but the enforcement boundary is the server action, not the UI's arithmetic. On success, `placeOrder` revalidates `/admin`, `/admin/orders`, and (for signed-in customers) `/my-orders`, so the dashboard, the staff board, and the customer's own history all reflect the new order immediately.
 
 ### 7.4 The "Residual VAT" fallback
 
@@ -590,4 +600,6 @@ The platform is server-rendered and server-validated end to end — Prisma queri
 
 ### Current Status: Operational Integrity & Technical Debt
 
-All critical architectural "Hardening" tasks tracked by this document and its storefront companion are officially resolved: the footer is a fully dynamic, DB-backed CMS (`FooterLink`, §5.8) instead of a hardcoded array that could silently 404; the open-redirect guard (`sanitizeRedirect`) is a single, globally shared utility in `@/lib/utils` rather than logic duplicated per surface; the `/shop` catalog filters server-side through `searchParams` instead of shipping the full product set to the client; and the PDP variant selector, the `variantId`-keyed cart, centralized Edge route protection, the single dynamic category route, the storefront-wide Discount Engine, the DB-backed cross-device cart, and the branch-driven checkout — every item this document and `STOREFRONT_ARCHITECTURE.md` once tracked as open work — have shipped and are documented above as `BUILT`. The platform is highly optimized for performance (server-side filtering and rendering, request-level query dedupe, zero client-side data-fetching caches), security (server-validated pricing and stock, branch-scoped RBAC resolved live from the database, a single shared open-redirect policy), and operational flexibility (admin-editable footer navigation, branch-driven fulfillment, a merchandising console for time-boxed promotions). The system state is now fully synchronized with this documentation.
+All critical architectural "Hardening" tasks tracked by this document and its storefront companion are officially resolved: the footer is a fully dynamic, DB-backed CMS (`FooterLink`, §5.8) instead of a hardcoded array that could silently 404; the open-redirect guard (`sanitizeRedirect`) is a single, globally shared utility in `@/lib/utils` rather than logic duplicated per surface; the `/shop` catalog filters server-side through `searchParams` instead of shipping the full product set to the client; and the PDP variant selector, the `variantId`-keyed cart, centralized Edge route protection, the single dynamic category route, the storefront-wide Discount Engine, the DB-backed cross-device cart, and the branch-driven checkout — every item this document and `STOREFRONT_ARCHITECTURE.md` once tracked as open work — have shipped and are documented above as `BUILT`.
+
+The subsequent **July 2026 hardening wave** is likewise fully landed and reflected above: **all money columns migrated from `Float` to `Decimal`** (currency never drifts on binary rounding; `vatRate` stays `Float` as a deliberate rate-not-currency exception); the orphaned `MenuPage` model and the unread `ProductVariant.sortOrder` column were **deleted**; the admin orders board moved to **cursor pagination** (`cursor`/`take`/`startCursor`/`endCursor`, no offset `skip`); **revenue was formalized as `DELIVERED`-only** across the dashboard and analytics; **all date bucketing unified on `Africa/Cairo`** exact-UTC instants via `src/lib/timezone.ts` (never the Node server clock); the shared Server-Action idioms (`ensureAdmin`, `prismaErrorCode`, `slugify`) were consolidated into `src/lib/action-utils.ts`; orphaned UploadThing media is purged post-commit via `UTApi` (`src/lib/uploadthing-server.ts`); and the cart gained a strict **50-distinct-line DB cap** (`syncCartItemAction` → `CART_LIMIT_ERROR`) with optimistic client rollback plus a persisted pending-ops ledger. The platform is highly optimized for performance (server-side filtering and rendering, request-level query dedupe, cursor pagination, zero client-side data-fetching caches), security (server-validated pricing and stock, branch-scoped RBAC resolved live from the database, a single shared open-redirect policy), correctness (`Decimal` money, timezone-exact reporting, `DELIVERED`-only revenue), and operational flexibility (admin-editable footer navigation, branch-driven fulfillment, a merchandising console for time-boxed promotions). The system state is now fully synchronized with this documentation.
