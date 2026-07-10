@@ -75,7 +75,10 @@ async function getSliderCategories() {
       : `${category.name} category`,
     // Promotion `value` is a Decimal column — coerce to number for the label math.
     discountLabel: discountLabelFor(
-      category.promotions.map((p) => ({ type: p.type, value: p.value.toNumber() })),
+      category.promotions.map((p) => ({
+        type: p.type,
+        value: p.value.toNumber(),
+      }))
     ),
   }));
 }
@@ -94,9 +97,8 @@ export default async function ShopHomePage() {
       <div className="max-w-7xl mx-auto px-6 py-12">
         <BranchSelector />
       </div>
-
-      <OurStory />
       <FeaturesBar />
+      <OurStory />
     </div>
   );
 }
