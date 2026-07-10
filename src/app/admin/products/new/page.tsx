@@ -13,16 +13,10 @@ export default async function NewProductPage() {
   await requireAdminPage();
 
   // Relational select options come straight from the DB.
-  const [categories, menuPages] = await Promise.all([
-    prisma.category.findMany({
-      orderBy: { name: "asc" },
-      select: { id: true, name: true },
-    }),
-    prisma.menuPage.findMany({
-      orderBy: { title: "asc" },
-      select: { id: true, title: true },
-    }),
-  ]);
+  const categories = await prisma.category.findMany({
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -42,11 +36,7 @@ export default async function NewProductPage() {
         />
       </div>
 
-      <NewProductForm
-        categories={categories}
-        // MenuPage exposes `title`; normalise to the form's { id, name } shape.
-        menuPages={menuPages.map((m) => ({ id: m.id, name: m.title }))}
-      />
+      <NewProductForm categories={categories} />
     </div>
   );
 }

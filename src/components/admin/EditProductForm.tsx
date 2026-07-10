@@ -21,7 +21,6 @@ export type EditableProduct = {
   isAvailable: boolean;
   isFeatured: boolean;
   categoryId: string;
-  menuPageId: string | null;
   variants: {
     id: string;
     name: string;
@@ -125,11 +124,9 @@ function newVariantRow(): VariantRow {
 export default function EditProductForm({
   product,
   categories,
-  menuPages,
 }: {
   product: EditableProduct;
   categories: SelectOption[];
-  menuPages: SelectOption[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -138,8 +135,6 @@ export default function EditProductForm({
   const [slug, setSlug] = useState(product.slug);
   const [description, setDescription] = useState(product.description ?? "");
   const [categoryId, setCategoryId] = useState(product.categoryId);
-  // Optional — a null (unassigned) MenuPage becomes the "None" option.
-  const [menuPageId, setMenuPageId] = useState(product.menuPageId ?? "");
   const [images, setImages] = useState<string[]>(product.images);
   const [isAvailable, setIsAvailable] = useState(product.isAvailable);
   const [isFeatured, setIsFeatured] = useState(product.isFeatured);
@@ -184,7 +179,6 @@ export default function EditProductForm({
       slug,
       description,
       categoryId,
-      menuPageId,
       images,
       isAvailable,
       isFeatured,
@@ -291,22 +285,6 @@ export default function EditProductForm({
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Menu Page (optional)" htmlFor="menuPageId">
-            <select
-              id="menuPageId"
-              value={menuPageId}
-              onChange={(e) => setMenuPageId(e.target.value)}
-              className={inputClasses}
-            >
-              <option value="">None</option>
-              {menuPages.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
                 </option>
               ))}
             </select>

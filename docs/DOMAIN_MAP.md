@@ -93,7 +93,6 @@ Answers "who is this request from?". Email/password credentials via **Better Aut
 - `nextCookies()` ordering is load-bearing: plugins after it would lose cookie-setting on Server Action responses.
 
 ### 1.6 Technical Debt & Vestigial Code
-- **Dead `/forgot-password` link** — `LoginClient.tsx` renders "Forgot?" → `/forgot-password`; **no such route exists** (404). Either build the reset flow (`resend` is already a dependency) or remove the link. *(Audit finding M-6, open.)*
 - `emailVerified` exists on the model but no verification flow is wired; accounts function unverified.
 - Proxy matcher list is manual — new protected customer routes must be added by hand (the guard does not discover them).
 
@@ -146,24 +145,24 @@ The sellable universe. Cardinal rule (schema comment, enforced everywhere): **pr
 
 ### 3.2 Database Schema & Integrity
 - **`Category`** — `name @unique`, `slug @unique`; slider/merchandising fields `subtitle`, `image`, `isFeatured`, `sliderOrder` (`@@index([isFeatured, sliderOrder])` matches the homepage read).
-- **`Product`** — `slug @unique`, `images String[]`, `isAvailable`, `isFeatured`; `categoryId` → Category **`onDelete: Restrict`** (deleting a used category is impossible at the DB level); `menuPageId String?` → MenuPage **`onDelete: SetNull`** (vestigial, §3.6). Indexes: `slug`, `categoryId`, `menuPageId`.
-- **`ProductVariant`** — `price Float`, `compareAtPrice Float?` (manual strikethrough), `sku String? @unique`, `isAvailable`, `sortOrder`; `productId` → Product **`onDelete: Cascade`**. Back-relations: `cartItems`, `orderItems`, `promotions`.
+- **`Product`** — `slug @unique`, `images String[]`, `isAvailable`, `isFeatured`; `categoryId` → Category **`onDelete: Restrict`** (deleting a used category is impossible at the DB level). Indexes: `slug`, `categoryId`.
+- **`ProductVariant`** — `price Float`, `compareAtPrice Float?` (manual strikethrough), `sku String? @unique`, `isAvailable`; `productId` → Product **`onDelete: Cascade`**. Back-relations: `cartItems`, `orderItems`, `promotions`.
 - Deletion physics: `OrderItem.variant` is **`onDelete: Restrict`** (§6) ⇒ *any product that has ever been ordered cannot be hard-deleted*, transitively (product delete cascades to variants, which Restrict blocks). `Review` and `WishlistItem` cascade away with the product.
 
 ### 3.3 File Boundaries
-- **Validation (shared client/server):** `src/lib/validators.ts` — `variantInputSchema` (name 1–80, `price` positive, `compareAtPrice` nullish with cross-field refine `compareAtPrice > price`, sku ≤ 64), `productInputSchema` / `productUpdateSchema` (name 2–120, slug regex `^[a-z0-9]+(?:-[a-z0-9]+)*$`, description ≤ 2000, `variants.min(1)`, `menuPageId` normalized `"" → null`).
+- **Validation (shared client/server):** `src/lib/validators.ts` — `variantInputSchema` (name 1–80, `price` positive, `compareAtPrice` nullish with cross-field refine `compareAtPrice > price`, sku ≤ 64), `productInputSchema` / `productUpdateSchema` (name 2–120, slug regex `^[a-z0-9]+(?:-[a-z0-9]+)*$`, description ≤ 2000, `variants.min(1)`).
 - **Admin actions:** `src/app/admin/products/actions.ts` (`createProduct`, `updateProduct`, `deleteProduct`); `src/lib/actions/categories.ts` (`createCategory`, `updateCategory`, `deleteCategory` + transactional `ensureUniqueSlug`).
 - **Admin UI:** `src/app/admin/products/{page,new/page,[id]/edit/page}.tsx`, `NewProductForm`, `EditProductForm`, `ProductRowActions`, `src/app/admin/categories/page.tsx`, `NewCategoryModal`, `EditCategoryModal`, `CategoryEditButton`, `CreateCategoryButton`, `DeleteCategoryButton`, `MultiSelect`.
 - **Storefront:** `src/app/(shop)/shop/page.tsx` + `ShopClient.tsx`; `src/app/(shop)/category/[slug]/page.tsx` + `CategoryPageTemplate.tsx`; `src/app/(shop)/product/[slug]/page.tsx`; islands `ProductCard.tsx`, `products/ProductPurchasePanel.tsx`, `products/VariantSelector.tsx`, `ProductGallery.tsx`.
 
 ### 3.4 Step-by-Step Data Flow
-**Create:** zod re-parse → single nested `product.create` with `variants.create[]` (`sortOrder` = array index) → P2002 sniffed via `meta.target` to distinguish "SKU taken" vs "slug taken" → revalidates `/admin/products`, `/shop`, `/`.
+**Create:** zod re-parse → single nested `product.create` with `variants.create[]` → P2002 sniffed via `meta.target` to distinguish "SKU taken" vs "slug taken" → revalidates `/admin/products`, `/shop`, `/`.
 
 **Update (the delicate variant reconcile):**
 1. Fetch existing variant ids; compute `keptIds` = incoming ids **∩ existing** (an incoming id not owned by this product is treated as *new* — ownership can't be spoofed to hijack another product's variant).
 2. `removedIds` = existing − kept.
 3. Slug-owner pre-check (`findUnique(slug)`, excluding self) for a clean message before the transaction.
-4. Transaction: `product.update` + per-variant `update` (kept) / `create` (new), `sortOrder` following on-screen order; `compareAtPrice ?? null` so *clearing* the field genuinely wipes a legacy discount.
+4. Transaction: `product.update` + per-variant `update` (kept) / `create` (new); `compareAtPrice ?? null` so *clearing* the field genuinely wipes a legacy discount.
 5. **Post-commit, best-effort** removal loop (deliberately outside the transaction so it can never roll back a valid update): `variant.delete` → on `P2003` (ordered variant) → **archive** instead: `{ isAvailable: false, sku: null }` (frees the unique SKU for reuse), `archivedCount` reported to the UI.
 6. Revalidation fan-out: `/admin/products`, `/shop`, `/`, `/product/[newSlug]`, and `/product/[oldSlug]` when the slug changed.
 
@@ -179,8 +178,6 @@ The sellable universe. Cardinal rule (schema comment, enforced everywhere): **pr
 - Revalidation fan-out lists are **manual** — a new catalog surface must be added to the actions' `revalidatePath` calls or it will serve stale ISR HTML for up to 60s.
 
 ### 3.6 Technical Debt & Vestigial Code
-- **`MenuPage` model is vestigial**: no storefront reader exists; `Product.menuPageId` was made nullable + `SetNull` as the documented "safe, reversible first step" of removal. The admin forms and validators still accept `menuPageId`. Decision needed: drop the model + column + form field, or resurrect the feature.
-- `sortOrder` on variants is written but storefront ordering uses `price: asc` — the field only matters in admin form ordering. Confirm intent.
 - The `compareAtPrice` display fallback chain (live promo base → manual column) is duplicated across 5 read sites (§16) — a drift hazard, not a bug.
 
 ---
@@ -391,7 +388,7 @@ The physical café's digital menu. **Deliberately sealed** from commerce: items 
 4. Every write → `revalidatePath("/menu")` + `"/admin/menu"` (read-your-own-writes inside the 1-hour ISR window).
 
 ### 9.5 Intersections & Blast Radius
-Only RBAC (admin gates). No other system reads these models. **Do not** confuse `MenuCategory` (café) with `Category` (catalog) or with the vestigial `MenuPage` — three different models.
+Only RBAC (admin gates). No other system reads these models. **Do not** confuse `MenuCategory` (café) with `Category` (catalog) — two different models.
 
 ### 9.6 Technical Debt & Vestigial Code
 - `isFixedPrice` consistency is *by construction* (bulk scaling + admin discipline), not by constraint — a direct item edit inside a fixed-price category can desync the grid price.
@@ -600,19 +597,18 @@ Read row → depends on column. ● = hard dependency (breaks), ○ = soft (degr
 | `a3421a5` | M-3 float drift | `placeOrder`: 4-point `roundMoney` enforcement (subtotal, fee, VAT, total) |
 | `ce9af23` | H-1 guest order spam | ≤ 3 PENDING orders per exact `customerPhone` |
 | `726134d` | M-4 homepage `revalidate = 0` · M-2 orders board 50-row cap | Homepage ISR 60; `getOrders` skip/take pagination + `AdminOrdersPagination` |
+| _(vestigial-code purge)_ | D-1 `MenuPage` vestigial model · D-8 dead `/forgot-password` link · `ProductVariant.sortOrder` unused | **Purged** the `MenuPage` model + `Product.menuPageId` relation/index, the `ProductVariant.sortOrder` column, all their validator/form/action code, and the dead login link. Variants now sort strictly by `price: asc` everywhere (incl. the admin promotions & edit-product reads). Requires a Prisma migration to drop the DB objects. |
 
 ### 18.2 Open ledger
 
 | # | Domain | Item | Class |
 |---|---|---|---|
-| D-1 | §3 | `MenuPage` model + `Product.menuPageId` + validator/form fields — no storefront reader | Vestigial model |
 | D-2 | §6 | `DeliveryLocation` enum + `Order.deliveryCity` — checkout no longer writes it; views still map it | Vestigial column |
 | D-3 | §13 | `updateTag("categories")` — tag registered nowhere | Dead code |
 | D-4 | §6 | `Order.pickupBranch` free text alongside authoritative `branchId` | Pending migration |
 | D-5 | §6/§15 | Money columns are `Float`; durable fix is `Decimal`/integer piastres | Pending migration |
 | D-6 | §6 | No `@@index([customerPhone, status])` backing the throttle count | Perf (future) |
 | D-7 | §6 | Phone numbers not normalized (throttle keys + search) | Correctness edge |
-| D-8 | §1 | Dead `/forgot-password` link on `LoginClient` (M-6) | UX/dead link |
 | D-9 | §6 | `placeOrder` catch returns `err.message` verbatim (Prisma leak potential) | Hardening |
 | D-10 | §6 | `/my-orders` unpaginated per-user `findMany` | Perf (minor) |
 | D-11 | §5 | DB cart distinct-line count unbounded via `syncCartItemAction` | Abuse edge |

@@ -19,14 +19,14 @@ export default async function EditProductPage({
 
   const { id } = await params;
 
-  // Product (with its variants) + the relational select options, in parallel.
-  const [product, categories, menuPages] = await Promise.all([
+  // Product (with its variants) + the category select options, in parallel.
+  const [product, categories] = await Promise.all([
     prisma.product.findUnique({
       where: { id },
       include: {
         category: { select: { id: true, name: true } },
         variants: {
-          orderBy: { sortOrder: "asc" },
+          orderBy: { price: "asc" },
           select: {
             id: true,
             name: true,
@@ -40,10 +40,6 @@ export default async function EditProductPage({
     prisma.category.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true },
-    }),
-    prisma.menuPage.findMany({
-      orderBy: { title: "asc" },
-      select: { id: true, title: true },
     }),
   ]);
 
@@ -77,12 +73,9 @@ export default async function EditProductPage({
           isAvailable: product.isAvailable,
           isFeatured: product.isFeatured,
           categoryId: product.categoryId,
-          menuPageId: product.menuPageId,
           variants: product.variants,
         }}
         categories={categories}
-        // MenuPage exposes `title`; normalise to the form's { id, name } shape.
-        menuPages={menuPages.map((m) => ({ id: m.id, name: m.title }))}
       />
     </div>
   );

@@ -69,7 +69,7 @@ export default async function AdminPromotionsPage() {
         id: true,
         name: true,
         variants: {
-          orderBy: { sortOrder: "asc" },
+          orderBy: { price: "asc" },
           select: { id: true, name: true, price: true },
         },
       },

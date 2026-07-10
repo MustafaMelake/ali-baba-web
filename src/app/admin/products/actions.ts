@@ -93,15 +93,14 @@ export async function updateProduct(
           description: data.description?.trim() || null,
           images: data.images,
           categoryId: data.categoryId,
-          menuPageId: data.menuPageId,
           isAvailable: data.isAvailable,
           isFeatured: data.isFeatured,
         },
       });
 
-      // Upsert kept variants (update) and create new ones; sortOrder follows
-      // the on-screen ordering.
-      for (const [index, v] of data.variants.entries()) {
+      // Upsert kept variants (update) and create new ones. Storefront ordering
+      // is dynamic (price asc), so no manual ordering is persisted.
+      for (const v of data.variants) {
         const sku = v.sku?.trim() || null;
         // Coalesce undefined/empty to an explicit null so ending a promotion
         // (clearing the field) actually wipes a legacy discount in the DB.
@@ -109,11 +108,11 @@ export async function updateProduct(
         if (v.id && keptIds.has(v.id)) {
           await tx.productVariant.update({
             where: { id: v.id },
-            data: { name: v.name, price: v.price, compareAtPrice, sku, sortOrder: index },
+            data: { name: v.name, price: v.price, compareAtPrice, sku },
           });
         } else {
           await tx.productVariant.create({
-            data: { productId: id, name: v.name, price: v.price, compareAtPrice, sku, sortOrder: index },
+            data: { productId: id, name: v.name, price: v.price, compareAtPrice, sku },
           });
         }
       }
@@ -238,15 +237,13 @@ export async function createProduct(
         description: data.description?.trim() || null,
         images: data.images,
         categoryId: data.categoryId,
-        menuPageId: data.menuPageId,
         variants: {
-          create: data.variants.map((v, index) => ({
+          create: data.variants.map((v) => ({
             name: v.name,
             price: v.price,
             // Empty/omitted → explicit null (no discount).
             compareAtPrice: v.compareAtPrice ?? null,
             sku: v.sku?.trim() || null,
-            sortOrder: index,
           })),
         },
       },

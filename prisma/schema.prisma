@@ -168,11 +168,10 @@ model Branch {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Product organization (matrix structure)
+// Product organization
 //
 //   Category  → the product's *classification*        (Modern, Croissant, …)
-//   MenuPage  → the UI page/section it is shown on     (a digital-menu page)
-//   Product   → relates to BOTH a Category and a MenuPage
+//   Product   → relates to a Category
 //   Variant   → the purchasable unit + its price       (Scoop, Litre, Pieces)
 //
 // Prices live ONLY on ProductVariant; carts & orders reference a variant id so
@@ -208,20 +207,6 @@ model Category {
   @@index([isFeatured, sliderOrder])
 }
 
-model MenuPage {
-  id          String       @id @default(cuid())
-  title       String
-  slug        String       @unique
-  description String?
-  /// Optional unified starting price for the page (when variants aren't itemised).
-  basePrice   Float?
-  isActive    Boolean  @default(true)
-  sortOrder   Int      @default(0)
-  products    Product[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
 model Product {
   id          String   @id @default(cuid())
   name        String
@@ -236,15 +221,6 @@ model Product {
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
-  // Presentation (which menu page it appears on) — OPTIONAL.
-  // No storefront surface reads MenuPage today, so a product may exist without
-  // one (admins are no longer forced to pick). onDelete: SetNull (was Restrict)
-  // so a MenuPage can be retired without being blocked by attached products —
-  // the link simply clears. Migrating this relation out entirely is the eventual
-  // follow-up; nullable is the safe, reversible first step.
-  menuPageId String?
-  menuPage   MenuPage? @relation(fields: [menuPageId], references: [id], onDelete: SetNull)
-
   variants ProductVariant[]
   reviews  Review[]
 
@@ -257,7 +233,6 @@ model Product {
 
   @@index([slug])
   @@index([categoryId])
-  @@index([menuPageId])
 }
 
 model ProductVariant {
@@ -271,7 +246,6 @@ model ProductVariant {
   /// Optional strikethrough / original price for promotions.
   compareAtPrice Float?
   isAvailable    Boolean @default(true)
-  sortOrder      Int     @default(0)
 
   cartItems  CartItem[]
   orderItems OrderItem[]

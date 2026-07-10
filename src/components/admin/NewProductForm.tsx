@@ -65,10 +65,8 @@ function newVariantRow(): VariantRow {
 
 export default function NewProductForm({
   categories,
-  menuPages,
 }: {
   categories: SelectOption[];
-  menuPages: SelectOption[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -79,8 +77,6 @@ export default function NewProductForm({
   const [slugEdited, setSlugEdited] = useState(false);
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "");
-  // Optional — defaults to "None" (empty). MenuPage no longer gates a product.
-  const [menuPageId, setMenuPageId] = useState("");
   const [images, setImages] = useState<string[]>([]);
 
   // ── Dynamic Variants State ──────────────────────────────
@@ -90,7 +86,6 @@ export default function NewProductForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Only a category is mandatory now — a product can ship without a MenuPage.
   const canSubmit = categories.length > 0;
 
   function handleNameChange(value: string) {
@@ -124,7 +119,6 @@ export default function NewProductForm({
       slug,
       description,
       categoryId,
-      menuPageId,
       images,
       // بنعمل خريطة (Map) لكل الـ variants عشان تتبعت كـ Array للسيرفر
       variants: variants.map((v) => ({
@@ -248,22 +242,6 @@ export default function NewProductForm({
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Menu Page (optional)" htmlFor="menuPageId">
-            <select
-              id="menuPageId"
-              value={menuPageId}
-              onChange={(e) => setMenuPageId(e.target.value)}
-              className={inputClasses}
-            >
-              <option value="">None</option>
-              {menuPages.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
                 </option>
               ))}
             </select>

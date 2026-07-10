@@ -59,12 +59,6 @@ export const productInputSchema = z.object({
     .regex(slugRegex, "Use lowercase letters, numbers and hyphens only"),
   description: optionalText(2000),
   categoryId: z.string().min(1, "Select a category"),
-  // Optional — MenuPage is decoupled from the storefront. "" (no selection)
-  // and undefined both normalize to null for the DB.
-  menuPageId: z
-    .string()
-    .optional()
-    .transform((v) => v?.trim() || null),
   images: z.array(z.string()).default([]),
   variants: z.array(variantInputSchema).min(1, "Add at least one variant"),
 });
@@ -86,11 +80,6 @@ export const productUpdateSchema = z.object({
     .regex(slugRegex, "Use lowercase letters, numbers and hyphens only"),
   description: optionalText(2000),
   categoryId: z.string().min(1, "Select a category"),
-  // Optional — see productInputSchema. "" / undefined normalize to null.
-  menuPageId: z
-    .string()
-    .optional()
-    .transform((v) => v?.trim() || null),
   images: z.array(z.string()).default([]),
   isAvailable: z.boolean(),
   isFeatured: z.boolean(),
