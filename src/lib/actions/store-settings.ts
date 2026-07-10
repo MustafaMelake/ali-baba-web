@@ -15,7 +15,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/session";
+import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
 import {
   getStoreSettings,
   STORE_SETTINGS_ID,
@@ -32,25 +32,6 @@ export type SettingsActionResult =
 const MAX_FEE = 10_000;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** ADMIN-only gate that returns a standard error object instead of throwing. */
-async function ensureAdmin(): Promise<{ error: string } | null> {
-  try {
-    await requireAdmin();
-    return null;
-  } catch {
-    return { error: "Unauthorized: admin access required." };
-  }
-}
-
-/** Reads a Prisma known-request error code without importing the error class. */
-function prismaErrorCode(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "code" in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
-}
 
 /** Validate a fee: a finite number in [0, MAX_FEE]. Returns null when invalid. */
 function parseFee(value: number): number | null {

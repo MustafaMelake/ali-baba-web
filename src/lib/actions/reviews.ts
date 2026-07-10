@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { getServerSession, requireAdmin } from "@/lib/session";
+import { prismaErrorCode } from "@/lib/action-utils";
 
 export type SubmitReviewResult =
   | { success: true; message: string }
@@ -35,14 +36,6 @@ const reviewSchema = z.object({
       .optional(),
   ),
 });
-
-function prismaErrorCode(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "code" in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
-}
 
 /**
  * Has the *current* user already reviewed this product?

@@ -13,6 +13,7 @@ import {
   roundMoney,
 } from "@/lib/discounts";
 import { getStoreSettings } from "@/lib/store-settings";
+import { prismaErrorCode } from "@/lib/action-utils";
 import { checkoutSchema } from "@/lib/validators";
 
 // التسعير الرسمي بيتقري من قاعدة البيانات وقت الطلب (مش ثوابت في الكود):
@@ -277,15 +278,6 @@ export async function placeOrder(
     console.error("placeOrder failed:", err);
     return { success: false, error: message };
   }
-}
-
-/** Reads a Prisma known-request error code without importing the error class. */
-function prismaErrorCode(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "code" in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
 }
 
 /**

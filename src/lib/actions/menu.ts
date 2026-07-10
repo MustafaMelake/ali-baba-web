@@ -3,19 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
+import { prismaErrorCode, slugify } from "@/lib/action-utils";
 
 /** The transactional client type, derived straight from `prisma.$transaction`. */
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
-function slugify(value: string) {
-  const base = value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  // Arabic / non-latin titles slugify to "" — fall back to a stable random token
-  // so the storefront scroll-spy always has a valid DOM anchor.
-  return base || `menu-${Math.random().toString(36).slice(2, 8)}`;
+/** Menu-specific wrapper over the shared slugify: Arabic / non-latin titles
+ *  slugify to "" — fall back to a stable random token so the storefront
+ *  scroll-spy always has a valid DOM anchor. */
+function menuSlug(value: string) {
+  return slugify(value) || `menu-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /** Appends `-2`, `-3`, … to `base` until the slug is free (or already owned by `excludeId`). */
@@ -30,14 +27,6 @@ async function ensureUniqueSlug(tx: Tx, base: string, excludeId?: string) {
     if (!existing || existing.id === excludeId) return candidate;
     candidate = `${base}-${suffix++}`;
   }
-}
-
-function prismaErrorCode(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "code" in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
 }
 
 function revalidateMenu() {
@@ -72,7 +61,7 @@ export async function createMenuCategory(
 
   try {
     const id = await prisma.$transaction(async (tx) => {
-      const slug = await ensureUniqueSlug(tx, slugify(title));
+      const slug = await ensureUniqueSlug(tx, menuSlug(title));
 
       // Append to the end when no explicit order is given.
       let order = input.order;
@@ -112,7 +101,7 @@ export async function updateMenuCategory(
 
   try {
     await prisma.$transaction(async (tx) => {
-      const slug = await ensureUniqueSlug(tx, slugify(title), input.id);
+      const slug = await ensureUniqueSlug(tx, menuSlug(title), input.id);
       const order =
         input.order != null && Number.isFinite(input.order)
           ? Math.trunc(input.order)

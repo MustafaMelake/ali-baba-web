@@ -23,7 +23,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/session";
+import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
 import { DiscountType } from "@/generated/prisma/enums";
 
 const VALID_TYPES = new Set<string>(Object.values(DiscountType));
@@ -51,25 +51,6 @@ export type PromotionActionResult =
   | { success: false; error: string };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** ADMIN-only gate that returns a standard error object instead of throwing. */
-async function ensureAdmin(): Promise<{ error: string } | null> {
-  try {
-    await requireAdmin();
-    return null;
-  } catch {
-    return { error: "Unauthorized: admin access required." };
-  }
-}
-
-/** Reads a Prisma known-request error code without importing the error class. */
-function prismaErrorCode(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "code" in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
-}
 
 type ValidatedPromotion = {
   name: string;

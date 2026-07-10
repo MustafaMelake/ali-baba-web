@@ -9,6 +9,7 @@ import {
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
 } from "@/lib/discounts";
+import { prismaErrorCode } from "@/lib/action-utils";
 import {
   CHECKOUT_MAX_ITEMS,
   CHECKOUT_MAX_QUANTITY,
@@ -68,15 +69,6 @@ const MAX_QUANTITY = CHECKOUT_MAX_QUANTITY;
 const MAX_MERGE_LINES = CHECKOUT_MAX_ITEMS;
 
 const PLACEHOLDER_IMAGE = "/placeholder.jpg";
-
-/** Reads a Prisma known-request error code without importing the error class. */
-function prismaErrorCode(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "code" in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
-}
 
 /** Clamp to a whole number in [0, MAX_QUANTITY]; non-finite input → 0. */
 function clampQuantity(quantity: number): number {

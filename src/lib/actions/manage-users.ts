@@ -12,7 +12,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/session";
+import { ensureAdminSession, prismaErrorCode } from "@/lib/action-utils";
 import { UserRole } from "@/generated/prisma/enums";
 
 export type UpdateUserRoleInput = {
@@ -28,30 +28,12 @@ export type UpdateUserRoleResult =
 
 const VALID_ROLES = new Set<string>(Object.values(UserRole));
 
-/** ADMIN-only gate that returns the session, or a standard error object. */
-async function ensureAdmin(): Promise<
-  { session: Awaited<ReturnType<typeof requireAdmin>> } | { error: string }
-> {
-  try {
-    return { session: await requireAdmin() };
-  } catch {
-    return { error: "Unauthorized: admin access required." };
-  }
-}
-
-/** Reads a Prisma known-request error code without importing the error class. */
-function prismaErrorCode(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "code" in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
-}
-
 export async function updateUserRole(
   input: UpdateUserRoleInput,
 ): Promise<UpdateUserRoleResult> {
-  const gate = await ensureAdmin();
+  // The session-returning gate variant — the self-demotion guard below needs
+  // the caller's own user id, not just an allowed/denied answer.
+  const gate = await ensureAdminSession();
   if ("error" in gate) return { success: false, error: gate.error };
 
   const { userId, role } = input;

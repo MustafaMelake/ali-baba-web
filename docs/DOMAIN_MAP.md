@@ -490,7 +490,6 @@ Footer: RSC read through the tagged cache → every settings write calls `update
 Catalog (slider fields), Promotions (badges), RBAC (settings gate). The footer's URL whitelist is a *security* control (stored-XSS-via-href) — do not relax it. The `(shop)` layout owns the single `<main>` and the navbar clearance padding; pages must not re-add `pt-16/20` (documented double-offset hazard).
 
 ### 13.6 Technical Debt & Vestigial Code
-- **Dead cache tag:** `src/lib/actions/categories.ts` calls `updateTag("categories")` in all three mutations, but **no cache registers that tag** (the footer's tag is `footer-links`). Dead invalidation — remove or wire a matching tagged cache.
 - Hero/OurStory/FeaturesBar copy is hardcoded (fine; noting the boundary between managed and static content).
 
 ---
@@ -501,19 +500,18 @@ Catalog (slider fields), Promotions (badges), RBAC (settings gate). The footer's
 Admin-only image ingestion into UploadThing's bucket. The database stores only URL strings (`Product.images String[]`, `Category.image String?`); persistence of those strings happens later through the catalog Server Actions, which re-gate independently.
 
 ### 14.2 Database Schema & Integrity
-No models. Referential integrity between DB URLs and bucket objects is **not** enforced anywhere.
+No models. Referential integrity between DB URLs and bucket objects is enforced **best-effort at mutation time**: product/category deletes and image-replacing updates purge the old bucket files via `UTApi` (`src/lib/uploadthing-server.ts` → `deleteUploadedFiles`), strictly post-commit so a failed purge can never roll back or fail the DB write (it only logs). There is no background reconciliation sweep.
 
 ### 14.3 File Boundaries
-`src/app/api/uploadthing/core.ts` — `requireAdminUploader(req)` middleware (server-side session read + `role !== "ADMIN"` ⇒ `UploadThingError`; this is *the real gate*, executed before any upload is admitted); routes `productImage` (≤ 4 MB × 4) and `categoryImage` (≤ 4 MB × 1); `src/app/api/uploadthing/route.ts`; `src/lib/uploadthing.ts` (typed client helpers). Consumers: `NewProductForm`, `EditProductForm`, category modals.
+`src/app/api/uploadthing/core.ts` — `requireAdminUploader(req)` middleware (server-side session read + `role !== "ADMIN"` ⇒ `UploadThingError`; this is *the real gate*, executed before any upload is admitted); routes `productImage` (≤ 4 MB × 4) and `categoryImage` (≤ 4 MB × 1); `src/app/api/uploadthing/route.ts`; `src/lib/uploadthing.ts` (typed client helpers); `src/lib/uploadthing-server.ts` (`UTApi` admin client + `deleteUploadedFiles` best-effort purge — extracts file keys from stored `…/f/<key>` URLs, silently skips `/public` paths). Consumers: `NewProductForm`, `EditProductForm`, category modals; purge callers: product + category delete/update actions.
 
 ### 14.4 Step-by-Step Data Flow
-Client widget → UploadThing → middleware authorizes per-request → file lands in bucket → `ufsUrl` returned via `onClientUploadComplete` → the URL enters the form state → persisted by `createProduct`/`updateProduct`/category actions.
+Client widget → UploadThing → middleware authorizes per-request → file lands in bucket → `ufsUrl` returned via `onClientUploadComplete` → the URL enters the form state → persisted by `createProduct`/`updateProduct`/category actions. On the way out: `deleteProduct`/`deleteCategory` capture the stored URLs **before** the row is deleted and purge them after the delete commits; `updateProduct`/`updateCategory` purge whichever images the save removed or replaced (all best-effort — a Restrict-blocked delete purges nothing, since the row keeps its media).
 
 ### 14.5 Intersections & Blast Radius
 RBAC (§2), Catalog (§3). MANAGERs cannot upload (ADMIN-only middleware) — consistent with catalog being ADMIN-only.
 
 ### 14.6 Technical Debt & Vestigial Code
-- **Orphaned media:** deleting a product/category (or replacing an image) never deletes the bucket file — storage grows monotonically. Candidate: cleanup pass or `onUploadComplete` registry.
 - `@uploadthing/react/styles.css` is deliberately **not** imported (it bundles a Tailwind-v3 reset that collapses the admin sidebar); widgets are styled via `appearance` props — do not "fix" this by importing it (documented in `admin/layout.tsx`).
 
 ---
@@ -527,22 +525,23 @@ The Prisma/Neon substrate plus the platform's shared coding idioms.
 - `src/lib/prisma.ts` — `PrismaClient` with **`@prisma/adapter-pg`** driver adapter; `dns.setDefaultResultOrder("ipv4first")` (Neon's hostname advertises AAAA + A; broken IPv6 routes caused intermittent `ETIMEDOUT` — IPv4-first removes that failure mode); hard-throws without `DATABASE_URL`; dev-mode `globalThis` memo prevents hot-reload connection leaks.
 - `prisma/schema.prisma` — generator `prisma-client` emitting to `src/generated/prisma` (checked in; imported as `@/generated/prisma/client` and `/enums`), datasource URL supplied by `prisma.config.ts`.
 - `src/lib/validators.ts` — the shared-schema pattern (plain module importable from both client components and `"use server"` files).
+- `src/lib/action-utils.ts` — the consolidated Server-Action helpers (`prismaErrorCode`, `ensureAdmin` / session-returning `ensureAdminSession`, `slugify`). A plain module (not `"use server"`) imported by every action file; **server-only** by dependency (the admin gates pull in the session reader).
 - Transaction discipline (Neon-aware): `placeOrder` is exactly two statements; `mergeCartAction` is bounded to ≤ 52 statements; menu/category slug loops run inside their transactions but iterate on unique-check misses only.
 
 ### 15.3 Recurring Idioms (audit once, then verify consistency)
 
 | Idiom | Copies | Locations |
 |---|---|---|
-| `prismaErrorCode(err)` local helper | ~10 | cart, orders, reviews, wishlist, promotions, manage-users, manage-branches, settings, menu, products/actions |
-| `ensureAdmin()` throw→envelope wrapper | 5 | promotions, manage-users, manage-branches, settings, store-settings |
-| `slugify()` | 3 | categories, menu (with random fallback), manage-branches |
-| Transactional `ensureUniqueSlug` suffix loop | 2 | categories, menu |
+| `prismaErrorCode(err)` | **1 — consolidated** | `src/lib/action-utils.ts`, imported by every action file (was ×11) |
+| `ensureAdmin()` throw→envelope gate | **1 — consolidated** | `src/lib/action-utils.ts` (+ session-returning `ensureAdminSession` for manage-users' self-demotion guard) — was ×5 |
+| `slugify()` | **1 — consolidated** | `src/lib/action-utils.ts` (was ×3 in actions); menu wraps it in a local `menuSlug` (random-token fallback for Arabic titles); the client-form copies (`NewProductForm`, `EditProductForm`, `BranchModal`) stay local by necessity — action-utils is server-only |
+| Transactional `ensureUniqueSlug` suffix loop | 2 | categories, menu (different models — kept per-domain) |
 | `{ success: true, … } \| { success: false, error }` envelopes | all actions | uniform except thrown-guard actions (categories, menu, reviews moderation, products) which *throw* on auth instead |
 | Single-`now`-per-request promo evaluation | 7 | every Discount Engine consumer |
 | `compareAtPrice` fallback chain (promo base → manual column) | 5 | shop, PDP, wishlist, `rePriceGuestCart`, category template |
 | P2002 `meta.target` sniffing for field-specific messages | 4 | products (×2), categories, manage-branches |
 
-**Consolidation is a known refactor** (single `lib/action-utils.ts`) — deferred deliberately; treat the duplication as a *consistency checklist*, not individual bugs.
+**The infra-idiom consolidation landed** (D-15 → §18.1): the top three rows now live in `src/lib/action-utils.ts`. The remaining rows are semantic patterns rather than copy-paste helpers and deliberately stay per-domain — treat them as a *consistency checklist*, not individual bugs.
 
 ---
 
@@ -560,7 +559,6 @@ The Prisma/Neon substrate plus the platform's shared coding idioms.
 | `/admin`, `/admin/orders`, `/admin/users` | `force-dynamic` | live | plus explicit `revalidatePath` from mutations |
 | `getServerSession` | React `cache()` | per-request | n/a |
 | Category page slug lookup | React `cache()` | per-request (dedupe with `generateMetadata`) | n/a |
-| ⚠️ tag `"categories"` | **registered nowhere** | — | `updateTag("categories")` in categories.ts is a dead call |
 
 ---
 
@@ -599,20 +597,18 @@ Read row → depends on column. ● = hard dependency (breaks), ○ = soft (degr
 | _(vestigial-code purge)_ | D-1 `MenuPage` vestigial model · D-8 dead `/forgot-password` link · `ProductVariant.sortOrder` unused | **Purged** the `MenuPage` model + `Product.menuPageId` relation/index, the `ProductVariant.sortOrder` column, all their validator/form/action code, and the dead login link. Variants now sort strictly by `price: asc` everywhere (incl. the admin promotions & edit-product reads). Requires a Prisma migration to drop the DB objects. |
 | _(Decimal + cart-cap + i18n + rule)_ | D-5 `Float` money columns · D-11 unbounded DB cart · D-17 hardcoded Arabic sublabels · §4.6 "implicit" overlap policy | Migrated all ten currency columns **`Float → Decimal`** (with `.toNumber()` serialization at every client-component boundary; `discounts.ts` accepts `number \| Decimal`; `vatRate` stays `Float`). Capped distinct DB-cart lines at 50 in `syncCartItemAction` (+ client rollback/toast via `CART_LIMIT_ERROR`). Removed the hardcoded `BRANCH_SUBLABELS` — checkout renders the unified `branch.name`. **Formalized** the "Cheapest Wins" promo rule in `discounts.ts`. The Decimal change requires a Prisma migration to `ALTER` the column types. |
 | _(dashboard/analytics remediation)_ | D-12 server-local TZ day-bucketing · D-13 revenue counted PENDING money · D-16 offset-pagination scale ceiling | Added `src/lib/timezone.ts` (DST-safe `Africa/Cairo` midnight/month → exact UTC instants; shared `STORE_TZ`) and rewired every dashboard window + chart bucket to Cairo calendar days, matching analytics' SQL `AT TIME ZONE` (analytics' month window + label are Cairo-pinned too). Revenue now **strictly counts `DELIVERED`** orders across the dashboard aggregates/chart, branch sales, star-of-month, and the top-products raw SQL (volume counters — today/yesterday, peak hours — deliberately unchanged). `getOrders` migrated from `skip/take` offset pagination to **id-cursor pagination**: compound `createdAt desc, id desc` order, sentinel `±(50+1)` take, `startCursor`/`endCursor` + `hasMore`/`hasPrevious`; pager + filters moved to a `cursor`/`dir` URL contract with stale-cursor recovery. |
+| _(infra consolidation + storage hygiene)_ | D-15 idiom duplication · D-14 orphaned UploadThing files · D-3 dead `updateTag("categories")` | Extracted `prismaErrorCode` (was ×11), `ensureAdmin` (was ×5; plus the session-returning `ensureAdminSession` variant manage-users needs) and `slugify` (was ×3) into **`src/lib/action-utils.ts`** — every `src/lib/actions/*` file and `app/admin/products/actions.ts` now imports the single copy (menu keeps its random-token slug fallback as a thin `menuSlug` wrapper; client-form slugify copies stay, the util is server-only). Added **`src/lib/uploadthing-server.ts`** (`UTApi` + `deleteUploadedFiles`): product/category deletes capture stored URLs pre-delete and purge post-commit; image-replacing updates purge the removed/replaced files — all best-effort, never failing the DB write. Removed the dead `updateTag("categories")` calls from all three category mutations (tag registered nowhere; the footer's `footer-links` tag is untouched). |
 
 ### 18.2 Open ledger
 
 | # | Domain | Item | Class |
 |---|---|---|---|
 | D-2 | §6 | `DeliveryLocation` enum + `Order.deliveryCity` — checkout no longer writes it; views still map it | Vestigial column |
-| D-3 | §13 | `updateTag("categories")` — tag registered nowhere | Dead code |
 | D-4 | §6 | `Order.pickupBranch` free text alongside authoritative `branchId` | Pending migration |
 | D-6 | §6 | No `@@index([customerPhone, status])` backing the throttle count | Perf (future) |
 | D-7 | §6 | Phone numbers not normalized (throttle keys + search) | Correctness edge |
 | D-9 | §6 | `placeOrder` catch returns `err.message` verbatim (Prisma leak potential) | Hardening |
 | D-10 | §6 | `/my-orders` unpaginated per-user `findMany` | Perf (minor) |
-| D-14 | §14 | Orphaned UploadThing bucket files on delete/replace | Storage hygiene |
-| D-15 | §15 | Idiom duplication (`prismaErrorCode` ×10, `ensureAdmin` ×5, `slugify` ×3) | Refactor |
 | D-18 | §1 | `emailVerified` present but unused; no verification flow | Feature gap |
 
 ---

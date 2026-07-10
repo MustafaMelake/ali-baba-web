@@ -3,20 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
+import { prismaErrorCode } from "@/lib/action-utils";
+import { deleteUploadedFiles } from "@/lib/uploadthing-server";
 import {
   productInputSchema,
   productUpdateSchema,
   type ProductInput,
   type ProductUpdateInput,
 } from "@/lib/validators";
-
-function prismaErrorCode(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "code" in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
-}
 
 export type CreateProductResult =
   | { success: true; productId: string }
@@ -58,7 +52,9 @@ export async function updateProduct(
 
   const existing = await prisma.product.findUnique({
     where: { id },
-    select: { id: true, slug: true, variants: { select: { id: true } } },
+    // `images` captured too: after the update commits, files the admin removed
+    // are unreferenced and get purged from the UploadThing bucket below.
+    select: { id: true, slug: true, images: true, variants: { select: { id: true } } },
   });
   if (!existing) {
     return { success: false, error: "That product no longer exists." };
@@ -155,6 +151,13 @@ export async function updateProduct(
     }
   }
 
+  // Best-effort bucket hygiene (post-commit, mirrors the variant cleanup):
+  // images the admin removed from the product are unreferenced now — purge
+  // them from UploadThing so replaced media can't pile up in the bucket.
+  const keptImages = new Set(data.images);
+  const removedImages = existing.images.filter((url) => !keptImages.has(url));
+  if (removedImages.length > 0) await deleteUploadedFiles(removedImages);
+
   revalidatePath("/admin/products");
   revalidatePath("/shop");
   revalidatePath("/"); // featured products surface on the homepage
@@ -180,8 +183,22 @@ export async function deleteProduct(id: string): Promise<DeleteProductResult> {
   await requireAdmin();
   if (!id) return { success: false, error: "Missing product id." };
 
+  // Images captured BEFORE the delete — once the row is gone nothing points at
+  // the bucket files any more. They are purged only after the delete succeeds:
+  // a Restrict-blocked (ordered) product keeps its row and must keep its media.
+  const existing = await prisma.product.findUnique({
+    where: { id },
+    select: { images: true },
+  });
+  if (!existing) {
+    return { success: false, error: "That product no longer exists." };
+  }
+
   try {
     await prisma.product.delete({ where: { id } });
+
+    // Best-effort bucket hygiene (post-commit, never fails the action).
+    await deleteUploadedFiles(existing.images);
 
     revalidatePath("/admin/products");
     revalidatePath("/shop");
@@ -189,10 +206,7 @@ export async function deleteProduct(id: string): Promise<DeleteProductResult> {
 
     return { success: true };
   } catch (err) {
-    const code =
-      typeof err === "object" && err !== null && "code" in err
-        ? (err as { code?: unknown }).code
-        : undefined;
+    const code = prismaErrorCode(err);
 
     if (code === "P2003") {
       return {
@@ -258,12 +272,7 @@ export async function createProduct(
     return { success: true, productId: product.id };
   } catch (err) {
     // P2002 = unique constraint violation (slug or sku already taken).
-    if (
-      typeof err === "object" &&
-      err !== null &&
-      "code" in err &&
-      (err as { code?: unknown }).code === "P2002"
-    ) {
+    if (prismaErrorCode(err) === "P2002") {
       const target = (err as { meta?: { target?: unknown } }).meta?.target;
       const onSku = Array.isArray(target) && target.some((t) => String(t).includes("sku"));
       return {

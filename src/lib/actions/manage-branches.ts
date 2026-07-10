@@ -17,7 +17,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/session";
+import { ensureAdmin, prismaErrorCode, slugify } from "@/lib/action-utils";
 
 export type CreateBranchResult =
   | { success: true; id: string }
@@ -28,33 +28,6 @@ export type BranchActionResult =
   | { success: false; error: string };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** ADMIN-only gate that returns a standard error object instead of throwing. */
-async function ensureAdmin(): Promise<{ error: string } | null> {
-  try {
-    await requireAdmin();
-    return null;
-  } catch {
-    return { error: "Unauthorized: admin access required." };
-  }
-}
-
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-/** Reads a Prisma known-request error code without importing the error class. */
-function prismaErrorCode(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "code" in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
-}
 
 /** Maps a Prisma unique-constraint violation to a message, or `null` otherwise. */
 function uniqueViolationMessage(err: unknown): string | null {

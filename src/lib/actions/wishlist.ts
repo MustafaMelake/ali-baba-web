@@ -10,6 +10,7 @@ import {
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
 } from "@/lib/discounts";
+import { prismaErrorCode } from "@/lib/action-utils";
 
 export type ToggleWishlistResult =
   | { success: true; added: boolean }
@@ -30,15 +31,6 @@ export type WishlistProduct = {
 export type GetWishlistResult =
   | { success: true; data: WishlistProduct[] }
   | { success: false; error: string };
-
-/** Reads a Prisma known-request error code without importing the error class. */
-function prismaErrorCode(err: unknown): string | undefined {
-  if (typeof err === "object" && err !== null && "code" in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
-}
 
 /**
  * تبديل حالة المنتج في المفضلة: لو موجود يتشال، لو مش موجود يتضاف.

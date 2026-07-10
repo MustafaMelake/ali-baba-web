@@ -1,19 +1,13 @@
 "use server";
 
-import { revalidatePath, updateTag } from "next/cache";
+import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
+import { prismaErrorCode, slugify } from "@/lib/action-utils";
+import { deleteUploadedFiles } from "@/lib/uploadthing-server";
 
 /** The transactional client type, derived straight from `prisma.$transaction`. */
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
-
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
 
 /** Appends `-2`, `-3`, … to `base` until the slug is free (or already owned by `excludeId`). */
 async function ensureUniqueSlug(tx: Tx, base: string, excludeId?: string) {
@@ -38,14 +32,7 @@ function sanitizeSliderOrder(value: number | null | undefined): number {
 
 /** Maps a Prisma unique-constraint violation to a user-facing message, or `null` if it's something else. */
 function uniqueViolationMessage(err: unknown): string | null {
-  if (
-    typeof err !== "object" ||
-    err === null ||
-    !("code" in err) ||
-    (err as { code?: unknown }).code !== "P2002"
-  ) {
-    return null;
-  }
+  if (prismaErrorCode(err) !== "P2002") return null;
   const target = (err as { meta?: { target?: unknown } }).meta?.target;
   const on = (field: string) => Array.isArray(target) && target.some((t) => String(t).includes(field));
   if (on("name")) return "A category with this name already exists.";
@@ -105,7 +92,6 @@ export async function createCategory(
 
     revalidatePath("/"); // homepage CategorySlider
     revalidatePath("/admin/categories");
-    updateTag("categories"); // purge the tagged Footer cache (read-your-own-writes)
 
     return { success: true, id };
   } catch (err) {
@@ -157,26 +143,36 @@ export async function updateCategory(
   const sliderOrder = sanitizeSliderOrder(input.sliderOrder);
 
   try {
+    // Old image captured BEFORE the write, so a replaced/cleared file can be
+    // purged from the bucket once the update commits.
+    const before = await prisma.category.findUnique({
+      where: { id: input.id },
+      select: { image: true },
+    });
+
     const { slug } = await prisma.category.update({
       where: { id: input.id },
       data: { name, subtitle, image, isFeatured, sliderOrder },
       select: { slug: true },
     });
 
+    // Best-effort bucket hygiene (post-commit, never fails the action): the
+    // previous image is unreferenced once it was replaced or cleared.
+    if (before?.image && before.image !== image) {
+      await deleteUploadedFiles([before.image]);
+    }
+
     revalidatePath("/"); // homepage CategorySlider
     revalidatePath("/admin/categories");
     revalidatePath(`/category/${slug}`);
-    updateTag("categories"); // purge the tagged Footer cache (read-your-own-writes)
 
     return { success: true };
   } catch (err) {
     const message = uniqueViolationMessage(err);
     if (message) return { success: false, error: message };
 
-    if (typeof err === "object" && err !== null && "code" in err) {
-      if ((err as { code?: unknown }).code === "P2025") {
-        return { success: false, error: "That category no longer exists." };
-      }
+    if (prismaErrorCode(err) === "P2025") {
+      return { success: false, error: "That category no longer exists." };
     }
 
     console.error("updateCategory failed:", err);
@@ -214,23 +210,31 @@ export async function deleteCategory(id: string): Promise<DeleteCategoryResult> 
   }
 
   try {
+    // Image captured BEFORE the delete — nothing references it afterwards.
+    // Purged only after the delete succeeds (a Restrict-blocked category
+    // keeps its row, so it must keep its media too).
+    const existing = await prisma.category.findUnique({
+      where: { id },
+      select: { image: true },
+    });
+
     await prisma.category.delete({ where: { id } });
+
+    // Best-effort bucket hygiene (post-commit, never fails the action).
+    if (existing?.image) await deleteUploadedFiles([existing.image]);
 
     revalidatePath("/"); // homepage CategorySlider
     revalidatePath("/admin/categories");
-    updateTag("categories"); // purge the tagged Footer cache (read-your-own-writes)
 
     return { success: true };
   } catch (err) {
-    if (typeof err === "object" && err !== null && "code" in err) {
-      const code = (err as { code?: unknown }).code;
-      if (code === "P2025") return { success: false, error: "That category no longer exists." };
-      if (code === "P2003") {
-        return {
-          success: false,
-          error: "Cannot delete — products were just added to this category. Reassign them first.",
-        };
-      }
+    const code = prismaErrorCode(err);
+    if (code === "P2025") return { success: false, error: "That category no longer exists." };
+    if (code === "P2003") {
+      return {
+        success: false,
+        error: "Cannot delete — products were just added to this category. Reassign them first.",
+      };
     }
 
     console.error("deleteCategory failed:", err);
