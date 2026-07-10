@@ -23,22 +23,11 @@ import {
 import { OrderStatus } from "@/generated/prisma/enums";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatDate, formatDateTime } from "@/lib/utils";
+import { storeDayKey, storeDayParts, storeMidnight } from "@/lib/timezone";
 import type { AdminOrderView } from "@/components/admin/order-types";
 import type { TabValue } from "@/components/admin/AdminOrderFilters";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const CHART_DAYS = 30;
-
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-/** Local calendar-day key for bucketing orders into days. */
-function dayKey(d: Date) {
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-}
 
 export type RevenuePoint = { date: string; revenue: number };
 
@@ -80,16 +69,21 @@ export async function getDashboardStats(
   // `{}` (when branchId is undefined) = unrestricted, i.e. an ADMIN seeing all.
   const branchWhere: Prisma.OrderWhereInput = branchId ? { branchId } : {};
 
-  // ── Time windows ──────────────────────────────────────────────
+  // ── Time windows — Africa/Cairo calendar days, as exact UTC instants ──
+  // Never the server's local midnight: the deployment region must not decide
+  // when "today" starts. storeMidnight does DST-safe calendar arithmetic and
+  // matches the raw-SQL `AT TIME ZONE` bucketing in analytics.ts.
   const now = new Date();
-  const todayStart = startOfDay(now);
-  const yesterdayStart = new Date(todayStart.getTime() - DAY_MS);
-  const last30Start = new Date(todayStart.getTime() - (CHART_DAYS - 1) * DAY_MS);
-  const prev30Start = new Date(last30Start.getTime() - CHART_DAYS * DAY_MS);
+  const todayStart = storeMidnight(0, now);
+  const yesterdayStart = storeMidnight(1, now);
+  const last30Start = storeMidnight(CHART_DAYS - 1, now);
+  const prev30Start = storeMidnight(CHART_DAYS * 2 - 1, now);
 
-  // Revenue counts every order that wasn't cancelled.
-  const notCancelled: Prisma.OrderWhereInput = {
-    status: { not: OrderStatus.CANCELLED },
+  // REVENUE business rule (formalized): money strictly counts DELIVERED
+  // orders — unconfirmed PENDING/PREPARING/SHIPPED cash is never reported as
+  // revenue. Order-VOLUME counters (today/yesterday) stay status-agnostic.
+  const deliveredOnly: Prisma.OrderWhereInput = {
+    status: OrderStatus.DELIVERED,
   };
 
   const [
@@ -108,17 +102,17 @@ export async function getDashboardStats(
   ] = await Promise.all([
     prisma.order.aggregate({
       _sum: { totalAmount: true },
-      where: { ...branchWhere, ...notCancelled },
+      where: { ...branchWhere, ...deliveredOnly },
     }),
     prisma.order.aggregate({
       _sum: { totalAmount: true },
-      where: { ...branchWhere, ...notCancelled, createdAt: { gte: last30Start } },
+      where: { ...branchWhere, ...deliveredOnly, createdAt: { gte: last30Start } },
     }),
     prisma.order.aggregate({
       _sum: { totalAmount: true },
       where: {
         ...branchWhere,
-        ...notCancelled,
+        ...deliveredOnly,
         createdAt: { gte: prev30Start, lt: last30Start },
       },
     }),
@@ -147,7 +141,7 @@ export async function getDashboardStats(
       },
     }),
     prisma.order.findMany({
-      where: { ...branchWhere, ...notCancelled, createdAt: { gte: last30Start } },
+      where: { ...branchWhere, ...deliveredOnly, createdAt: { gte: last30Start } },
       select: { createdAt: true, totalAmount: true },
     }),
     // Resolve the branch name for the UI label (only when scoped to one branch).
@@ -156,17 +150,26 @@ export async function getDashboardStats(
       : Promise.resolve(null),
   ]);
 
-  // ── Chart series: revenue bucketed into the last 30 calendar days ──
-  const labelFmt = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short" });
+  // ── Chart series: revenue bucketed into the last 30 CAIRO calendar days ──
+  // Buckets are built in calendar space (DST-free) and each order is keyed by
+  // its createdAt's Cairo day, so a 23h/25h DST day can never split or merge a
+  // bucket. Carrier dates are UTC-midnight encodings of Cairo calendar days —
+  // formatted with timeZone "UTC" so the label always matches the key.
+  const labelFmt = new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    timeZone: "UTC",
+  });
+  const { year, month, day } = storeDayParts(now);
   const indexByKey = new Map<string, number>();
   const chartData: RevenuePoint[] = [];
   for (let i = 0; i < CHART_DAYS; i++) {
-    const d = new Date(last30Start.getTime() + i * DAY_MS);
-    indexByKey.set(dayKey(d), i);
-    chartData.push({ date: labelFmt.format(d), revenue: 0 });
+    const carrier = new Date(Date.UTC(year, month - 1, day - (CHART_DAYS - 1 - i)));
+    indexByKey.set(carrier.toISOString().slice(0, 10), i);
+    chartData.push({ date: labelFmt.format(carrier), revenue: 0 });
   }
   for (const order of chartOrders) {
-    const idx = indexByKey.get(dayKey(order.createdAt));
+    const idx = indexByKey.get(storeDayKey(order.createdAt));
     // totalAmount is a Decimal money column — coerce before summing.
     if (idx != null) chartData[idx].revenue += order.totalAmount.toNumber();
   }
@@ -204,29 +207,42 @@ export type GetOrdersParams = {
   /** Omit / undefined = all statuses. */
   status?: OrderStatus;
   query?: string;
-  /** 1-based page into the filtered list. Omitted/invalid values → page 1. */
-  page?: number;
+  /**
+   * Order id to continue from (exclusive) — the previous payload's `endCursor`
+   * (walking next/older) or `startCursor` (walking prev/newer). Omit for the
+   * newest (first) page.
+   */
+  cursor?: string;
+  /** "next" walks toward OLDER orders, "prev" back toward newer. Default "next". */
+  direction?: "next" | "prev";
 };
 
 export type GetOrdersResult = {
   orders: AdminOrderView[];
   counts: Record<TabValue, number>;
-  /** The (clamped) 1-based page this result actually represents. */
-  page: number;
   pageSize: number;
   /** Total rows matching the ACTIVE filter (status + search + branch scope). */
   total: number;
-  /** True when a later page exists — drives the "Next" button. */
+  /** True when OLDER orders exist beyond this page — drives "Next". */
   hasMore: boolean;
+  /** True when NEWER orders exist before this page — drives "Previous". */
+  hasPrevious: boolean;
+  /** First row's id — pass as `cursor` with direction "prev". Null on an empty page. */
+  startCursor: string | null;
+  /** Last row's id — pass as `cursor` with direction "next". Null on an empty page. */
+  endCursor: string | null;
 };
 
 /**
  * Branch-scoped orders list + per-status counters for the admin orders board.
  * Same search/filter behaviour as before, with the caller's branch ANDed into
  * every query so a MANAGER physically cannot read another branch's orders.
- * The list is paginated (ORDERS_PAGE_SIZE per page, newest first); the total
- * for the active filter falls out of the same groupBy that feeds the tab
- * counters, so pagination adds no extra query.
+ * The list is CURSOR-paginated (newest first, ORDERS_PAGE_SIZE per page): the
+ * client passes a row id back as `cursor` — the last row's id to walk older
+ * orders ("next"), or the first row's id with direction "prev" to walk back.
+ * There is no offset `skip`, so the cost of fetching a page is independent of
+ * how deep it sits in the list. The active filter's total still falls out of
+ * the same groupBy that feeds the tab counters — pagination adds no query.
  */
 export async function getOrders(
   params?: GetOrdersParams,
@@ -235,10 +251,11 @@ export async function getOrders(
   const branchId = resolveBranchScope(scope, params?.branchId);
   const branchWhere: Prisma.OrderWhereInput = branchId ? { branchId } : {};
 
-  // Defensive clamp: NaN, floats and non-positives from a hand-edited URL all
-  // collapse to page 1 (the caller pre-parses, but never trust the caller).
-  const rawPage = Number(params?.page);
-  const page = Number.isFinite(rawPage) ? Math.max(1, Math.trunc(rawPage)) : 1;
+  // Cursor state. An unknown direction collapses to "next"; a blank cursor to
+  // the first page ("prev" without a cursor is meaningless → first page too).
+  const direction: "next" | "prev" =
+    params?.direction === "prev" ? "prev" : "next";
+  const cursorId = params?.cursor?.trim() || undefined;
 
   const q = params?.query?.trim() ?? "";
 
@@ -273,12 +290,25 @@ export async function getOrders(
     ...(params?.status ? { status: params.status } : {}),
   };
 
-  const [orders, grouped] = await Promise.all([
+  // One sentinel row past the page detects whether the walk can continue. A
+  // NEGATIVE take fetches the rows BEFORE the cursor (Prisma walks backwards
+  // from its position) while preserving the orderBy order — that is the whole
+  // "prev" mechanism; there is no offset arithmetic in either direction.
+  const take =
+    (ORDERS_PAGE_SIZE + 1) * (direction === "prev" && cursorId ? -1 : 1);
+
+  const [rows, grouped] = await Promise.all([
     prisma.order.findMany({
       where: listWhere,
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * ORDERS_PAGE_SIZE,
-      take: ORDERS_PAGE_SIZE,
+      // Deterministic compound order: `id` breaks createdAt ties, so every row
+      // is a unique cursor position and same-timestamp rows can never be
+      // skipped or repeated across page boundaries.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      // skip: 1 excludes the cursor row itself — the client already has it.
+      // A cursor whose row no longer exists yields an empty page; the pager's
+      // "Previous" recovers to the canonical first page in that case.
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take,
       include: {
         user: { select: { email: true } },
         branch: { select: { name: true } },
@@ -314,15 +344,33 @@ export async function getOrders(
     counts.ALL += g._count._all;
   }
 
-  // Pagination metadata for the ACTIVE filter, read off the counters above —
-  // the groupBy ignores the status filter by design (it feeds every tab), so
-  // the list's total is simply the active tab's counter.
+  // Total for the ACTIVE filter, read off the counters above — the groupBy
+  // ignores the status filter by design (it feeds every tab), so the list's
+  // total is simply the active tab's counter.
   const total = params?.status ? counts[params.status] : counts.ALL;
-  const hasMore = page * ORDERS_PAGE_SIZE < total;
+
+  // Trim the sentinel row and derive both edges' reachability.
+  let pageRows = rows;
+  let hasMore: boolean;
+  let hasPrevious: boolean;
+  if (take < 0) {
+    // Walking prev: the sentinel (when present) is the FIRST array element —
+    // the newest row beyond this page.
+    hasPrevious = rows.length > ORDERS_PAGE_SIZE;
+    if (hasPrevious) pageRows = rows.slice(1);
+    // We navigated back FROM the cursor row, so it (and everything older)
+    // still lies ahead of this page.
+    hasMore = true;
+  } else {
+    hasMore = rows.length > ORDERS_PAGE_SIZE;
+    if (hasMore) pageRows = rows.slice(0, ORDERS_PAGE_SIZE);
+    // Rows before this page exist exactly when we arrived here via a cursor.
+    hasPrevious = cursorId != null;
+  }
 
   // Serialize for the client table/drawer; VAT is the residual so receipts
   // reconcile to the canonical totalAmount.
-  const view: AdminOrderView[] = orders.map((order) => ({
+  const view: AdminOrderView[] = pageRows.map((order) => ({
     id: order.id,
     orderNumber: order.orderNumber,
     status: order.status,
@@ -362,9 +410,11 @@ export async function getOrders(
   return {
     orders: view,
     counts,
-    page,
     pageSize: ORDERS_PAGE_SIZE,
     total,
     hasMore,
+    hasPrevious,
+    startCursor: pageRows[0]?.id ?? null,
+    endCursor: pageRows[pageRows.length - 1]?.id ?? null,
   };
 }

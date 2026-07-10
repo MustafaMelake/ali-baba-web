@@ -5,65 +5,104 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 
 /**
- * Prev/Next pager for the admin orders board.
+ * Prev/Next CURSOR pager for the admin orders board.
  *
- * Mirrors AdminOrderFilters' URL-state pattern exactly: the 1-based `page`
- * search param is the single source of truth, pushed inside a transition so
- * the server-rendered table streams in without a hard reload. `page=1` is
- * normalised to NO param, keeping the canonical (first-page) URL clean and
- * shareable. Renders nothing when the filtered list fits on one page.
+ * Mirrors AdminOrderFilters' URL-state pattern: the `cursor` (an order id) and
+ * `dir` search params are the single source of truth, pushed inside a
+ * transition so the server-rendered table streams in without a hard reload.
+ *
+ *   Next     → cursor = endCursor of the page on screen, no `dir` (the default
+ *              direction walks toward older orders).
+ *   Previous → cursor = startCursor, dir = "prev" (walks back toward newer).
+ *
+ * The first page is the canonical param-less URL. On a stale-cursor EMPTY page
+ * (the cursor's row was deleted or no longer matches the filter) there are no
+ * row cursors to walk from, so "Previous" clears the cursor pair entirely —
+ * recovering to the first page. Renders nothing when the filtered list fits on
+ * a single page.
  */
 export default function AdminOrdersPagination({
-  page,
-  pageSize,
   total,
   shown,
   hasMore,
+  hasPrevious,
+  startCursor,
+  endCursor,
 }: {
-  /** The (server-clamped) 1-based page currently displayed. */
-  page: number;
-  pageSize: number;
   /** Total rows matching the active filter, across all pages. */
   total: number;
-  /** Rows actually rendered on THIS page (range label + empty-page case). */
+  /** Rows actually rendered on THIS page (caption + empty-page recovery). */
   shown: number;
+  /** Older orders exist beyond this page. */
   hasMore: boolean;
+  /** Newer orders exist before this page. */
+  hasPrevious: boolean;
+  /** First row's id, or null on an empty page. */
+  startCursor: string | null;
+  /** Last row's id, or null on an empty page. */
+  endCursor: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
 
-  // One page and we're on it → nothing to navigate; keep the board unchanged.
-  if (total <= pageSize && page <= 1) return null;
+  // Single page and nothing behind us → nothing to navigate; stay hidden.
+  // (A stale-cursor empty page always has one of the two flags set, so the
+  // recovery affordance below still renders.)
+  if (!hasMore && !hasPrevious) return null;
 
-  function goTo(nextPage: number) {
+  // A stale cursor can produce an EMPTY page — keep "Previous" usable there as
+  // the recovery path (with no startCursor it clears the cursor pair, landing
+  // on the canonical first page). "Next" needs a real row to walk from.
+  const canPrevious = hasPrevious || shown === 0;
+  const canNext = hasMore && endCursor != null;
+
+  function navigate(mutate: (params: URLSearchParams) => void) {
     const params = new URLSearchParams(searchParams.toString());
-    if (nextPage <= 1) params.delete("page");
-    else params.set("page", String(nextPage));
+    mutate(params);
     const qs = params.toString();
     startTransition(() =>
       router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false }),
     );
   }
 
-  const rangeStart = shown === 0 ? 0 : (page - 1) * pageSize + 1;
-  const rangeEnd = (page - 1) * pageSize + shown;
+  function goNext() {
+    if (!endCursor) return;
+    navigate((params) => {
+      params.set("cursor", endCursor);
+      params.delete("dir"); // "next" is the default direction
+    });
+  }
+
+  function goPrevious() {
+    navigate((params) => {
+      if (startCursor) {
+        params.set("cursor", startCursor);
+        params.set("dir", "prev");
+      } else {
+        // Empty page from a stale cursor — recover to the first page.
+        params.delete("cursor");
+        params.delete("dir");
+      }
+    });
+  }
 
   const buttonClass =
     "inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-4 py-2 font-sans text-[13px] font-medium text-stone-600 transition-colors hover:border-stone-400 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-stone-200 disabled:hover:text-stone-600";
 
   return (
     <div className="flex items-center justify-between gap-4">
-      {/* Range caption — also the recovery hint for an out-of-range page
-          (e.g. a stale bookmarked ?page= after orders were filtered away). */}
+      {/* Caption — cursor pages carry no absolute offset, so the label counts
+          this page against the filter total. Doubles as the recovery hint on
+          a stale-cursor empty page. */}
       <p
         aria-live="polite"
         className="font-sans text-xs tabular-nums text-stone-400"
       >
         {shown === 0
           ? `No orders on this page — ${total} match the current filter`
-          : `Showing ${rangeStart}–${rangeEnd} of ${total}`}
+          : `Showing ${shown} of ${total} orders`}
       </p>
 
       <div className="flex items-center gap-2">
@@ -72,8 +111,8 @@ export default function AdminOrdersPagination({
         )}
         <button
           type="button"
-          onClick={() => goTo(page - 1)}
-          disabled={page <= 1 || isPending}
+          onClick={goPrevious}
+          disabled={!canPrevious || isPending}
           className={buttonClass}
         >
           <ChevronLeft className="h-3.5 w-3.5" />
@@ -81,8 +120,8 @@ export default function AdminOrdersPagination({
         </button>
         <button
           type="button"
-          onClick={() => goTo(page + 1)}
-          disabled={!hasMore || isPending}
+          onClick={goNext}
+          disabled={!canNext || isPending}
           className={buttonClass}
         >
           Next

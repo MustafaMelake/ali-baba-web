@@ -14,8 +14,10 @@
 //   3. topProducts  — top-3 selling items per branch (by units sold).
 //   4. star         — best branch by revenue for the current calendar month.
 //
-// Cancelled orders are excluded from every revenue/volume figure, mirroring the
-// dashboard's `notCancelled` rule.
+// REVENUE figures (branch sales, star of the month, top products) strictly
+// count DELIVERED orders — the formalized business rule shared with the
+// dashboard: money that hasn't been delivered is never reported as revenue.
+// The volume-only peak-hours chart excludes just CANCELLED.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { prisma } from "@/lib/prisma";
@@ -23,9 +25,9 @@ import { requireAdmin } from "@/lib/session";
 import { OrderStatus } from "@/generated/prisma/enums";
 import type { Prisma } from "@/generated/prisma/client";
 import { branchColor } from "@/lib/analytics-palette";
-
-// All wall-clock bucketing (peak hours) is done in the store's local timezone.
-const STORE_TZ = "Africa/Cairo";
+// All wall-clock bucketing (peak hours, month windows) uses the shared store
+// timezone — the same constant dashboard.ts converts its day boundaries with.
+import { STORE_TZ, storeMonthStart } from "@/lib/timezone";
 
 // ── Public result shape ──────────────────────────────────────────────────────
 
@@ -109,21 +111,27 @@ function hourLabel(h: number): string {
 export async function getAnalytics(): Promise<AnalyticsData> {
   await requireAdmin();
 
-  // Revenue/volume never counts cancelled orders, and we only ever aggregate
-  // orders that are actually attached to a branch.
-  const scoped: Prisma.OrderWhereInput = {
+  // Every dataset aggregates only branch-attached orders. REVENUE datasets
+  // (branch sales, star of the month, top products) strictly count DELIVERED
+  // orders — the formalized business rule. The pure-VOLUME dataset (peak
+  // hours) keeps the broader not-CANCELLED filter in its raw SQL, since it
+  // measures activity, not money.
+  const revenueScoped: Prisma.OrderWhereInput = {
     branchId: { not: null },
-    status: { not: OrderStatus.CANCELLED },
+    status: OrderStatus.DELIVERED,
   };
 
   const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  // Cairo calendar month as an exact UTC instant — never the server's local
+  // month boundary (which drifts with the deployment region).
+  const monthStart = storeMonthStart(now);
   // Peak Hours only looks at recent activity so old test/seed data (e.g. odd
   // 2 AM spikes) can't distort the current customer-behaviour chart.
   const peakWindowStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const monthLabel = new Intl.DateTimeFormat("en-US", {
     month: "long",
     year: "numeric",
+    timeZone: STORE_TZ, // label the CAIRO month, matching monthStart above
   }).format(now);
 
   const [activeBranches, salesGrouped, monthGrouped, peakRows, topRows] =
@@ -135,23 +143,27 @@ export async function getAnalytics(): Promise<AnalyticsData> {
         orderBy: { name: "asc" },
       }),
 
-      // (1) All-time revenue + order count per branch.
+      // (1) All-time DELIVERED revenue + delivered-order count per branch.
+      // The count rides the same groupBy, so this chart's "orders" figure is
+      // delivered orders — consistent with the revenue beside it.
       prisma.order.groupBy({
         by: ["branchId"],
-        where: scoped,
+        where: revenueScoped,
         _sum: { totalAmount: true },
         _count: { _all: true },
       }),
 
-      // (4) This-month revenue + order count per branch (for "Star of the Month").
+      // (4) This-Cairo-month DELIVERED revenue + count ("Star of the Month").
       prisma.order.groupBy({
         by: ["branchId"],
-        where: { ...scoped, createdAt: { gte: monthStart } },
+        where: { ...revenueScoped, createdAt: { gte: monthStart } },
         _sum: { totalAmount: true },
         _count: { _all: true },
       }),
 
-      // (2) Orders bucketed by branch × hour-of-day, in store-local time. The
+      // (2) Orders bucketed by branch × hour-of-day, in store-local time.
+      // Pure VOLUME (not money) — deliberately keeps the broader
+      // not-CANCELLED filter; every active order counts as activity. The
       // createdAt column is a UTC `timestamp`; reinterpret it as UTC then convert
       // to Cairo wall-clock before extracting the hour. COUNT(*) is bigint, so we
       // cast everything to int4 to avoid BigInt serialization. Scoped to the last
@@ -167,9 +179,11 @@ export async function getAnalytics(): Promise<AnalyticsData> {
         GROUP BY "branchId", hour
       `,
 
-      // (3) Units sold + revenue per branch × product. We join OrderItem→Order to
-      // reach branchId (OrderItem has no branch of its own) and roll up in SQL,
-      // ordered so the top sellers land first; we slice top-3 per branch in JS.
+      // (3) Units sold + revenue per branch × product — DELIVERED orders only
+      // (this dataset reports money, so it follows the strict revenue rule).
+      // We join OrderItem→Order to reach branchId (OrderItem has no branch of
+      // its own) and roll up in SQL, ordered so the top sellers land first;
+      // we slice top-3 per branch in JS.
       prisma.$queryRaw<TopRow[]>`
         SELECT
           o."branchId"            AS "branchId",
@@ -178,7 +192,7 @@ export async function getAnalytics(): Promise<AnalyticsData> {
           SUM(oi."quantity" * oi."unitPrice")::float8 AS revenue
         FROM "OrderItem" oi
         JOIN "Order" o ON o."id" = oi."orderId"
-        WHERE o."branchId" IS NOT NULL AND o."status" <> 'CANCELLED'
+        WHERE o."branchId" IS NOT NULL AND o."status" = 'DELIVERED'
         GROUP BY o."branchId", oi."productName"
         ORDER BY quantity DESC
       `,
