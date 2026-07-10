@@ -17,10 +17,8 @@ import { useCartStore, type CartItem } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { placeOrder } from "@/lib/actions/orders";
 import { getActiveBranches } from "@/lib/actions/branches";
-import {
-  getPublicPricingSettings,
-  type PricingSettings,
-} from "@/lib/actions/store-settings";
+import { getPublicPricingSettings } from "@/lib/actions/store-settings";
+import type { PricingSettings } from "@/lib/store-settings";
 import { clearDbCartAction } from "@/lib/actions/cart";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
 import { checkoutSchema, fieldErrors } from "@/lib/validators";
@@ -507,21 +505,34 @@ export default function CheckoutPage() {
   // RBAC), and the summary previews the same numbers placeOrder will bill.
   useEffect(() => {
     let alive = true;
-    Promise.all([getActiveBranches(), getPublicPricingSettings()])
-      .then(([rows, settings]) => {
+
+    // Fetch the branches and the pricing INDEPENDENTLY — they're unrelated, and
+    // coupling them in one Promise.all means a single rejection discards BOTH
+    // results (a pricing failure would blank out the branch selector, and vice
+    // versa). Each degrades on its own now.
+    getActiveBranches()
+      .then((rows) => {
         if (!alive) return;
         // Branches render by their unified English `name` straight from the DB.
         setBranches(rows);
         setBranchId((cur) => cur || rows[0]?.id || "");
         setDeliveryAreaId((cur) => cur || rows[0]?.id || OTHER_AREAS_OPTION.id);
-        setPricing(settings);
       })
       .catch(() => {
         // Selector stays empty (pickup still works without a stored branch);
-        // totals degrade to the schema-default preview. Billing is unaffected —
+        // delivery falls back to the "Other Areas" option.
+      });
+
+    getPublicPricingSettings()
+      .then((settings) => {
+        if (alive) setPricing(settings);
+      })
+      .catch(() => {
+        // Totals degrade to the schema-default preview. Billing is unaffected —
         // placeOrder reads the real values from the DB.
         if (alive) setPricing(FALLBACK_PRICING);
       });
+
     return () => {
       alive = false;
     };

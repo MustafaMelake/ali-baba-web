@@ -7,8 +7,8 @@ import { toast } from "sonner";
 import {
   updateVatSettings,
   updateDeliveryFees,
-  type PricingSettings,
 } from "@/lib/actions/store-settings";
+import type { PricingSettings } from "@/lib/store-settings";
 import { cn } from "@/lib/utils";
 
 const inputClasses =

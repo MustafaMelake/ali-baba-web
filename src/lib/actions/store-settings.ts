@@ -22,7 +22,14 @@ import {
   type PricingSettings,
 } from "@/lib/store-settings";
 
-export type { PricingSettings };
+// NOTE: This is a `"use server"` module — it must export ONLY async functions.
+// Turbopack's flight loader registers every re-export *specifier* as a runtime
+// server reference, so a line like `export type { PricingSettings };` compiles
+// to `registerServerReference(PricingSettings, …)` and throws
+// `ReferenceError: PricingSettings is not defined` at module-eval (a type has
+// no runtime value), taking down `getPublicPricingSettings` with it. Consumers
+// import the type straight from its home, `@/lib/store-settings`, instead.
+// (Local `export type X = …` aliases like the one below are erased and are fine.)
 
 export type SettingsActionResult =
   | { success: true }
