@@ -103,10 +103,13 @@ export async function placeOrder(
     // fee for DELIVERY orders routed to this branch.
     let branch: { id: string; deliveryFee: number } | null = null;
     if (data.branchId) {
-      branch = await prisma.branch.findFirst({
+      const row = await prisma.branch.findFirst({
         where: { id: data.branchId, isActive: true },
         select: { id: true, deliveryFee: true },
       });
+      // deliveryFee is a Decimal column — normalize to a number so the rounding
+      // + summation below stay plain JS arithmetic.
+      if (row) branch = { id: row.id, deliveryFee: row.deliveryFee.toNumber() };
     }
     const branchId = branch?.id ?? null;
 

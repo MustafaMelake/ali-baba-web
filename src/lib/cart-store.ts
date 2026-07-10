@@ -4,6 +4,7 @@ import {
   persist,
   type StateStorage,
 } from "zustand/middleware";
+import { toast } from "sonner";
 import {
   mergeCartAction,
   syncCartItemAction,
@@ -11,7 +12,7 @@ import {
   rePriceGuestCart,
   type DbCartItem,
 } from "@/lib/actions/cart";
-import { CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
+import { CHECKOUT_MAX_QUANTITY, CART_LIMIT_ERROR } from "@/lib/validators";
 
 export interface CartItem {
   /**
@@ -163,8 +164,23 @@ export const useCartStore = create<CartState>()(
         void syncCartItemAction(variantId, quantity, actionType)
           .then((res) => {
             if (!res.success) {
-              // Op stays pending for the next hydrate/replay to reconcile.
               console.error("cart sync rejected:", res.error);
+              // Surface the rejection to the user (was silently swallowed).
+              toast.error(res.error);
+              // The DB distinct-item cap is a HARD rejection no replay can ever
+              // satisfy: roll the optimistic line back and drop its pending op
+              // so it doesn't linger and retry forever. Other (transient)
+              // failures keep their pending op for the next hydrate to reconcile.
+              if (res.error === CART_LIMIT_ERROR) {
+                set((s) => {
+                  const next = { ...s.pendingOps };
+                  delete next[variantId];
+                  return {
+                    items: s.items.filter((i) => i.variantId !== variantId),
+                    pendingOps: next,
+                  };
+                });
+              }
               return;
             }
             set((s) => {

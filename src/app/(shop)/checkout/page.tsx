@@ -38,19 +38,10 @@ const FALLBACK_PRICING: PricingSettings = {
   defaultDeliveryFee: 35,
 };
 
-// Arabic sublabels are presentational only (not stored on the Branch model),
-// keyed by branch slug. Seeded branches keep their bilingual label; any other
-// branch simply shows its name.
-const BRANCH_SUBLABELS: Record<string, string> = {
-  menouf: "فرع منوف",
-  beba: "بيبا كافيه",
-};
-
 type BranchOption = {
   id: string;
   slug: string;
   name: string;
-  sublabel?: string;
   /** The branch's delivery fee (EGP) — preview only; the server re-reads it. */
   deliveryFee: number;
 };
@@ -63,7 +54,6 @@ const OTHER_AREAS_OPTION: BranchOption = {
   id: "__other__",
   slug: "__other__",
   name: "Other Areas",
-  sublabel: "مناطق أخرى",
   deliveryFee: 0,
 };
 
@@ -218,15 +208,8 @@ function BranchSelect({
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center justify-between border-b border-stone-300 pb-3 text-left focus:outline-none focus:border-primary transition-colors group"
       >
-        <span className="flex flex-col">
-          <span className="font-sans text-sm font-medium text-stone-900">
-            {selected.name}
-          </span>
-          {selected.sublabel && (
-            <span className="font-sans text-xs text-stone-400 mt-0.5" dir="rtl">
-              {selected.sublabel}
-            </span>
-          )}
+        <span className="font-sans text-sm font-medium text-stone-900">
+          {selected.name}
         </span>
         <ChevronDown
           className="w-4 h-4 text-stone-400 group-hover:text-stone-700 transition-all duration-200"
@@ -256,18 +239,8 @@ function BranchSelect({
                   }}
                   className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-stone-50 transition-colors text-left"
                 >
-                  <span className="flex flex-col">
-                    <span className="font-sans text-sm font-medium text-stone-900">
-                      {b.name}
-                    </span>
-                    {b.sublabel && (
-                      <span
-                        className="font-sans text-xs text-stone-400"
-                        dir="rtl"
-                      >
-                        {b.sublabel}
-                      </span>
-                    )}
+                  <span className="font-sans text-sm font-medium text-stone-900">
+                    {b.name}
                   </span>
                   {b.id === value && (
                     <Check className="w-3.5 h-3.5 text-primary shrink-0" />
@@ -537,13 +510,10 @@ export default function CheckoutPage() {
     Promise.all([getActiveBranches(), getPublicPricingSettings()])
       .then(([rows, settings]) => {
         if (!alive) return;
-        const opts: BranchOption[] = rows.map((b) => ({
-          ...b,
-          sublabel: BRANCH_SUBLABELS[b.slug],
-        }));
-        setBranches(opts);
-        setBranchId((cur) => cur || opts[0]?.id || "");
-        setDeliveryAreaId((cur) => cur || opts[0]?.id || OTHER_AREAS_OPTION.id);
+        // Branches render by their unified English `name` straight from the DB.
+        setBranches(rows);
+        setBranchId((cur) => cur || rows[0]?.id || "");
+        setDeliveryAreaId((cur) => cur || rows[0]?.id || OTHER_AREAS_OPTION.id);
         setPricing(settings);
       })
       .catch(() => {

@@ -13,7 +13,7 @@ export const metadata = {
 export default async function AdminMenuPage() {
   await requireAdminPage();
 
-  const categories = await prisma.menuCategory.findMany({
+  const rows = await prisma.menuCategory.findMany({
     orderBy: { order: "asc" },
     select: {
       id: true,
@@ -27,6 +27,13 @@ export default async function AdminMenuPage() {
       },
     },
   });
+
+  // price is a Decimal money column — serialize to a plain number for the client
+  // <MenuCategoryCard /> (item editor + bulk-price modal).
+  const categories = rows.map((c) => ({
+    ...c,
+    items: c.items.map((it) => ({ ...it, price: it.price.toNumber() })),
+  }));
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">

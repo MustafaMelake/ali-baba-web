@@ -66,7 +66,7 @@ export default async function CategoryPage({
   // Filter by the resolved category FK (indexed) — works identically for
   // featured and standard categories. Live promotions are joined at category /
   // product / variant level for the Discount Engine (see CategoryPageTemplate).
-  const products = await prisma.product.findMany({
+  const rawProducts = await prisma.product.findMany({
     where: { isAvailable: true, categoryId: category.id },
     include: {
       category: {
@@ -85,6 +85,19 @@ export default async function CategoryPage({
     },
     orderBy: { createdAt: "desc" },
   });
+
+  // Serialize the Decimal money columns on each variant to plain numbers before
+  // handing the rows to CategoryPageTemplate (which prices them and forwards
+  // numeric cards to the client ProductCard). Promotion `value` stays as-is —
+  // the Discount Engine accepts a Decimal there.
+  const products = rawProducts.map((p) => ({
+    ...p,
+    variants: p.variants.map((v) => ({
+      ...v,
+      price: v.price.toNumber(),
+      compareAtPrice: v.compareAtPrice?.toNumber() ?? null,
+    })),
+  }));
 
   return (
     <CategoryPageTemplate

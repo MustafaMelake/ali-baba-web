@@ -51,5 +51,14 @@ export async function getStoreSettings(): Promise<PricingSettings> {
     where: { id: STORE_SETTINGS_ID },
     select: { vatRate: true, isVatEnabled: true, defaultDeliveryFee: true },
   });
-  return row ?? DEFAULT_PRICING_SETTINGS;
+  if (!row) return DEFAULT_PRICING_SETTINGS;
+  return {
+    // vatRate is a Float already; only defaultDeliveryFee is a Decimal money
+    // column. Coerce it to a plain number here so every consumer (the public
+    // checkout-preview action → client, and placeOrder) gets a serializable
+    // number and never a Decimal object.
+    vatRate: row.vatRate,
+    isVatEnabled: row.isVatEnabled,
+    defaultDeliveryFee: row.defaultDeliveryFee.toNumber(),
+  };
 }

@@ -84,8 +84,11 @@ export default async function ShopPage({
       price: priced.finalPrice, // discounted starting price
       // Live promo → struck-through base price; otherwise fall back to the
       // variant's manual Compare-At so admin-set "was" prices show on the card
-      // too (mirrors the PDP — see product/[slug]/page.tsx).
-      compareAtPrice: priced.hasDiscount ? priced.basePrice : starting?.compareAtPrice ?? null,
+      // too (mirrors the PDP — see product/[slug]/page.tsx). The Decimal column
+      // is serialized to a plain number for the client card.
+      compareAtPrice: priced.hasDiscount
+        ? priced.basePrice
+        : starting?.compareAtPrice?.toNumber() ?? null,
       image: product.images[0] ?? "/placeholder.jpg",
       tagline: product.description ?? undefined,
     };

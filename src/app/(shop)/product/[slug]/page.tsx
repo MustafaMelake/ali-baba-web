@@ -110,7 +110,11 @@ export default async function ProductPage({
       name: v.name,
       price: priced.finalPrice,
       isAvailable: v.isAvailable,
-      compareAtPrice: priced.hasDiscount ? priced.basePrice : v.compareAtPrice,
+      // The manual Compare-At is a Decimal column — serialize to a plain number
+      // for the client purchase panel.
+      compareAtPrice: priced.hasDiscount
+        ? priced.basePrice
+        : v.compareAtPrice?.toNumber() ?? null,
     };
   });
 

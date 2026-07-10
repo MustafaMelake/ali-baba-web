@@ -17,7 +17,7 @@ export const revalidate = 3600;
  * fully-serializable payload to the interactive <MenuClient />.
  */
 export default async function MenuPage() {
-  const categories = await prisma.menuCategory.findMany({
+  const rows = await prisma.menuCategory.findMany({
     orderBy: { order: "asc" },
     select: {
       id: true,
@@ -30,6 +30,13 @@ export default async function MenuPage() {
       },
     },
   });
+
+  // price is a Decimal money column — serialize to a plain number so the client
+  // <MenuClient /> receives a fully-serializable payload.
+  const categories = rows.map((c) => ({
+    ...c,
+    items: c.items.map((it) => ({ ...it, price: it.price.toNumber() })),
+  }));
 
   return <MenuClient categories={categories} />;
 }

@@ -63,7 +63,8 @@ export default async function AdminProductsPage() {
               </thead>
               <tbody>
                 {products.map((product) => {
-                  const prices = product.variants.map((v) => v.price);
+                  // price is a Decimal money column — coerce for the min + format.
+                  const prices = product.variants.map((v) => v.price.toNumber());
                   const minPrice = prices.length ? Math.min(...prices) : null;
                   const thumb = product.images[0];
                   return (

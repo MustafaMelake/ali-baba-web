@@ -155,7 +155,7 @@ model Branch {
 
   /// Flat delivery fee (EGP) charged when this branch fulfils a DELIVERY order.
   /// Orders with no branch ("Other Areas") use StoreSettings.defaultDeliveryFee.
-  deliveryFee Float @default(35)
+  deliveryFee Decimal @default(35)
 
   /// Users assigned to this branch (typically role == MANAGER).
   managers User[]
@@ -242,9 +242,10 @@ model ProductVariant {
   /// e.g. "Scoop", "1 Litre", "6 Pieces"
   name           String
   sku            String? @unique
-  price          Float
+  /// Money as Decimal (not Float) so currency never drifts on binary rounding.
+  price          Decimal
   /// Optional strikethrough / original price for promotions.
-  compareAtPrice Float?
+  compareAtPrice Decimal?
   isAvailable    Boolean @default(true)
 
   cartItems  CartItem[]
@@ -332,9 +333,10 @@ model Order {
 
   items OrderItem[]
 
-  subtotal    Float
-  deliveryFee Float @default(0)
-  totalAmount Float
+  // Money columns are Decimal so historical receipts never carry float drift.
+  subtotal    Decimal
+  deliveryFee Decimal @default(0)
+  totalAmount Decimal
 
   status      OrderStatus       @default(PENDING)
   fulfillment FulfillmentMethod @default(DELIVERY)
@@ -375,7 +377,7 @@ model OrderItem {
   // Snapshot captured at purchase time (price resolved server-side from the variant).
   productName String
   variantName String
-  unitPrice   Float
+  unitPrice   Decimal
   quantity    Int
 
   @@index([orderId])
@@ -414,7 +416,7 @@ model MenuItem {
   id    String @id @default(cuid())
   /// Item name — typically Arabic (rendered RTL on the storefront).
   name  String
-  price Float
+  price Decimal
   /// Display order within its category (ascending).
   order Int    @default(0)
 
@@ -445,7 +447,8 @@ model Promotion {
   id        String       @id @default(cuid())
   name      String
   type      DiscountType
-  value     Float
+  /// PERCENTAGE → percent off; FIXED_AMOUNT → currency off. Decimal for money-safety.
+  value     Decimal
   startDate DateTime
   endDate   DateTime
   isActive  Boolean      @default(true)
@@ -487,13 +490,14 @@ model StoreSettings {
   id String @id @default("store")
 
   /// VAT as a FRACTION (0.14 = 14%). The admin UI edits it as a percentage.
+  /// Deliberately kept Float — it is a rate/fraction, not a currency amount.
   vatRate      Float   @default(0.14)
   /// Master VAT switch — when false, no VAT is shown or charged anywhere.
   isVatEnabled Boolean @default(true)
 
   /// Delivery fee (EGP) for DELIVERY orders not routed to a branch
   /// ("Other Areas" at checkout, or a branch that went inactive mid-order).
-  defaultDeliveryFee Float @default(35)
+  defaultDeliveryFee Decimal @default(35)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

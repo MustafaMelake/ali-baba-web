@@ -145,7 +145,10 @@ export async function getWishlistItems(): Promise<GetWishlistResult> {
         price: priced.finalPrice,
         // Live promo → struck-through base price; otherwise fall back to the
         // variant's manual Compare-At (mirrors the PDP and storefront cards).
-        compareAtPrice: priced.hasDiscount ? priced.basePrice : starting?.compareAtPrice ?? null,
+        // The Decimal column is serialized to a plain number for the client.
+        compareAtPrice: priced.hasDiscount
+          ? priced.basePrice
+          : starting?.compareAtPrice?.toNumber() ?? null,
       };
     });
 

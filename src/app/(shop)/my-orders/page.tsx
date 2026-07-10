@@ -71,18 +71,25 @@ export default async function MyOrdersPage({
     addressLine: order.addressLine,
     pickupBranch: order.pickupBranch,
     branchName: order.branch?.name ?? null,
-    subtotal: order.subtotal,
-    vat: Math.max(0, order.totalAmount - order.subtotal - order.deliveryFee),
-    deliveryFee: order.deliveryFee,
-    totalAmount: order.totalAmount,
+    // Money columns are Decimal — coerce every one to a number for the client.
+    // VAT is the residual, so all three operands convert before the subtraction.
+    subtotal: order.subtotal.toNumber(),
+    vat: Math.max(
+      0,
+      order.totalAmount.toNumber() -
+        order.subtotal.toNumber() -
+        order.deliveryFee.toNumber(),
+    ),
+    deliveryFee: order.deliveryFee.toNumber(),
+    totalAmount: order.totalAmount.toNumber(),
     itemCount: order.items.reduce((n, it) => n + it.quantity, 0),
     items: order.items.map((it) => ({
       id: it.id,
       productName: it.productName,
       variantName: it.variantName,
       quantity: it.quantity,
-      unitPrice: it.unitPrice,
-      lineTotal: it.unitPrice * it.quantity,
+      unitPrice: it.unitPrice.toNumber(),
+      lineTotal: it.unitPrice.toNumber() * it.quantity,
     })),
   }));
 

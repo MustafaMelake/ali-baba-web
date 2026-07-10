@@ -97,6 +97,15 @@ export type ProductUpdateInput = z.infer<typeof productUpdateSchema>;
 export const CHECKOUT_MAX_ITEMS = 50;
 export const CHECKOUT_MAX_QUANTITY = 99;
 
+/**
+ * Rejection message when a single-line sync would push the persisted cart past
+ * CHECKOUT_MAX_ITEMS distinct lines. Lives here (a plain module, not the
+ * "use server" cart actions) so BOTH the server action and the client store can
+ * import the exact same string — the store matches on it to roll back the
+ * optimistic line instead of leaving a doomed pending op behind.
+ */
+export const CART_LIMIT_ERROR = "Cart cannot exceed 50 distinct items.";
+
 /** One order line as the client ships it — the server re-resolves the price. */
 export const checkoutItemSchema = z.object({
   variantId: z.string().trim().min(1, "Missing variant."),

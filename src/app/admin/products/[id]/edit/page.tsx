@@ -73,7 +73,13 @@ export default async function EditProductPage({
           isAvailable: product.isAvailable,
           isFeatured: product.isFeatured,
           categoryId: product.categoryId,
-          variants: product.variants,
+          // price/compareAtPrice are Decimal money columns — serialize to plain
+          // numbers for the client edit form.
+          variants: product.variants.map((v) => ({
+            ...v,
+            price: v.price.toNumber(),
+            compareAtPrice: v.compareAtPrice?.toNumber() ?? null,
+          })),
         }}
         categories={categories}
       />

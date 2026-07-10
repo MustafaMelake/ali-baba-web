@@ -18,7 +18,7 @@ export default async function AdminSettingsPage() {
   // included (rendered dimmed) so a fee can be corrected before reactivation —
   // otherwise a stale fee would silently resurrect the moment a branch is
   // toggled back on. Active branches sort first; inactive fall to the bottom.
-  const [footerLinks, pricingSettings, branches] = await Promise.all([
+  const [footerLinks, pricingSettings, branchRows] = await Promise.all([
     getFooterLinks(),
     getStoreSettings(),
     prisma.branch.findMany({
@@ -32,6 +32,14 @@ export default async function AdminSettingsPage() {
       },
     }),
   ]);
+
+  // deliveryFee is a Decimal money column — serialize to a plain number for the
+  // client <PricingSettingsManager /> fee editor. (getStoreSettings already
+  // returns a numeric defaultDeliveryFee.)
+  const branches = branchRows.map((b) => ({
+    ...b,
+    deliveryFee: b.deliveryFee.toNumber(),
+  }));
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">

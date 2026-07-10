@@ -108,7 +108,8 @@ export default async function AdminBranchesPage() {
                             name: b.name,
                             slug: b.slug,
                             isActive: b.isActive,
-                            deliveryFee: b.deliveryFee,
+                            // Decimal money column → plain number for the client modal.
+                            deliveryFee: b.deliveryFee.toNumber(),
                           }}
                         />
                         <DeleteBranchButton id={b.id} name={b.name} />

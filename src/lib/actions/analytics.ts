@@ -198,7 +198,8 @@ export async function getAnalytics(): Promise<AnalyticsData> {
         branchId: b.id,
         name: b.name,
         color: colorOf(b.id),
-        revenue: g?._sum.totalAmount ?? 0,
+        // _sum over a Decimal money column → coerce to number.
+        revenue: g?._sum.totalAmount?.toNumber() ?? 0,
         orders: g?._count._all ?? 0,
       };
     })
@@ -259,12 +260,12 @@ export async function getAnalytics(): Promise<AnalyticsData> {
   // ── (4) Star of the month: highest-revenue branch this calendar month ─────
   const monthById = new Map(monthGrouped.map((g) => [g.branchId, g]));
   const monthTotal = monthGrouped.reduce(
-    (sum, g) => sum + (g._sum.totalAmount ?? 0),
+    (sum, g) => sum + (g._sum.totalAmount?.toNumber() ?? 0),
     0,
   );
   let star: StarBranch | null = null;
   for (const b of activeBranches) {
-    const revenue = monthById.get(b.id)?._sum.totalAmount ?? 0;
+    const revenue = monthById.get(b.id)?._sum.totalAmount?.toNumber() ?? 0;
     if (revenue > (star?.revenue ?? 0)) {
       star = {
         name: b.name,

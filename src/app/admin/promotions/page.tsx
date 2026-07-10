@@ -88,7 +88,7 @@ export default async function AdminPromotionsPage() {
       p.variants.map((v) => ({
         value: v.id,
         label: `${p.name} — ${v.name}`,
-        hint: formatEGP(v.price),
+        hint: formatEGP(v.price.toNumber()),
       })),
     ),
   };
@@ -125,6 +125,9 @@ export default async function AdminPromotionsPage() {
               <tbody>
                 {promotions.map((p) => {
                   const schedule = scheduleState(p.startDate, p.endDate);
+                  // `value` is a Decimal column — coerce for both the label and
+                  // the (client) edit modal.
+                  const value = p.value.toNumber();
                   return (
                     <tr
                       key={p.id}
@@ -140,7 +143,7 @@ export default async function AdminPromotionsPage() {
                       </td>
                       <td className="px-6 py-4">
                         <span className="font-medium text-stone-900">
-                          {discountLabel(p.type, p.value)}
+                          {discountLabel(p.type, value)}
                         </span>
                       </td>
                       <td className="px-6 py-4">
@@ -189,7 +192,7 @@ export default async function AdminPromotionsPage() {
                               id: p.id,
                               name: p.name,
                               type: p.type,
-                              value: p.value,
+                              value,
                               startDate: p.startDate.toISOString(),
                               endDate: p.endDate.toISOString(),
                               isActive: p.isActive,

@@ -167,7 +167,8 @@ export async function getDashboardStats(
   }
   for (const order of chartOrders) {
     const idx = indexByKey.get(dayKey(order.createdAt));
-    if (idx != null) chartData[idx].revenue += order.totalAmount;
+    // totalAmount is a Decimal money column — coerce before summing.
+    if (idx != null) chartData[idx].revenue += order.totalAmount.toNumber();
   }
 
   return {
@@ -176,16 +177,21 @@ export async function getDashboardStats(
       branchId: branchId ?? null,
       branchName: branch?.name ?? null,
     },
-    totalRevenue: revenueAllTime._sum.totalAmount ?? 0,
-    revenueLast30: revenueLast30._sum.totalAmount ?? 0,
-    revenuePrev30: revenuePrev30._sum.totalAmount ?? 0,
+    // _sum over a Decimal column returns Decimal | null → coerce to number.
+    totalRevenue: revenueAllTime._sum.totalAmount?.toNumber() ?? 0,
+    revenueLast30: revenueLast30._sum.totalAmount?.toNumber() ?? 0,
+    revenuePrev30: revenuePrev30._sum.totalAmount?.toNumber() ?? 0,
     ordersToday,
     ordersYesterday,
     activeProducts,
     newProducts30,
     customers,
     newCustomers30,
-    recentOrders,
+    // Serialize each recent order's Decimal total to a plain number.
+    recentOrders: recentOrders.map((o) => ({
+      ...o,
+      totalAmount: o.totalAmount.toNumber(),
+    })),
     chartData,
   };
 }
@@ -329,18 +335,25 @@ export async function getOrders(
     deliveryCity: order.deliveryCity,
     addressLine: order.addressLine,
     pickupBranch: order.pickupBranch,
-    subtotal: order.subtotal,
-    vat: Math.max(0, order.totalAmount - order.subtotal - order.deliveryFee),
-    deliveryFee: order.deliveryFee,
-    totalAmount: order.totalAmount,
+    // Money columns are Decimal — coerce every one to a number for the client
+    // table/drawer. VAT is the residual, so all three operands convert first.
+    subtotal: order.subtotal.toNumber(),
+    vat: Math.max(
+      0,
+      order.totalAmount.toNumber() -
+        order.subtotal.toNumber() -
+        order.deliveryFee.toNumber(),
+    ),
+    deliveryFee: order.deliveryFee.toNumber(),
+    totalAmount: order.totalAmount.toNumber(),
     itemCount: order.items.reduce((n, it) => n + it.quantity, 0),
     items: order.items.map((it) => ({
       id: it.id,
       productName: it.productName,
       variantName: it.variantName,
       quantity: it.quantity,
-      unitPrice: it.unitPrice,
-      lineTotal: it.unitPrice * it.quantity,
+      unitPrice: it.unitPrice.toNumber(),
+      lineTotal: it.unitPrice.toNumber() * it.quantity,
     })),
     userEmail: order.user?.email ?? null,
     branchName: order.branch?.name ?? null,

@@ -146,7 +146,7 @@ The sellable universe. Cardinal rule (schema comment, enforced everywhere): **pr
 ### 3.2 Database Schema & Integrity
 - **`Category`** — `name @unique`, `slug @unique`; slider/merchandising fields `subtitle`, `image`, `isFeatured`, `sliderOrder` (`@@index([isFeatured, sliderOrder])` matches the homepage read).
 - **`Product`** — `slug @unique`, `images String[]`, `isAvailable`, `isFeatured`; `categoryId` → Category **`onDelete: Restrict`** (deleting a used category is impossible at the DB level). Indexes: `slug`, `categoryId`.
-- **`ProductVariant`** — `price Float`, `compareAtPrice Float?` (manual strikethrough), `sku String? @unique`, `isAvailable`; `productId` → Product **`onDelete: Cascade`**. Back-relations: `cartItems`, `orderItems`, `promotions`.
+- **`ProductVariant`** — `price Decimal`, `compareAtPrice Decimal?` (manual strikethrough), `sku String? @unique`, `isAvailable`; `productId` → Product **`onDelete: Cascade`**. Back-relations: `cartItems`, `orderItems`, `promotions`. (Money is `Decimal`, not `Float` — see §6.6.)
 - Deletion physics: `OrderItem.variant` is **`onDelete: Restrict`** (§6) ⇒ *any product that has ever been ordered cannot be hard-deleted*, transitively (product delete cascades to variants, which Restrict blocks). `Review` and `WishlistItem` cascade away with the product.
 
 ### 3.3 File Boundaries
@@ -188,7 +188,7 @@ The sellable universe. Cardinal rule (schema comment, enforced everywhere): **pr
 Time-windowed discounts (`PERCENTAGE` | `FIXED_AMOUNT`) targeting any mix of whole categories, products, and specific variants. One **pure, dependency-free math module** (`src/lib/discounts.ts` — no Prisma, no React) is shared by every surface, which is the mechanism guaranteeing *the shown price is the billed price*.
 
 ### 4.2 Database Schema & Integrity
-- **`Promotion`** — `type DiscountType`, `value Float`, `startDate`/`endDate DateTime`, `isActive @default(true)`, `@@index([isActive])`.
+- **`Promotion`** — `type DiscountType`, `value Decimal`, `startDate`/`endDate DateTime`, `isActive @default(true)`, `@@index([isActive])`.
 - Targets via **implicit m:n join tables** (Prisma-managed): `_CategoryToPromotion`, `_ProductToPromotion`, `_ProductVariantToPromotion`. Deleting a promotion removes join rows automatically; deleting a target detaches it. No math/precedence lives in the schema — all app-level by documented design.
 - Adjacent mechanism: `ProductVariant.compareAtPrice` is the *manual* "was" price; validators enforce `compareAtPrice > price`. It is the display fallback when no live promotion applies — never an input to promo math.
 
@@ -207,7 +207,8 @@ Time-windowed discounts (`PERCENTAGE` | `FIXED_AMOUNT`) targeting any mix of who
 **Widest blast radius in the platform.** A change to `resolvePrice`/`livePromotionWhere`/`roundMoney` simultaneously alters: shop cards, category cards, PDP, homepage badges, logged-in cart hydration, guest re-pricing, wishlist cards, and **the amount customers are billed**. The single-`now`-per-request discipline is what prevents a promotion expiring mid-request from pricing two lines of one order inconsistently — any new consumer must follow it. Removing the `revalidatePath("/", "layout")` on mutations would leave ISR'd prices stale for up to 60s after an admin edit.
 
 ### 4.6 Technical Debt & Vestigial Code
-- **Overlap policy is implicit:** "cheapest wins" is the only precedence rule; there is no stacking, exclusivity, or priority field. Fine today; document as the intended business rule.
+- **Overlap policy — FORMALIZED (no longer implicit):** "Cheapest Wins" is the officially adopted business rule for overlapping promotions — exactly ONE promotion ever applies (the one yielding the lowest price), promotions never stack, and there is deliberately no priority/exclusivity field. It is codified in the block comment above `resolvePrice` in `src/lib/discounts.ts`. `ProductVariant.compareAtPrice` is a purely **visual marketing** "was" price — never an input to the discount math, only a strikethrough fallback when no live promotion applies.
+- **Branch `address` / `phone` retained by decision:** these columns are intentionally kept for planned roadmap use (branch detail / contact surfacing), not dead code awaiting removal.
 - `PromotionInput.type` travels as `string` and is set-validated rather than enum-typed end-to-end — minor typing looseness.
 - No admin-facing preview of "what will this promotion do to price X" — authoring errors surface only on the storefront.
 
@@ -256,7 +257,7 @@ Holds purchase intent as `{ variantId, quantity }` — **never prices, names, or
 - **Catalog (§3):** variant Cascade means a deleted variant silently removes DB cart lines; local guest lines for it are left for `placeOrder`'s availability guard to report.
 
 ### 5.6 Technical Debt & Vestigial Code
-- The **total distinct-line count of a DB cart is unbounded** via repeated `syncCartItemAction` calls (only the *merge payload* is capped at 50). Checkout rejects > 50 items, so the impact is DB rows, not money. Candidate follow-up: cap lines in `syncCartItemAction` too.
+- The DB cart's distinct-line count is now **capped at 50 in `syncCartItemAction`** as well: a `SET` that would introduce a NEW line beyond the cap is rejected with the shared `CART_LIMIT_ERROR` (quantity updates to existing lines are always allowed). The client store (`cart-store.ts`) rolls the optimistic line back and toasts on that specific rejection, so the UI never shows a line the DB refused. (`mergeCartAction` remains separately capped at 50.)
 - Cross-device concurrent merges can collapse an increment (documented, accepted trade).
 - `getDbCartAction` maps `id` to the **product** id for display/links; any future consumer treating it as a variant id will corrupt merges (the field naming is a foot-gun; the store docs warn about it).
 
@@ -290,7 +291,7 @@ Converts a cart into an immutable, **server-priced** `Order` with per-line snaps
 7. **The transaction (deliberately exactly two statements, Neon-friendly):**
    a. One batched `productVariant.findMany({ id IN deduped ids })` carrying the full three-level live-promotion hierarchy + product availability.
    b. Pure in-memory loop: missing/unavailable variant (or parent product) ⇒ **throw** — the whole order rolls back, partial orders are impossible. Per line: `gatherPromotions` → `resolvePrice(variant.price, …, now)` (one `now` for the whole order) → accumulate subtotal → push snapshot `{ variantId, productName, variantName, unitPrice: finalPrice, quantity }`.
-   c. **Money hygiene** *(commit `a3421a5`)*: `subtotal = roundMoney(subtotal)`; `deliveryFee` = DELIVERY ? `roundMoney(branch.fee ?? settings.defaultDeliveryFee)` : 0; `vat = isVatEnabled ? roundMoney(subtotal × vatRate) : 0`; `totalAmount = roundMoney(subtotal + deliveryFee + vat)`. Four rounding points; nothing off-grid reaches the Float columns.
+   c. **Money hygiene** *(commit `a3421a5`)*: `subtotal = roundMoney(subtotal)`; `deliveryFee` = DELIVERY ? `roundMoney(branch.fee ?? settings.defaultDeliveryFee)` : 0; `vat = isVatEnabled ? roundMoney(subtotal × vatRate) : 0`; `totalAmount = roundMoney(subtotal + deliveryFee + vat)`. Four rounding points; nothing off-grid reaches the `Decimal` money columns.
    d. Nested `order.create` with `items.create[]`, `status: PENDING`, resolved `branchId`.
 8. **Post-commit:** `revalidatePath("/admin")`, `"/admin/orders"`, and `"/my-orders"` (when authenticated); returns `{ orderNumber, orderId }`.
 9. **Client success:** `clearCart()` (local, incl. pendingOps) + `clearDbCartAction()` (when logged in), success screen with order number.
@@ -303,7 +304,7 @@ The convergence point of the platform: **Discounts** (billing math), **Branch** 
 ### 6.6 Technical Debt & Vestigial Code
 - **`DeliveryLocation` enum + `Order.deliveryCity`** — vestigial: checkout no longer sends a city (branch selection replaced it); the column persists for legacy rows and is still mapped into both order views. Migration decision pending.
 - **`Order.pickupBranch` free text** vs. the authoritative `branchId` — schema comment marks the migration as deliberately out of scope; the dual encoding remains.
-- **Money columns are `Float`** — values are clean at write time post-`a3421a5`, but the durable fix is `Decimal` (or integer piastres). Schema migration pending.
+- **Money columns are `Decimal`** *(migrated from `Float`)* — every currency field (variant `price`/`compareAtPrice`, `Promotion.value`, order `subtotal`/`deliveryFee`/`totalAmount`, `OrderItem.unitPrice`, `Branch.deliveryFee`, `StoreSettings.defaultDeliveryFee`, `MenuItem.price`) is now `Decimal`, so no binary-float drift can accumulate at rest. `StoreSettings.vatRate` stays `Float` (a rate, not a currency amount). Prisma hands `Decimal` back as objects, so every read `.toNumber()`s at the client-component serialization boundary (`discounts.ts` accepts `number | Decimal`); writes still pass plain numbers, which Prisma coerces.
 - **`placeOrder`'s catch returns `err.message` verbatim** — intentional for the availability-guard messages, but a raw Prisma error would leak internals to the client. Candidate: whitelist known messages.
 - **No throttle-supporting index** — `@@index([customerPhone, status])` would future-proof the count as volume grows (today `@@index([status])` suffices because PENDING stays small).
 - **Phone is not normalized** — `+20 100…` and `0100…` are distinct throttle keys and distinct search targets.
@@ -317,7 +318,7 @@ The convergence point of the platform: **Discounts** (billing math), **Branch** 
 Physical locations wearing **four hats simultaneously**: pickup point, delivery area, per-branch delivery-fee source, and the unit of MANAGER RBAC. Retirement is a soft switch (`isActive: false`); deletion is deliberately hard.
 
 ### 7.2 Database Schema & Integrity
-- **`Branch`** — `name @unique`, `slug @unique`, `address?`, `phone?`, `isActive @default(true)`, `deliveryFee Float @default(35)`.
+- **`Branch`** — `name @unique`, `slug @unique`, `address?`, `phone?`, `isActive @default(true)`, `deliveryFee Decimal @default(35)`.
 - Referenced by: `User.branchId` (**`Restrict`** — staffed branches cannot be deleted), `Order.branchId` (**`SetNull`** — order history survives deletion, rows become "unassigned" = super-admin-only visibility).
 
 ### 7.3 File Boundaries
@@ -340,7 +341,7 @@ Physical locations wearing **four hats simultaneously**: pickup point, delivery 
 
 ### 7.6 Technical Debt & Vestigial Code
 - Checkout's Arabic `BRANCH_SUBLABELS` are hardcoded client-side for two seeded slugs — new branches show name-only. Candidate: an optional `sublabel` column.
-- `Branch.address` / `Branch.phone` exist but no surface writes or renders them (admin modal fields to confirm — the model calls them out; verify on `BranchModal` during the component-level audit pass).
+- `Branch.address` / `Branch.phone` exist but no surface writes or renders them today — **retained by decision** for planned roadmap use (branch detail / contact surfacing), not vestigial (see §4.6).
 
 ---
 
@@ -350,7 +351,7 @@ Physical locations wearing **four hats simultaneously**: pickup point, delivery 
 A **single-row** table (`id = "store"`) holding VAT (rate + master switch) and the branchless-delivery default fee. One shared reader guarantees the checkout *preview* and the *bill* can't disagree about what the settings are.
 
 ### 8.2 Database Schema & Integrity
-- **`StoreSettings`** — `id String @id @default("store")` (fixed singleton; never a second row), `vatRate Float @default(0.14)` (**a fraction**, edited as a percentage), `isVatEnabled @default(true)`, `defaultDeliveryFee Float @default(35)`.
+- **`StoreSettings`** — `id String @id @default("store")` (fixed singleton; never a second row), `vatRate Float @default(0.14)` (**a fraction**, edited as a percentage — kept `Float` on purpose, it is a rate not currency), `isVatEnabled @default(true)`, `defaultDeliveryFee Decimal @default(35)`.
 
 ### 8.3 File Boundaries
 - **Reader (server-only, strictly read-only):** `src/lib/store-settings.ts` — `getStoreSettings()` (PK lookup; missing row answered from the frozen `DEFAULT_PRICING_SETTINGS`, which **must mirror schema defaults**; never upserts — this runs on hot public paths).
@@ -376,7 +377,7 @@ The physical café's digital menu. **Deliberately sealed** from commerce: items 
 
 ### 9.2 Database Schema & Integrity
 - **`MenuCategory`** — `title`, `slug @unique`, `order @default(0)` (`@@index([order])`), `isFixedPrice @default(false)` ("Smoothies mode": every item shares one price; the storefront renders a flavour grid + single price badge, the shared price *read from the items, which are kept equal*).
-- **`MenuItem`** — `name` (typically Arabic, rendered RTL), `price Float`, `order`, `categoryId` → MenuCategory (**`Cascade`** — items die with their category). Indexes on `categoryId`, `order`.
+- **`MenuItem`** — `name` (typically Arabic, rendered RTL), `price Decimal`, `order`, `categoryId` → MenuCategory (**`Cascade`** — items die with their category). Indexes on `categoryId`, `order`.
 
 ### 9.3 File Boundaries
 `src/lib/actions/menu.ts` (all seven actions, each behind `requireAdmin`); `src/app/(shop)/menu/page.tsx` (ISR 3600) + `MenuClient.tsx` (scroll-spy nav over category slugs); `src/app/admin/menu/page.tsx` + `menu/{MenuCategoryCard,MenuCategoryModal,MenuItemsEditor,BulkPriceModal,CreateMenuCategoryButton}.tsx`.
@@ -598,6 +599,7 @@ Read row → depends on column. ● = hard dependency (breaks), ○ = soft (degr
 | `ce9af23` | H-1 guest order spam | ≤ 3 PENDING orders per exact `customerPhone` |
 | `726134d` | M-4 homepage `revalidate = 0` · M-2 orders board 50-row cap | Homepage ISR 60; `getOrders` skip/take pagination + `AdminOrdersPagination` |
 | _(vestigial-code purge)_ | D-1 `MenuPage` vestigial model · D-8 dead `/forgot-password` link · `ProductVariant.sortOrder` unused | **Purged** the `MenuPage` model + `Product.menuPageId` relation/index, the `ProductVariant.sortOrder` column, all their validator/form/action code, and the dead login link. Variants now sort strictly by `price: asc` everywhere (incl. the admin promotions & edit-product reads). Requires a Prisma migration to drop the DB objects. |
+| _(Decimal + cart-cap + i18n + rule)_ | D-5 `Float` money columns · D-11 unbounded DB cart · D-17 hardcoded Arabic sublabels · §4.6 "implicit" overlap policy | Migrated all ten currency columns **`Float → Decimal`** (with `.toNumber()` serialization at every client-component boundary; `discounts.ts` accepts `number \| Decimal`; `vatRate` stays `Float`). Capped distinct DB-cart lines at 50 in `syncCartItemAction` (+ client rollback/toast via `CART_LIMIT_ERROR`). Removed the hardcoded `BRANCH_SUBLABELS` — checkout renders the unified `branch.name`. **Formalized** the "Cheapest Wins" promo rule in `discounts.ts`. The Decimal change requires a Prisma migration to `ALTER` the column types. |
 
 ### 18.2 Open ledger
 
@@ -606,18 +608,15 @@ Read row → depends on column. ● = hard dependency (breaks), ○ = soft (degr
 | D-2 | §6 | `DeliveryLocation` enum + `Order.deliveryCity` — checkout no longer writes it; views still map it | Vestigial column |
 | D-3 | §13 | `updateTag("categories")` — tag registered nowhere | Dead code |
 | D-4 | §6 | `Order.pickupBranch` free text alongside authoritative `branchId` | Pending migration |
-| D-5 | §6/§15 | Money columns are `Float`; durable fix is `Decimal`/integer piastres | Pending migration |
 | D-6 | §6 | No `@@index([customerPhone, status])` backing the throttle count | Perf (future) |
 | D-7 | §6 | Phone numbers not normalized (throttle keys + search) | Correctness edge |
 | D-9 | §6 | `placeOrder` catch returns `err.message` verbatim (Prisma leak potential) | Hardening |
 | D-10 | §6 | `/my-orders` unpaginated per-user `findMany` | Perf (minor) |
-| D-11 | §5 | DB cart distinct-line count unbounded via `syncCartItemAction` | Abuse edge |
 | D-12 | §12 | Dashboard day-bucketing uses server-local TZ; analytics uses `Africa/Cairo` | Consistency |
 | D-13 | §12 | Revenue includes PENDING orders (only CANCELLED excluded) | Business-rule confirm |
 | D-14 | §14 | Orphaned UploadThing bucket files on delete/replace | Storage hygiene |
 | D-15 | §15 | Idiom duplication (`prismaErrorCode` ×10, `ensureAdmin` ×5, `slugify` ×3) | Refactor |
 | D-16 | §12 | Offset pagination scale ceiling on the orders board | Perf (future) |
-| D-17 | §7 | Hardcoded Arabic branch sublabels for two seeded slugs | Cosmetic |
 | D-18 | §1 | `emailVerified` present but unused; no verification flow | Feature gap |
 
 ---

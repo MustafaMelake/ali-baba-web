@@ -73,7 +73,10 @@ async function getSliderCategories() {
     alt: category.subtitle
       ? `${category.name} — ${category.subtitle}`
       : `${category.name} category`,
-    discountLabel: discountLabelFor(category.promotions),
+    // Promotion `value` is a Decimal column — coerce to number for the label math.
+    discountLabel: discountLabelFor(
+      category.promotions.map((p) => ({ type: p.type, value: p.value.toNumber() })),
+    ),
   }));
 }
 

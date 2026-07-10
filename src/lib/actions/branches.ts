@@ -12,9 +12,17 @@ import { prisma } from "@/lib/prisma";
 export async function getActiveBranches(): Promise<
   { id: string; slug: string; name: string; deliveryFee: number }[]
 > {
-  return prisma.branch.findMany({
+  const rows = await prisma.branch.findMany({
     where: { isActive: true },
     orderBy: { name: "asc" },
     select: { id: true, slug: true, name: true, deliveryFee: true },
   });
+  // deliveryFee is a Decimal money column — serialize to a plain number for the
+  // client checkout selectors (display-only; placeOrder re-reads the Decimal).
+  return rows.map((b) => ({
+    id: b.id,
+    slug: b.slug,
+    name: b.name,
+    deliveryFee: b.deliveryFee.toNumber(),
+  }));
 }

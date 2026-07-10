@@ -15,13 +15,30 @@
 
 import { DiscountType } from "@/generated/prisma/enums";
 
+/**
+ * Money is stored as Prisma `Decimal` (not Float) for currency safety, and
+ * Prisma hands Decimal columns back as Decimal OBJECTS, not JS numbers. This
+ * module is pure/framework-agnostic (it also runs on the client, e.g. the
+ * checkout summary), so instead of importing Prisma's Decimal it accepts
+ * anything number-like — a plain `number` or a Decimal (which exposes
+ * `.toNumber()`) — and normalizes to a JS number at the boundary. Every value
+ * this module RETURNS is a plain rounded `number`.
+ */
+export type Numeric = number | { toNumber(): number };
+
+/** Coerce a `number` or a Prisma `Decimal` to a plain JS number. */
+export function toNumber(value: Numeric): number {
+  return typeof value === "number" ? value : value.toNumber();
+}
+
 /** The minimal promotion shape the resolver needs (subset of the Prisma row). */
 export type PromotionLike = {
   id: string;
   name: string;
   /** A DiscountType value — "PERCENTAGE" | "FIXED_AMOUNT". */
   type: string;
-  value: number;
+  /** Percentage or fixed amount. Accepts a Prisma Decimal or a plain number. */
+  value: Numeric;
   startDate: Date | string;
   endDate: Date | string;
   isActive: boolean;
@@ -60,8 +77,9 @@ export const PROMOTION_SELECT_FIELDS = {
 /** Round to 2 decimals (money). Identical rounding everywhere keeps the shown
  *  price and the billed price in lock-step — reused by `placeOrder` (VAT) and the
  *  checkout summary preview so a piastre is never silently dropped. */
-export function roundMoney(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
+export function roundMoney(n: Numeric): number {
+  const x = toNumber(n);
+  return Math.round((x + Number.EPSILON) * 100) / 100;
 }
 
 /**
@@ -89,12 +107,14 @@ export function isPromotionLive(promo: PromotionLike, now: Date = new Date()): b
 }
 
 /** Apply ONE promotion to a base price. Never returns below 0. */
-export function applyPromotion(basePrice: number, promo: PromotionLike): number {
-  if (basePrice <= 0) return Math.max(0, roundMoney(basePrice));
+export function applyPromotion(basePrice: Numeric, promo: PromotionLike): number {
+  const base = toNumber(basePrice);
+  const value = toNumber(promo.value);
+  if (base <= 0) return Math.max(0, roundMoney(base));
   const raw =
     promo.type === DiscountType.PERCENTAGE
-      ? basePrice * (1 - promo.value / 100)
-      : basePrice - promo.value;
+      ? base * (1 - value / 100)
+      : base - value;
   return roundMoney(Math.max(0, raw));
 }
 
@@ -109,20 +129,38 @@ export function gatherPromotions(
   return [...byId.values()];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BUSINESS RULE — "Cheapest Wins" (formally adopted; not implicit).
+//
+// When multiple live promotions target the same variant (via the variant, its
+// parent product, or that product's category), they DO NOT STACK. Exactly ONE
+// promotion is ever applied: the one producing the lowest final price for the
+// customer. Ties are broken by first-found (strict `<` below). There is no
+// stacking, no additive/compounding discounts, and no priority/exclusivity
+// field — this single rule is the whole precedence model, by deliberate design.
+//
+// `ProductVariant.compareAtPrice` is NOT part of this math. It is a purely
+// VISUAL marketing "was" price (a manual strikethrough); it never feeds the
+// discount calculation and is only shown as a fallback when no live promotion
+// applies. The billed price is always `resolvePrice().finalPrice`.
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Resolve the final price for `basePrice` given a set of promotions. Only LIVE
- * promotions are considered; when several apply, the cheapest result wins.
- * Deterministic and pure — the storefront, cart, checkout and `placeOrder` all
- * call this so they can never disagree.
+ * promotions are considered; when several apply, the cheapest result wins (see
+ * the "Cheapest Wins" rule above). Deterministic and pure — the storefront,
+ * cart, checkout and `placeOrder` all call this so they can never disagree.
+ * Accepts a Prisma `Decimal` or a plain `number` for `basePrice`.
  */
 export function resolvePrice(
-  basePrice: number,
+  basePrice: Numeric,
   promotions: PromotionLike[] | null | undefined,
   now: Date = new Date(),
 ): PricedResult {
+  const base = toNumber(basePrice);
   let best: PricedResult = {
-    basePrice,
-    finalPrice: roundMoney(basePrice),
+    basePrice: base,
+    finalPrice: roundMoney(base),
     discountAmount: 0,
     hasDiscount: false,
     appliedPromotion: null,
@@ -130,18 +168,18 @@ export function resolvePrice(
 
   for (const promo of promotions ?? []) {
     if (!isPromotionLive(promo, now)) continue;
-    const candidate = applyPromotion(basePrice, promo);
+    const candidate = applyPromotion(base, promo);
     if (candidate < best.finalPrice) {
       best = {
-        basePrice,
+        basePrice: base,
         finalPrice: candidate,
-        discountAmount: roundMoney(basePrice - candidate),
-        hasDiscount: candidate < basePrice,
+        discountAmount: roundMoney(base - candidate),
+        hasDiscount: candidate < base,
         appliedPromotion: {
           id: promo.id,
           name: promo.name,
           type: promo.type,
-          value: promo.value,
+          value: toNumber(promo.value),
         },
       };
     }

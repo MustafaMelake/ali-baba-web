@@ -9,7 +9,11 @@ import {
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
 } from "@/lib/discounts";
-import { CHECKOUT_MAX_ITEMS, CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
+import {
+  CHECKOUT_MAX_ITEMS,
+  CHECKOUT_MAX_QUANTITY,
+  CART_LIMIT_ERROR,
+} from "@/lib/validators";
 
 /**
  * Cart synchronization Server Actions.
@@ -221,6 +225,24 @@ export async function syncCartItemAction(
       return { success: true, data: null };
     }
 
+    // DB-level distinct-line ceiling. `mergeCartAction` caps its payload at
+    // MAX_MERGE_LINES, but a client could otherwise SET unlimited *distinct*
+    // variants one-by-one, growing the DB cart past what checkout accepts.
+    // Only a NEW line is capped — updating an existing line's quantity is always
+    // allowed (so a full cart can still be re-quantified or emptied). The
+    // existence check + count is not atomic, but this is an abuse ceiling, not
+    // a money path; a rare over-cap by one under concurrency is acceptable.
+    const existingLine = await prisma.cartItem.findUnique({
+      where: { userId_variantId: { userId, variantId: id } },
+      select: { id: true },
+    });
+    if (!existingLine) {
+      const distinctLines = await prisma.cartItem.count({ where: { userId } });
+      if (distinctLines >= MAX_MERGE_LINES) {
+        return { success: false, error: CART_LIMIT_ERROR };
+      }
+    }
+
     await prisma.cartItem.upsert({
       where: { userId_variantId: { userId, variantId: id } },
       update: { quantity: qty },
@@ -406,8 +428,11 @@ export async function rePriceGuestCart(
         variantId: v.id,
         price: priced.finalPrice,
         // Live promo → struck-through base price; otherwise the manual
-        // Compare-At column (the same fallback the PDP and cards use).
-        compareAtPrice: priced.hasDiscount ? priced.basePrice : v.compareAtPrice,
+        // Compare-At column (the same fallback the PDP and cards use). The
+        // Decimal column is serialized to a plain number for the client.
+        compareAtPrice: priced.hasDiscount
+          ? priced.basePrice
+          : v.compareAtPrice?.toNumber() ?? null,
         promotionName: priced.appliedPromotion?.name ?? null,
         isAvailable: v.isAvailable && v.product.isAvailable,
       };
