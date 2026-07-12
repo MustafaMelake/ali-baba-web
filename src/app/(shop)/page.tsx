@@ -3,6 +3,7 @@ import CategorySlider from "@/components/CategorySlider";
 import FeaturesBar from "@/components/FeaturesBar";
 import Hero from "@/components/Hero";
 import OurStory from "@/components/OurStory";
+import PromoWidget from "@/components/PromoWidget";
 import { prisma } from "@/lib/prisma";
 import { livePromotionWhere } from "@/lib/discounts";
 import { DiscountType } from "@/generated/prisma/enums";
@@ -91,6 +92,10 @@ export default async function ShopHomePage() {
     // landmark and the fixed-navbar clearance padding.
     <div className="min-h-screen bg-background font-sans" dir="ltr">
       <Hero />
+
+      {/* Strongest live promotion — self-contained Server Component; renders
+          nothing when no promotion is live. */}
+      <PromoWidget />
 
       <CategorySlider categories={sliderCategories} />
 
