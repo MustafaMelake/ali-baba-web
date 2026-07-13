@@ -88,3 +88,4 @@ export function sanitizeRedirect(path: string | null): string {
   if (!path || !path.startsWith("/") || path.startsWith("//")) return "/"
   return path
 }
+
