@@ -80,12 +80,14 @@ export function prettyLabel(value: string) {
  * query-string value, so anyone can link to `/login?redirect=https://evil.com`
  * directly (it never has to pass through our own proxy.ts to be attacker-
  * controlled). Only a same-origin relative path is accepted — absolute URLs and
- * the protocol-relative "//host" trick (which browsers resolve to a different
- * origin) both fall back to "/". Shared so every auth surface that honors a
- * `?redirect=` (login, signup, password reset, …) applies the identical guard.
+ * the protocol-relative "//host" AND backslash "/\host" tricks (both of which a
+ * browser normalises to a different origin) fall back to "/". Rejecting a second
+ * character of "/" OR "\" blocks both in one check. Shared so every auth surface
+ * that honors a `?redirect=` (login, signup, password reset, …) applies the
+ * identical guard.
  */
 export function sanitizeRedirect(path: string | null): string {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) return "/"
+  if (!path || !path.startsWith("/") || path[1] === "/" || path[1] === "\\") return "/"
   return path
 }
 

@@ -215,26 +215,19 @@ describe("sanitizeRedirect — open-redirect prevention", () => {
   });
 });
 
-describe("sanitizeRedirect — ⚠️ KNOWN GAP: backslash open-redirect bypass", () => {
-  // A path beginning "/\" is NOT "//", so it slips past the guard — but the
+describe("sanitizeRedirect — backslash open-redirect (hardened)", () => {
+  // A path beginning "/\" is NOT "//", so it once slipped past the guard — the
   // WHATWG URL parser normalises "\" → "/" for http(s), making it protocol-
-  // relative to a hostile origin. LoginClient/SignupClient then router.push() it,
-  // navigating the victim cross-site after a legitimate-looking login.
+  // relative to a hostile origin, which router.push() would then navigate to.
+  // The guard now rejects a 2nd character of "/" OR "\", closing both variants.
   const BACKSLASH_EXPLOIT = "/" + String.fromCharCode(92) + "evil.com"; // "/\evil.com"
 
-  it("SECURITY: the guard passes a backslash path that resolves CROSS-ORIGIN", () => {
-    const sanitized = sanitizeRedirect(BACKSLASH_EXPLOIT);
-    expect(sanitized).not.toBe("/"); // ← slips through unchanged
-    // …and a browser resolves it to a hostile origin:
-    expect(new URL(sanitized, "https://mystore.com").origin).toBe("https://evil.com");
+  it("would resolve CROSS-ORIGIN if left unsanitized (why it must be blocked)", () => {
+    // The latent severity: the RAW value resolves to a hostile origin in a browser.
+    expect(new URL(BACKSLASH_EXPLOIT, "https://mystore.com").origin).toBe("https://evil.com");
   });
 
-  // The DESIRED behaviour, encoded as a tripwire. `it.fails` is GREEN while the
-  // gap exists and will START failing the moment sanitizeRedirect is hardened —
-  // the signal to delete `.fails` and lock the fix in.
-  // Suggested fix: reject when path[1] is "/" OR "\" (or resolve against a dummy
-  // origin and require same-origin).
-  it.fails("SHOULD collapse a backslash path to '/' once hardened", () => {
+  it("collapses the backslash path to '/' — bypass blocked", () => {
     expect(sanitizeRedirect(BACKSLASH_EXPLOIT)).toBe("/");
   });
 });
