@@ -503,6 +503,36 @@ model StoreSettings {
   updatedAt DateTime @updatedAt
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Storefront FAQ (admin-managed)
+//
+// Replaces the previously hardcoded FAQ list in the homepage FeaturesBar (now
+// FaqAccordion). Each row is a question/answer pair with a manual sort weight and
+// a soft on/off switch — the storefront reads only the active rows (ordered by
+// `order`), while the admin console reads every row. The public FaqsSection
+// Server Component renders these into both the accordion UI and the FAQPage
+// JSON-LD used for SEO. Content lives on the homepage ("/"), so mutations bust
+// that route's ISR cache.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Faq {
+  id       String @id @default(cuid())
+  /// The customer-facing question, e.g. "Do you offer custom cake designs?".
+  question String
+  /// The answer body rendered inside the accordion panel.
+  answer   String
+  /// Ascending display position on the storefront (lower = earlier).
+  order    Int    @default(0)
+  /// Hidden from the storefront when false, without deleting the row.
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Matches the storefront read: where isActive, ordered by `order` ascending.
+  @@index([isActive, order])
+}
+
 model FooterLink {
   id    String @id @default(cuid())
   /// Display text, e.g. "Our Story" or "Instagram".

@@ -481,7 +481,7 @@ The editorial shell: admin-managed footer navigation, the curated homepage (feat
 - Merchandising fields live on **Catalog** models: `Category.{subtitle,image,isFeatured,sliderOrder}`, `Product.isFeatured`.
 
 ### 13.3 File Boundaries
-`src/lib/actions/settings.ts` (footer CRUD + transactional `reorderFooterLinks` — full id list rewritten to index positions, no dupes/gaps possible; `validateLink` URL scheme whitelist: `/…`, `#…`, `http(s)://` only — **blocks `javascript:` hrefs an admin might paste**); `src/components/layout/Footer.tsx` (RSC; `unstable_cache` key `footer-managed-links`, tag `footer-links`, TTL 3600; **no hardcoded fallback by design** — empty table or DB failure collapses the nav section rather than rendering dead links; zero client JS); `FooterLinksManager.tsx`, `FooterLinkModal.tsx`; homepage `src/app/(shop)/page.tsx` (**ISR 60** as of `726134d`) + `Hero`, `CategorySlider`, `OurStory`, `FeaturesBar`, `BranchSelector`; `Navbar.tsx` (mounts `CartSidebar`, cart badge), `UserMenu.tsx`; layouts `src/app/layout.tsx` + `src/app/(shop)/layout.tsx`; `src/lib/admin-ui-store.ts`.
+`src/lib/actions/settings.ts` (footer CRUD + transactional `reorderFooterLinks` — full id list rewritten to index positions, no dupes/gaps possible; `validateLink` URL scheme whitelist: `/…`, `#…`, `http(s)://` only — **blocks `javascript:` hrefs an admin might paste**); `src/lib/actions/faqs.ts` (FAQ CRUD + transactional `reorderFaqs`, mirrors the footer reorder pattern; public `getStorefrontFaqs` = active rows ordered by `order`, admin `getAdminFaqs` = all rows; mutations `revalidatePath("/")`); `src/components/layout/Footer.tsx` (RSC; `unstable_cache` key `footer-managed-links`, tag `footer-links`, TTL 3600; **no hardcoded fallback by design** — empty table or DB failure collapses the nav section rather than rendering dead links; zero client JS); `FooterLinksManager.tsx`, `FooterLinkModal.tsx`; homepage `src/app/(shop)/page.tsx` (**ISR 60** as of `726134d`) + `Hero`, `CategorySlider`, `OurStory`, `FaqsSection`, `BranchSelector`; `Navbar.tsx` (mounts `CartSidebar`, cart badge), `UserMenu.tsx`; layouts `src/app/layout.tsx` + `src/app/(shop)/layout.tsx`; `src/lib/admin-ui-store.ts`.
 
 ### 13.4 Step-by-Step Data Flow
 Footer: RSC read through the tagged cache → every settings write calls `updateTag("footer-links")` → next render is fresh (read-your-own-writes) with a 1-hour safety TTL behind it. Homepage: `getSliderCategories` (`isFeatured`, ordered `sliderOrder asc` + `createdAt desc` tie-break for determinism) with live category promos → `discountLabelFor` (strongest percentage → "N% OFF", any other live promo → "SALE") → ISR-60 HTML; category mutations `revalidatePath("/")`, promotion mutations bust the layout tree.
@@ -490,7 +490,7 @@ Footer: RSC read through the tagged cache → every settings write calls `update
 Catalog (slider fields), Promotions (badges), RBAC (settings gate). The footer's URL whitelist is a *security* control (stored-XSS-via-href) — do not relax it. The `(shop)` layout owns the single `<main>` and the navbar clearance padding; pages must not re-add `pt-16/20` (documented double-offset hazard).
 
 ### 13.6 Technical Debt & Vestigial Code
-- Hero/OurStory/FeaturesBar copy is hardcoded (fine; noting the boundary between managed and static content).
+- Hero/OurStory copy is hardcoded (fine; noting the boundary between managed and static content). The FAQ section is now admin-managed via the `Faq` table (see §13.3), no longer the hardcoded `FeaturesBar`.
 
 ---
 

@@ -1,6 +1,6 @@
 import BranchSelector from "@/components/BranchSelector";
 import CategorySlider from "@/components/CategorySlider";
-import FeaturesBar from "@/components/FeaturesBar";
+import FaqsSection from "@/components/FaqsSection";
 import Hero from "@/components/Hero";
 import OurStory from "@/components/OurStory";
 import PromoWidget from "@/components/PromoWidget";
@@ -102,7 +102,7 @@ export default async function ShopHomePage() {
       <div className="max-w-7xl mx-auto px-6 py-12">
         <BranchSelector />
       </div>
-      <FeaturesBar />
+      <FaqsSection />
       <OurStory />
     </div>
   );

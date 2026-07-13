@@ -226,7 +226,7 @@ Both have a 1-hour safety TTL. If no managed links exist yet (or the DB read thr
 | `/shop` | `Category` (all) + `Product` (available, narrowed by `?category=slug`) | Discount-priced catalog, **server-filtered** per request |
 | `/category/[slug]` | `getCategoryBySlug(slug)` → products by `categoryId` | **Any** category's landing page (featured or standard), one route |
 
-**Also on the homepage:** `Hero`, `OurStory`, `FeaturesBar`, and [`BranchSelector`](../src/components/BranchSelector.tsx) — an "Our Locations" editorial section with Schema.org `Bakery`/`CafeOrCoffeeShop` JSON-LD. Note `BranchSelector` is **hardcoded editorial content** (Menouf Boutique + Beba Café, static copy, static images) — it is *not* driven by the `Branch` table. The dead `/branches/[slug]` links it used to carry were **purged** in the July 2026 dead-link sweep; it links nowhere today.
+**Also on the homepage:** `Hero`, `OurStory`, [`FaqsSection`](../src/components/FaqsSection.tsx) (a Server Component reading the admin-managed `Faq` table via `getStorefrontFaqs`, emitting the `FAQPage` JSON-LD server-side and rendering the [`FaqAccordion`](../src/components/FaqAccordion.tsx) client island — this replaced the old hardcoded `FeaturesBar`), and [`BranchSelector`](../src/components/BranchSelector.tsx) — an "Our Locations" editorial section with Schema.org `Bakery`/`CafeOrCoffeeShop` JSON-LD. Note `BranchSelector` is **hardcoded editorial content** (Menouf Boutique + Beba Café, static copy, static images) — it is *not* driven by the `Branch` table. The dead `/branches/[slug]` links it used to carry were **purged** in the July 2026 dead-link sweep; it links nowhere today.
 
 ---
 
