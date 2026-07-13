@@ -40,8 +40,9 @@ vi.mock("@/lib/session", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { placeOrder, type CheckoutPayload } from "@/lib/actions/orders";
-import { getServerSession } from "@/lib/session";
+import { placeOrder, updateOrderStatus, type CheckoutPayload } from "@/lib/actions/orders";
+import { getServerSession, requireDashboardAccess } from "@/lib/session";
+import type { DashboardScope } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { DiscountType, FulfillmentMethod, OrderStatus } from "@/generated/prisma/enums";
 import { roundMoney } from "@/lib/discounts";
@@ -50,6 +51,7 @@ import type { PromotionLike } from "@/lib/discounts";
 const mockPrisma = prisma as unknown as DeepMockProxy<PrismaClient>;
 const mockedSession = vi.mocked(getServerSession);
 const mockedRevalidate = vi.mocked(revalidatePath);
+const mockedDashboardAccess = vi.mocked(requireDashboardAccess);
 
 // placeOrder's catch logs expected business rejections (unavailable variant)
 // via console.error — silence it so CI output stays clean.
@@ -142,6 +144,7 @@ beforeEach(() => {
   mockReset(mockPrisma);
   mockedSession.mockReset();
   mockedRevalidate.mockReset();
+  mockedDashboardAccess.mockReset();
 
   mockedSession.mockResolvedValue(null); // guest by default
   mockPrisma.order.count.mockResolvedValue(0); // no pending backlog
@@ -149,6 +152,7 @@ beforeEach(() => {
   stubSettings({}); // VAT 14% on, default delivery 35
   stubVariants([variantRow({ id: "v1", price: 100 })]);
   mockPrisma.order.create.mockResolvedValue({ id: "order_1", orderNumber: 1001 } as never);
+  mockPrisma.order.update.mockResolvedValue({ id: "order_1" } as never); // updateOrderStatus happy path
 
   // Interactive $transaction: run the callback with the same deep mock as `tx`.
   // A throw inside rejects the transaction (Prisma rolls back) — precisely the
@@ -513,5 +517,183 @@ describe("placeOrder — identity, snapshot & revalidation", () => {
     expect(data.items.create).toEqual([
       { variantId: "v1", productName: "Om Ali", variantName: "Medium", unitPrice: 100, quantity: 3 },
     ]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// updateOrderStatus — Structural RBAC & branch isolation
+//
+// The lifecycle-advance action. RBAC here is STRUCTURAL, not cosmetic: the
+// caller's role + branch are re-derived LIVE via requireDashboardAccess (which
+// reads the DB, not the token) and re-enforced on every call — sidebar
+// link-hiding is decoration; THIS is the gate (@rules/backend.md). We stub
+// requireDashboardAccess to project each identity, then prove the action's own
+// enforcement holds:
+//   • ADMIN   → may advance ANY order; the branch gate is never even consulted.
+//   • MANAGER → pinned to their branch; another branch — or an unassigned (null)
+//     order — is a hard Unauthorized with NO write (cross-branch leak guard).
+//   • status is re-validated against the real OrderStatus enum.
+//   • a successful write fans out revalidation to the admin surfaces only.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const ADMIN: DashboardScope = { userId: "admin_1", role: "ADMIN" };
+const CAIRO_MANAGER: DashboardScope = { userId: "mgr_1", role: "MANAGER", branchId: "branch_cairo" };
+
+describe("updateOrderStatus — authentication & input gates", () => {
+  it("rejects a caller who is neither ADMIN nor MANAGER (requireDashboardAccess throws)", async () => {
+    mockedDashboardAccess.mockRejectedValue(new Error("Unauthorized: authentication required."));
+    const res = await updateOrderStatus("order_1", OrderStatus.PREPARING);
+    expect(res).toEqual({ success: false, error: "Unauthorized." });
+    expect(mockPrisma.order.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing order id before any write", async () => {
+    mockedDashboardAccess.mockResolvedValue(ADMIN);
+    const res = await updateOrderStatus("", OrderStatus.PREPARING);
+    expect(res).toEqual({ success: false, error: "Missing order id." });
+    expect(mockPrisma.order.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateOrderStatus — status validation (real enum allow-list)", () => {
+  it("rejects an arbitrary/injected status string", async () => {
+    mockedDashboardAccess.mockResolvedValue(ADMIN);
+    const res = await updateOrderStatus("order_1", "DROP TABLE orders" as OrderStatus);
+    expect(res).toEqual({ success: false, error: "Invalid order status." });
+    expect(mockPrisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a wrong-case near-miss — the allow-list is EXACT", async () => {
+    mockedDashboardAccess.mockResolvedValue(ADMIN);
+    const res = await updateOrderStatus("order_1", "delivered" as OrderStatus);
+    expect(res).toEqual({ success: false, error: "Invalid order status." });
+    expect(mockPrisma.order.update).not.toHaveBeenCalled();
+  });
+
+  // Parametrized over the REAL enum: proves every legitimate member is accepted
+  // and that the guard's allow-list is literally `Object.values(OrderStatus)`.
+  it.each(Object.values(OrderStatus))("accepts the real status %s", async (status) => {
+    mockedDashboardAccess.mockResolvedValue(ADMIN);
+    const res = await updateOrderStatus("order_1", status);
+    expect(res).toEqual({ success: true });
+    expect(mockPrisma.order.update).toHaveBeenCalledWith({
+      where: { id: "order_1" },
+      data: { status },
+      select: { id: true },
+    });
+  });
+});
+
+describe("updateOrderStatus — ADMIN super-admin power", () => {
+  it("updates an order WITHOUT consulting the branch gate (branch is irrelevant to an admin)", async () => {
+    mockedDashboardAccess.mockResolvedValue(ADMIN);
+    const res = await updateOrderStatus("order_1", OrderStatus.DELIVERED);
+    expect(res).toEqual({ success: true });
+    // The branch-ownership read is MANAGER-only. An admin never inspects the
+    // order's branch, so no branch value — assigned or null — can gate them.
+    expect(mockPrisma.order.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.order.update).toHaveBeenCalledWith({
+      where: { id: "order_1" },
+      data: { status: OrderStatus.DELIVERED },
+      select: { id: true },
+    });
+  });
+
+  it("updates an UNASSIGNED (branchId: null) order all the same", async () => {
+    mockedDashboardAccess.mockResolvedValue(ADMIN);
+    const res = await updateOrderStatus("order_unassigned", OrderStatus.CANCELLED);
+    expect(res).toEqual({ success: true });
+    expect(mockPrisma.order.findUnique).not.toHaveBeenCalled(); // proof: branch never checked
+    expect(mockPrisma.order.update).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("updateOrderStatus — MANAGER branch lock (cross-branch data-leak protection)", () => {
+  it("allows a manager to update an order in their OWN branch", async () => {
+    mockedDashboardAccess.mockResolvedValue(CAIRO_MANAGER);
+    mockPrisma.order.findUnique.mockResolvedValue({ branchId: "branch_cairo" } as never);
+
+    const res = await updateOrderStatus("order_1", OrderStatus.SHIPPED);
+    expect(res).toEqual({ success: true });
+    expect(mockPrisma.order.findUnique).toHaveBeenCalledWith({
+      where: { id: "order_1" },
+      select: { branchId: true },
+    });
+    expect(mockPrisma.order.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("REJECTS a manager updating ANOTHER branch's order — and performs NO write", async () => {
+    mockedDashboardAccess.mockResolvedValue(CAIRO_MANAGER);
+    mockPrisma.order.findUnique.mockResolvedValue({ branchId: "branch_alexandria" } as never);
+
+    const res = await updateOrderStatus("order_1", OrderStatus.DELIVERED);
+    expect(res).toEqual({
+      success: false,
+      error: "Unauthorized: that order belongs to another branch.",
+    });
+    expect(mockPrisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it("REJECTS a manager updating an UNASSIGNED (null) order — and performs NO write", async () => {
+    mockedDashboardAccess.mockResolvedValue(CAIRO_MANAGER);
+    mockPrisma.order.findUnique.mockResolvedValue({ branchId: null } as never);
+
+    const res = await updateOrderStatus("order_1", OrderStatus.DELIVERED);
+    expect(res).toEqual({
+      success: false,
+      error: "Unauthorized: that order belongs to another branch.",
+    });
+    expect(mockPrisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it("returns 'no longer exists' when the manager's target order is gone", async () => {
+    mockedDashboardAccess.mockResolvedValue(CAIRO_MANAGER);
+    mockPrisma.order.findUnique.mockResolvedValue(null);
+
+    const res = await updateOrderStatus("ghost", OrderStatus.DELIVERED);
+    expect(res).toEqual({ success: false, error: "That order no longer exists." });
+    expect(mockPrisma.order.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateOrderStatus — cache fan-out revalidation", () => {
+  it("revalidates exactly the admin surfaces (/admin/orders + /admin) on success", async () => {
+    mockedDashboardAccess.mockResolvedValue(ADMIN);
+    await updateOrderStatus("order_1", OrderStatus.DELIVERED);
+    expect(mockedRevalidate).toHaveBeenCalledWith("/admin/orders");
+    expect(mockedRevalidate).toHaveBeenCalledWith("/admin");
+    expect(mockedRevalidate).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT revalidate /my-orders — that page is force-dynamic, so it self-refreshes", async () => {
+    // Unlike placeOrder, updateOrderStatus deliberately omits /my-orders: the
+    // customer page src/app/(shop)/my-orders/page.tsx declares
+    // `export const dynamic = "force-dynamic"`, so it re-queries the live DB on
+    // every visit and can never serve a stale status. Asserting the ABSENCE
+    // documents that intent and guards against a needless revalidate creeping in.
+    mockedDashboardAccess.mockResolvedValue(ADMIN);
+    await updateOrderStatus("order_1", OrderStatus.DELIVERED);
+    expect(mockedRevalidate).not.toHaveBeenCalledWith("/my-orders");
+  });
+
+  it("does NOT revalidate anything when the update is rejected (manager cross-branch)", async () => {
+    mockedDashboardAccess.mockResolvedValue(CAIRO_MANAGER);
+    mockPrisma.order.findUnique.mockResolvedValue({ branchId: "branch_alexandria" } as never);
+    await updateOrderStatus("order_1", OrderStatus.DELIVERED);
+    expect(mockedRevalidate).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateOrderStatus — concurrent deletion (P2025)", () => {
+  it("translates a P2025 (order deleted mid-update) into a friendly message", async () => {
+    // Let the DB own the invariant: no racy pre-check — the caught P2025 IS the
+    // "order vanished between the gate and the write" path (@rules/database.md).
+    mockedDashboardAccess.mockResolvedValue(ADMIN);
+    const notFound = Object.assign(new Error("Record to update not found."), { code: "P2025" });
+    mockPrisma.order.update.mockRejectedValue(notFound);
+
+    const res = await updateOrderStatus("order_1", OrderStatus.DELIVERED);
+    expect(res).toEqual({ success: false, error: "That order no longer exists." });
   });
 });
