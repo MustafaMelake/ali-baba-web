@@ -34,6 +34,13 @@ export const ourFileRouter = {
     .onUploadComplete(({ metadata, file }) => {
       return { uploadedBy: metadata.userId, ufsUrl: file.ufsUrl };
     }),
+
+  // Single card image for a storefront "Our Locations" entry.
+  locationImage: f({ image: { maxFileSize: "4MB", maxFileCount: 1 } })
+    .middleware(({ req }) => requireAdminUploader(req))
+    .onUploadComplete(({ metadata, file }) => {
+      return { uploadedBy: metadata.userId, ufsUrl: file.ufsUrl };
+    }),
 } satisfies FileRouter;
 
 export type OurFileRouter = typeof ourFileRouter;

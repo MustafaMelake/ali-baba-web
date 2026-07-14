@@ -9,6 +9,13 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    // CLI-only connection (migrate deploy / studio / db push). Prefer the DIRECT
+    // (non-pooled) Neon URL so migrations run over a real session connection —
+    // the pooler (transaction mode) can't hold the advisory lock / run DDL that
+    // `migrate deploy` needs, and pinning a pooled connection open stalls it.
+    // The app RUNTIME stays on the pooled DATABASE_URL via the pg driver adapter
+    // in src/lib/prisma.ts — that split is intentional. Falls back to
+    // DATABASE_URL locally where a separate DIRECT_URL may not be set.
+    url: process.env["DIRECT_URL"] ?? process.env["DATABASE_URL"],
   },
 });

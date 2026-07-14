@@ -533,6 +533,50 @@ model Faq {
   @@index([isActive, order])
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Storefront locations showcase (admin-managed)
+//
+// Powers the "Our Locations" homepage section (BranchSelector) — an editorial,
+// display-only card per physical storefront. This is DELIBERATELY separate from
+// the commerce `Branch` model above: `Branch` is the fulfillment/RBAC/delivery-
+// fee unit wired into Orders and Users, whereas `Location` carries only the
+// marketing copy + SEO metadata for the homepage. There is no foreign key
+// between them and no cart/order path here (mirrors the FAQ model's shape). The
+// storefront reads only active rows (ordered by `order`); the admin console
+// reads every row. Content lives on the homepage ("/"), so mutations bust that
+// route's ISR cache.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Location {
+  id          String @id @default(cuid())
+  /// Category pill label, e.g. "Patisserie" or "Café & Lounge".
+  tag         String
+  /// Opening-hours line, e.g. "09:00 AM - 11:00 PM".
+  hours       String
+  /// Headline for the card, e.g. "Menouf Boutique".
+  title       String
+  /// Editorial paragraph describing the location.
+  description String
+  /// Card image URL (an UploadThing/absolute URL or a /public path).
+  imageUrl    String
+  /// City/area for the LocalBusiness JSON-LD `addressLocality`, e.g. "Menouf".
+  locality    String
+  /// schema.org LocalBusiness `@type` for the JSON-LD, e.g. "Bakery" or
+  /// "CafeOrCoffeeShop". A plain content string — unrelated to the removed
+  /// Category/MenuPage discriminator columns.
+  type        String
+  /// Ascending display position on the storefront (lower = earlier).
+  order       Int    @default(0)
+  /// Hidden from the storefront when false, without deleting the row.
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Matches the storefront read: where isActive, ordered by `order` ascending.
+  @@index([isActive, order])
+}
+
 model FooterLink {
   id    String @id @default(cuid())
   /// Display text, e.g. "Our Story" or "Instagram".

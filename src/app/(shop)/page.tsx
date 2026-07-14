@@ -5,6 +5,7 @@ import Hero from "@/components/Hero";
 import OurStory from "@/components/OurStory";
 import PromoWidget from "@/components/PromoWidget";
 import { prisma } from "@/lib/prisma";
+import { getStorefrontLocations } from "@/lib/actions/locations";
 import { livePromotionWhere } from "@/lib/discounts";
 import { DiscountType } from "@/generated/prisma/enums";
 
@@ -85,7 +86,12 @@ async function getSliderCategories() {
 }
 
 export default async function ShopHomePage() {
-  const sliderCategories = await getSliderCategories();
+  // Parallel reads — the featured-category slider and the "Our Locations"
+  // showcase are independent, so fetch them together rather than in a waterfall.
+  const [sliderCategories, locations] = await Promise.all([
+    getSliderCategories(),
+    getStorefrontLocations(),
+  ]);
 
   return (
     // Navbar + Footer come from the (shop) layout, which also owns the <main>
@@ -99,9 +105,9 @@ export default async function ShopHomePage() {
 
       <CategorySlider categories={sliderCategories} />
 
-      <div className="max-w-7xl mx-auto px-6 py-12">
-        <BranchSelector />
-      </div>
+      {/* Self-contained section (owns its own container + padding), like
+          FaqsSection/OurStory. Renders nothing when no active locations. */}
+      <BranchSelector locations={locations} />
       <FaqsSection />
       <OurStory />
     </div>
