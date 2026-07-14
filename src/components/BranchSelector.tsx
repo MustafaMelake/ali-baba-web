@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { motion, Variants } from "framer-motion";
 import { Clock } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 // إعدادات الأنيميشن لظهور العناصر بسلاسة عند السكرول
 const fadeUpVariant: Variants = {
@@ -10,33 +11,50 @@ const fadeUpVariant: Variants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.8, ease: "easeOut" } },
 };
 
-export default function BranchSelector() {
-  // Schema Markup for SEO (Local Business)
+// Pure presentational leaf: the location data is fetched server-side (homepage)
+// via getStorefrontLocations and handed down as props. This keeps the animated
+// grid a thin "use client" island over server state — no client data layer.
+type Location = {
+  id: string;
+  tag: string;
+  hours: string;
+  title: string;
+  description: string;
+  imageUrl: string;
+  locality: string;
+  type: string;
+};
+
+// Two-tone editorial palette, alternated by position — preserving the original
+// green Patisserie / blue Café look for the first two cards and cycling beyond.
+const TAG_STYLES = [
+  "bg-[#829E87]/20 text-[#5C7561]", // even — Patisserie green
+  "bg-[#759EBD]/20 text-[#4A7292]", // odd  — Café blue
+];
+
+export default function BranchSelector({
+  locations,
+}: {
+  locations: Location[];
+}) {
+  // Nothing active → render nothing at all (no empty section, no bare JSON-LD),
+  // mirroring FaqsSection.
+  if (locations.length === 0) return null;
+
+  // Schema Markup for SEO (LocalBusiness) — built from the same rows the grid
+  // renders, so the markup and the crawler payload can never drift apart.
   const jsonLd = {
     "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "Bakery",
-        name: "Ali Baba Patisserie - Menouf",
-        description: "Premium cakes, tarts, and oriental sweets in Menouf.",
-        address: {
-          "@type": "PostalAddress",
-          addressLocality: "Menouf",
-          addressCountry: "EG",
-        },
+    "@graph": locations.map((location) => ({
+      "@type": location.type,
+      name: `Ali Baba — ${location.title}`,
+      description: location.description,
+      address: {
+        "@type": "PostalAddress",
+        addressLocality: location.locality,
+        addressCountry: "EG",
       },
-      {
-        "@type": "CafeOrCoffeeShop",
-        name: "Ali Baba Café - Beba",
-        description:
-          "Specialty coffee, artisanal beverages, and a relaxing lounge in Beba.",
-        address: {
-          "@type": "PostalAddress",
-          addressLocality: "Beba",
-          addressCountry: "EG",
-        },
-      },
-    ],
+    })),
   };
 
   return (
@@ -72,94 +90,74 @@ export default function BranchSelector() {
           </p>
         </motion.div>
 
-        {/* Asymmetrical Grid (Editorial Style) */}
+        {/* Asymmetrical Grid (Editorial Style) — every odd card is nudged down and
+            flips its image/text order for the staggered, magazine-style rhythm. */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-16 lg:gap-24">
-          {/* Column 1: Menouf Branch (Text First, Image Second) */}
-          <motion.article
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true, margin: "-100px" }}
-            variants={fadeUpVariant}
-            className="flex flex-col gap-8"
-          >
-            {/* Text Content */}
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center gap-4">
-                <span className="inline-flex px-3 py-1 rounded-full bg-[#829E87]/20 text-[#5C7561] text-xs font-bold uppercase tracking-widest">
-                  Patisserie
-                </span>
-                <span className="flex items-center gap-1 text-sm text-gray-400 font-medium">
-                  <Clock className="w-3.5 h-3.5" /> 09:00 AM - 11:00 PM
-                </span>
-              </div>
+          {locations.map((location, index) => {
+            const isShifted = index % 2 === 1;
+            const tagStyle = TAG_STYLES[index % TAG_STYLES.length];
 
-              <h3 className="font-serif text-3xl md:text-4xl font-medium text-foreground">
-                Menouf Boutique
-              </h3>
+            return (
+              <motion.article
+                key={location.id}
+                initial="hidden"
+                whileInView="visible"
+                viewport={{ once: true, margin: "-100px" }}
+                variants={fadeUpVariant}
+                // Shifted columns drop down on desktop to create the "staircase".
+                className={cn("flex flex-col gap-8", isShifted && "md:mt-32")}
+              >
+                {/* Image — DOM-first, then reordered per column: even cards show
+                    text above image everywhere; shifted cards show text first on
+                    mobile but image first on desktop. */}
+                <div
+                  className={cn(
+                    "relative w-full aspect-[4/3] rounded-[2rem] overflow-hidden group order-2",
+                    isShifted && "md:order-1",
+                  )}
+                >
+                  <Image
+                    src={location.imageUrl}
+                    alt={`${location.title} — ${location.locality}`}
+                    fill
+                    className="object-cover transition-transform duration-700 group-hover:scale-105"
+                    sizes="(max-width: 768px) 100vw, 50vw"
+                  />
+                  <div className="absolute inset-0 bg-black/5 group-hover:bg-transparent transition-colors duration-500"></div>
+                </div>
 
-              <p className="text-gray-500 text-lg leading-relaxed">
-                Our flagship destination for indulgence. Featuring an exquisite
-                selection of custom cakes, delicate tarts, and our signature
-                oriental pastries crafted daily.
-              </p>
-            </div>
+                {/* Text Content */}
+                <div
+                  className={cn(
+                    "flex flex-col gap-4 order-1",
+                    isShifted && "md:order-2",
+                  )}
+                >
+                  <div className="flex items-center gap-4">
+                    <span
+                      className={cn(
+                        "inline-flex px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest",
+                        tagStyle,
+                      )}
+                    >
+                      {location.tag}
+                    </span>
+                    <span className="flex items-center gap-1 text-sm text-gray-400 font-medium">
+                      <Clock className="w-3.5 h-3.5" /> {location.hours}
+                    </span>
+                  </div>
 
-            {/* Image */}
-            <div className="relative w-full aspect-[4/3] rounded-[2rem] overflow-hidden group">
-              <Image
-                src="/locat1.jpg" // تأكد من إضافة الصورة في مجلد public
-                alt="Display of premium cakes and pastries at Menouf branch"
-                fill
-                className="object-cover transition-transform duration-700 group-hover:scale-105"
-                sizes="(max-width: 768px) 100vw, 50vw"
-              />
-              <div className="absolute inset-0 bg-black/5 group-hover:bg-transparent transition-colors duration-500"></div>
-            </div>
-          </motion.article>
+                  <h3 className="font-serif text-3xl md:text-4xl font-medium text-foreground">
+                    {location.title}
+                  </h3>
 
-          {/* Column 2: Beba Branch (Image First, Text Second - Shifted down) */}
-          <motion.article
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true, margin: "-100px" }}
-            variants={fadeUpVariant}
-            // إزاحة العمود الثاني للأسفل في الشاشات الكبيرة لعمل تأثير السلالم (Staggered)
-            className="flex flex-col gap-8 md:mt-32"
-          >
-            {/* Image */}
-            <div className="relative w-full aspect-[4/3] rounded-[2rem] overflow-hidden group order-2 md:order-1">
-              <Image
-                src="/locate2.jpg" // تأكد من إضافة الصورة في مجلد public
-                alt="Relaxing atmosphere and specialty drinks at Beba Cafe"
-                fill
-                className="object-cover transition-transform duration-700 group-hover:scale-105"
-                sizes="(max-width: 768px) 100vw, 50vw"
-              />
-              <div className="absolute inset-0 bg-black/5 group-hover:bg-transparent transition-colors duration-500"></div>
-            </div>
-
-            {/* Text Content */}
-            <div className="flex flex-col gap-4 order-1 md:order-2">
-              <div className="flex items-center gap-4">
-                <span className="inline-flex px-3 py-1 rounded-full bg-[#759EBD]/20 text-[#4A7292] text-xs font-bold uppercase tracking-widest">
-                  Café & Lounge
-                </span>
-                <span className="flex items-center gap-1 text-sm text-gray-400 font-medium">
-                  <Clock className="w-3.5 h-3.5" /> 07:00 AM - 12:00 AM
-                </span>
-              </div>
-
-              <h3 className="font-serif text-3xl md:text-4xl font-medium text-foreground">
-                Beba Café
-              </h3>
-
-              <p className="text-gray-500 text-lg leading-relaxed">
-                A serene escape offering artisanal beverages, specialty coffee,
-                and refreshing signature drinks. The perfect atmosphere to
-                unwind or connect.
-              </p>
-            </div>
-          </motion.article>
+                  <p className="text-gray-500 text-lg leading-relaxed">
+                    {location.description}
+                  </p>
+                </div>
+              </motion.article>
+            );
+          })}
         </div>
       </div>
     </section>
