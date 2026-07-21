@@ -42,7 +42,7 @@ function uniqueViolationMessage(err: unknown): string | null {
 
 /** Validate + normalize the shared name/slug/deliveryFee fields. Slug is
  *  slugified so an invalid value can never reach the unique column; the fee is
- *  coerced so a client bug can never push NaN into the Float column. */
+ *  coerced so a client bug can never push NaN into the Decimal column. */
 function validateBranchInput(
   data: { name: string; slug: string; deliveryFee?: number },
 ): { name: string; slug: string; deliveryFee: number } | { error: string } {

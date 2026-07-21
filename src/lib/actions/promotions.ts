@@ -25,6 +25,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
 import { DiscountType } from "@/generated/prisma/enums";
+import { storeDateEnd, storeDateStart } from "@/lib/timezone";
 
 const VALID_TYPES = new Set<string>(Object.values(DiscountType));
 
@@ -69,6 +70,30 @@ function cleanIds(ids: string[] | undefined): string[] {
   return Array.from(new Set((ids ?? []).filter(Boolean)));
 }
 
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Resolve one end of a promotion's live window.
+ *
+ * The modal submits `<input type="date">` values ("2026-07-21"), and a
+ * promotion window is a *business* window — so both edges resolve in
+ * Africa/Cairo, never UTC. `new Date("2026-07-21")` is 00:00 UTC = 02:00/03:00
+ * Cairo, which meant an `endDate` picked as the promotion's last day killed it
+ * a couple of hours into that very morning (`livePromotionWhere` tests
+ * `endDate >= now`), and a same-day start/end promotion never ran at all.
+ * Date-only → Cairo day edges (start 00:00, end 23:59:59.999); a full ISO
+ * timestamp is an explicit instant and is honoured as-is.
+ */
+function parseBoundary(value: string, edge: "start" | "end"): Date | null {
+  const raw = value?.trim() ?? "";
+  if (!raw) return null;
+  if (DATE_ONLY.test(raw)) {
+    return edge === "start" ? storeDateStart(raw) : storeDateEnd(raw);
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 /**
  * Bust every surface a promotion can change. The layout-scoped "/" call
  * invalidates the whole storefront route tree in one shot — home badges and
@@ -100,10 +125,10 @@ function validatePromotion(input: PromotionInput): ValidatedPromotion | { error:
     return { error: "A percentage discount can't exceed 100%." };
   }
 
-  const startDate = new Date(input.startDate);
-  const endDate = new Date(input.endDate);
-  if (Number.isNaN(startDate.getTime())) return { error: "Start date is invalid." };
-  if (Number.isNaN(endDate.getTime())) return { error: "End date is invalid." };
+  const startDate = parseBoundary(input.startDate, "start");
+  const endDate = parseBoundary(input.endDate, "end");
+  if (!startDate) return { error: "Start date is invalid." };
+  if (!endDate) return { error: "End date is invalid." };
   if (endDate < startDate) {
     return { error: "End date must be on or after the start date." };
   }

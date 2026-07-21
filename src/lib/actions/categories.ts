@@ -2,8 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/session";
-import { prismaErrorCode, slugify } from "@/lib/action-utils";
+import { ensureAdmin, prismaErrorCode, slugify } from "@/lib/action-utils";
 import { deleteUploadedFiles } from "@/lib/uploadthing-server";
 
 /** The transactional client type, derived straight from `prisma.$transaction`. */
@@ -61,7 +60,8 @@ export type CreateCategoryResult =
 export async function createCategory(
   input: CreateCategoryInput,
 ): Promise<CreateCategoryResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
 
   const name = input.name?.trim() ?? "";
   if (name.length < 2) {
@@ -130,7 +130,8 @@ export type UpdateCategoryResult =
 export async function updateCategory(
   input: UpdateCategoryInput,
 ): Promise<UpdateCategoryResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
 
   const name = input.name?.trim() ?? "";
   if (name.length < 2) {
@@ -195,7 +196,8 @@ export type DeleteCategoryResult = { success: true } | { success: false; error: 
  * between the check and the delete.
  */
 export async function deleteCategory(id: string): Promise<DeleteCategoryResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
 
   if (!id) {
     return { success: false, error: "Missing category id." };

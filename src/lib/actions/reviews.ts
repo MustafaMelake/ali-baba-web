@@ -3,8 +3,8 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { getServerSession, requireAdmin } from "@/lib/session";
-import { prismaErrorCode } from "@/lib/action-utils";
+import { getServerSession } from "@/lib/session";
+import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
 
 export type SubmitReviewResult =
   | { success: true; message: string }
@@ -149,7 +149,8 @@ export async function submitProductReview(
  * approved review appears, and the moderation list so its status updates.
  */
 export async function approveReview(reviewId: string): Promise<ReviewModerationResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
   if (!reviewId) return { success: false, error: "Missing review id." };
 
   try {
@@ -176,7 +177,8 @@ export async function approveReview(reviewId: string): Promise<ReviewModerationR
  * and deleting published ones).
  */
 export async function deleteReview(reviewId: string): Promise<ReviewModerationResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
   if (!reviewId) return { success: false, error: "Missing review id." };
 
   try {

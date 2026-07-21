@@ -2,8 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/session";
-import { prismaErrorCode, slugify } from "@/lib/action-utils";
+import { ensureAdmin, prismaErrorCode, slugify } from "@/lib/action-utils";
 
 /** The transactional client type, derived straight from `prisma.$transaction`. */
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -52,7 +51,8 @@ export type MenuActionResult<T = unknown> =
 export async function createMenuCategory(
   input: MenuCategoryInput,
 ): Promise<MenuActionResult<{ id: string }>> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
 
   const title = input.title?.trim() ?? "";
   if (title.length < 2) {
@@ -91,7 +91,8 @@ export async function createMenuCategory(
 export async function updateMenuCategory(
   input: { id: string } & MenuCategoryInput,
 ): Promise<MenuActionResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
 
   const title = input.title?.trim() ?? "";
   if (!input.id) return { success: false, error: "Missing category id." };
@@ -129,7 +130,8 @@ export async function updateMenuCategory(
 }
 
 export async function deleteMenuCategory(id: string): Promise<MenuActionResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
   if (!id) return { success: false, error: "Missing category id." };
 
   try {
@@ -168,7 +170,8 @@ function validateItem(name: string, price: number): string | null {
 export async function createMenuItem(
   input: MenuItemInput,
 ): Promise<MenuActionResult<{ id: string }>> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
 
   const name = input.name?.trim() ?? "";
   const error = validateItem(name, input.price);
@@ -208,7 +211,8 @@ export async function createMenuItem(
 export async function updateMenuItem(
   input: { id: string; name: string; price: number },
 ): Promise<MenuActionResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
 
   const name = input.name?.trim() ?? "";
   const error = validateItem(name, input.price);
@@ -232,7 +236,8 @@ export async function updateMenuItem(
 }
 
 export async function deleteMenuItem(id: string): Promise<MenuActionResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
   if (!id) return { success: false, error: "Missing item id." };
 
   try {
@@ -264,8 +269,9 @@ export type BulkAdjustResult =
  * item count), but — unlike Prisma's atomic `{ multiply }` operator — the new
  * value is wrapped in `ROUND(…, 2)` so repeated adjustments can never accumulate
  * binary-float drift (e.g. 19.99 → ×1.1 → 21.989 → 21.99, not 21.98900000001).
- * `price` is a `double precision` column, so the product is cast to `numeric`
- * before rounding (Postgres has no two-argument `round(double precision)`).
+ * `price` is a `Decimal` (Postgres `numeric`) column, but multiplying it by the
+ * float parameter yields `double precision`, so the product is cast back to
+ * `numeric` before rounding (there is no two-argument `round(double precision)`).
  * `updatedAt` is set explicitly because raw SQL bypasses Prisma's `@updatedAt`.
  * Because all items are scaled by the same factor, a fixed-price category stays
  * internally consistent (every item remains equal).
@@ -274,7 +280,8 @@ export async function bulkAdjustCategoryPrices(
   categoryId: string,
   percentage: number,
 ): Promise<BulkAdjustResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
 
   if (!categoryId) return { success: false, error: "Missing category." };
   if (!Number.isFinite(percentage)) {

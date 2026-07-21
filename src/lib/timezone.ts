@@ -92,3 +92,43 @@ export function storeMonthStart(now: Date = new Date()): Date {
   const { year, month } = storeDayParts(now);
   return utcInstantOfStoreMidnight(Date.UTC(year, month - 1, 1));
 }
+
+/** Parse a "YYYY-MM-DD" calendar date into numeric parts; null when malformed. */
+function parseDateOnly(value: string): { year: number; month: number; day: number } | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value?.trim() ?? "");
+  if (!m) return null;
+  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year, month, day };
+}
+
+/**
+ * The exact UTC instant a store-timezone calendar DATE begins (00:00 Cairo).
+ * `dateOnly` is the "YYYY-MM-DD" an `<input type="date">` submits.
+ *
+ * Route EVERY date-only business boundary through here: `new Date("2026-07-21")`
+ * parses as 00:00 **UTC**, which is 02:00/03:00 Cairo — so a window built that
+ * way is systematically shifted off the store day it was meant to describe.
+ */
+export function storeDateStart(dateOnly: string): Date | null {
+  const parts = parseDateOnly(dateOnly);
+  if (!parts) return null;
+  return utcInstantOfStoreMidnight(Date.UTC(parts.year, parts.month - 1, parts.day));
+}
+
+/**
+ * The exact UTC instant a store-timezone calendar DATE ends — the final
+ * millisecond of that Cairo day. Use for an INCLUSIVE end boundary (`lte`/`gte`
+ * against `now`), so a window whose last day is `dateOnly` stays open until
+ * Cairo midnight instead of closing hours into the morning.
+ */
+export function storeDateEnd(dateOnly: string): Date | null {
+  const parts = parseDateOnly(dateOnly);
+  if (!parts) return null;
+  // Start of the NEXT calendar day, minus 1ms (Date.UTC normalizes overflow,
+  // so day+1 rolls months/years correctly).
+  const nextDayStart = utcInstantOfStoreMidnight(
+    Date.UTC(parts.year, parts.month - 1, parts.day + 1),
+  );
+  return new Date(nextDayStart.getTime() - 1);
+}

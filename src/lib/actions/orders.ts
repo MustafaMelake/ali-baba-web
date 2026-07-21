@@ -33,6 +33,15 @@ import { checkoutSchema } from "@/lib/validators";
  */
 const MAX_PENDING_ORDERS_PER_PHONE = 3;
 
+/**
+ * Marks a throw as a *domain* failure whose message is written for the customer
+ * (e.g. "Chocolate Cake is no longer available."), so the catch below can pass
+ * it through verbatim. Anything else — a Prisma fault, a driver error — falls to
+ * the generic message instead of leaking internal text into the checkout UI.
+ * Module-local by necessity: a "use server" file may only EXPORT async functions.
+ */
+class OrderLineUnavailableError extends Error {}
+
 export interface CheckoutPayload {
   items: { variantId: string; quantity: number }[];
   fulfillment: FulfillmentMethod;
@@ -179,7 +188,7 @@ export async function placeOrder(
           !dbVariant.isAvailable ||
           !dbVariant.product.isAvailable
         ) {
-          throw new Error(
+          throw new OrderLineUnavailableError(
             `${dbVariant?.product.name ?? "An item in your cart"} is no longer available.`,
           );
         }
@@ -236,7 +245,7 @@ export async function placeOrder(
         : 0;
       // Sum of three clean 2-dp values, rounded once more: binary addition of
       // 2-dp floats can itself reintroduce an epsilon (the 0.1 + 0.2 class),
-      // and this is the last stop before the value hits the Float column.
+      // and this is the last stop before the value hits the Decimal column.
       const totalAmount = roundMoney(subtotal + deliveryFee + vat);
 
       // إنشاء الأوردر مع سطوره في عملية واحدة (nested write).
@@ -273,10 +282,18 @@ export async function placeOrder(
       orderId: newOrder.id,
     };
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Could not place your order.";
+    // Only a deliberate domain throw carries a customer-safe message. Every
+    // other failure (Prisma fault, driver error) gets the generic line — a
+    // raw `err.message` here would surface internal schema text at checkout,
+    // e.g. a P2002 on the sequential orderNumber under concurrent placement.
     console.error("placeOrder failed:", err);
-    return { success: false, error: message };
+    return {
+      success: false,
+      error:
+        err instanceof OrderLineUnavailableError
+          ? err.message
+          : "Could not place your order. Please try again.",
+    };
   }
 }
 
@@ -290,7 +307,7 @@ export async function placeOrder(
 export async function updateOrderStatus(
   orderId: string,
   status: OrderStatus,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: true } | { success: false; error: string }> {
   // ADMIN or MANAGER only; role + branch resolved live from the DB.
   let scope;
   try {
