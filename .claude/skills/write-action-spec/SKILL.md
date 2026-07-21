@@ -1,6 +1,6 @@
 ---
 name: write-action-spec
-description: Produce a reviewable Markdown spec sheet for an Ali Baba Server Action BEFORE any code is written — the contract, auth tier, Zod schema, edge cases, transaction bounds, and cache fan-out, decided and agreed up front. Use whenever the user is about to add or substantially refactor a mutation in src/lib/actions/** or src/app/admin/products/actions.ts, asks to "spec out"/"design"/"plan" an action, describes a new write ("users should be able to cancel their own order", "admins need to bulk-adjust menu prices"), or wants the contract for an action reviewed before implementing. Prefer this over jumping straight to code whenever the auth tier, the revalidation fan-out, or the failure modes are not yet settled — those are the decisions that are expensive to discover halfway through an implementation. Hand the approved spec to scaffold-server-action to write the actual file.
+description: Produce a reviewable Markdown spec sheet for an Ali Baba Server Action BEFORE any code is written — verifying against prisma/schema.prisma that the models, relations and columns actually exist, then pinning down the contract, auth tier, Zod schema, edge cases, transaction bounds, and cache fan-out. Raises a Blocker with the required Prisma additions when the schema cannot support the action. Use whenever the user is about to add or substantially refactor a mutation in src/lib/actions/** or src/app/admin/products/actions.ts, asks to "spec out"/"design"/"plan" an action, describes a new write ("users should be able to cancel their own order", "admins need to bulk-adjust menu prices"), or wants the contract for an action reviewed before implementing. Prefer this over jumping straight to code whenever the auth tier, the revalidation fan-out, or the failure modes are not yet settled — those are the decisions that are expensive to discover halfway through an implementation. Hand the approved spec to scaffold-server-action to write the actual file.
 ---
 
 # Write an Action Spec
@@ -43,6 +43,69 @@ If the entity already exists, **check how its siblings are written before specci
 (`grep` the domain file). Matching an established local pattern beats inventing a
 new one, and the sibling usually reveals the edge cases the request forgot.
 
+## Step 0 — Verify the schema before writing any spec content
+
+**Open `prisma/schema.prisma` and confirm every model, relation, and column the
+action touches actually exists.** Do this before the tier, before the Zod schema,
+before anything — and never from memory or from what the request implies.
+
+A spec is dangerous precisely because it reads as authoritative. One written against
+a table that doesn't exist looks completely implementable — correct guards, plausible
+Prisma calls, a sensible fan-out — and the gap only surfaces when someone tries to
+build it. That wastes the review the spec existed to earn.
+
+**Check three levels, not one.** Stopping at "does the model exist" is the trap: the
+models are usually right there and the *relationship* between them is what's missing.
+
+1. **Models** — every one named in the payload or the write.
+2. **Relations** — the FK that joins them. Two models existing does not mean they're connected.
+3. **Columns** — the specific fields being read or written, including their types.
+
+```bash
+grep -n -A25 "^model <Name> " prisma/schema.prisma      # per model: fields + relations
+grep -niE "<column>|<concept>" prisma/schema.prisma     # does this concept exist at all?
+```
+
+A worked case: a request to "update stock quantity for a variant at a branch" names
+`ProductVariant` and `Branch`, and **both exist** — a model-level check passes
+cleanly. But `ProductVariant` has only `isAvailable: Boolean` and no quantity, and
+`Branch` relates to `User` and `Order` and nothing else. There is no join and no
+count. The action is unbuildable, and only a relation-and-column-level check catches it.
+
+### When something is missing
+
+Lead the output with a **Blocker** section — before any spec content, so it cannot be
+skimmed past — containing the Prisma additions the action requires:
+
+```markdown
+## ⚠️ Blocker — schema does not support this action
+
+<one line per gap, each citing `schema.prisma:<line>` for what IS there>
+
+​```prisma
+model NewThing {
+  // the additions required, with onDelete policies chosen deliberately
+}
+​```
+
+`schema-guardian` must review this migration before implementation.
+```
+
+Then continue the spec, clearly marked **provisional — not implementable until the
+migration lands**. Continuing is deliberate: the act of speccing is what surfaces the
+consequences that should shape the schema (does the order path decrement this? does
+the cart have branch context at all?), and those belong in front of the user *before*
+they design the migration, not after. What must never happen is a spec that reads as
+ready to build when it isn't — the Blocker header is what prevents that.
+
+If the missing structure is large enough that the whole design depends on unanswered
+schema questions, say so and stop; a provisional spec resting on five guesses is
+worse than a clear "decide the model first."
+
+Choose `onDelete` policies deliberately in any proposed model and justify them —
+`database.md` treats those policies as the data-safety contract, and a Cascade
+proposed by reflex on the order chain destroys history.
+
 ## Decide the auth tier — five options, not two
 
 This is the decision most worth slowing down for, because getting it wrong is a
@@ -78,9 +141,15 @@ section rather than reconstructing the shapes from memory.
 Use this structure. Keep it tight; a spec nobody reads protects nothing.
 
 ```markdown
+<!-- Blocker section FIRST if Step 0 found gaps; omit entirely when the schema is sound. -->
+
 # Action Spec — `actionName`
 
 **File:** `src/lib/actions/<domain>.ts` · **Operation:** <create|update|…> · **Tier:** <ADMIN | ADMIN+MANAGER (branch-scoped) | authenticated user | guest-capable>
+<!-- If blocked, add: **Status:** PROVISIONAL — not implementable until the migration in the Blocker lands. -->
+
+## 0. Prerequisite schema
+<!-- Only when blocked: the exact models/columns/relations that must exist first. Omit when nothing is missing. -->
 
 ## 1. Signature & Schema
 ​```ts
