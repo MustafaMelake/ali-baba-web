@@ -84,7 +84,7 @@ export default function BranchSelector({
           >
             Our Locations
           </h2>
-          <p className="mt-4 text-lg text-gray-500 max-w-xl font-sans mx-auto">
+          <p className="mt-4 text-lg text-stone-500 max-w-xl font-sans mx-auto">
             Two distinct experiences, one signature quality. Discover our pastry
             boutique in Menouf and our relaxing café lounge in Beba.
           </p>
@@ -142,7 +142,7 @@ export default function BranchSelector({
                     >
                       {location.tag}
                     </span>
-                    <span className="flex items-center gap-1 text-sm text-gray-400 font-medium">
+                    <span className="flex items-center gap-1 text-sm text-stone-400 font-medium">
                       <Clock className="w-3.5 h-3.5" /> {location.hours}
                     </span>
                   </div>
@@ -151,7 +151,7 @@ export default function BranchSelector({
                     {location.title}
                   </h3>
 
-                  <p className="text-gray-500 text-lg leading-relaxed">
+                  <p className="text-stone-500 text-lg leading-relaxed">
                     {location.description}
                   </p>
                 </div>

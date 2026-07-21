@@ -44,7 +44,7 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
           <p className="text-xs font-sans font-semibold uppercase tracking-[0.2em] text-primary mb-3">
             The Collection
           </p>
-          <h2 className="font-serif text-4xl md:text-6xl font-medium tracking-tight leading-[1.05] text-gray-900">
+          <h2 className="font-serif text-4xl md:text-6xl font-medium tracking-tight leading-[1.05] text-stone-900">
             Crafted for every <br className="hidden md:block" />
             <em className="not-italic text-primary">craving</em>
           </h2>
@@ -52,7 +52,7 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
 
         <Link
           href="/shop"
-          className="hidden md:flex items-center gap-2 text-sm font-sans font-medium text-gray-500 hover:text-primary transition-colors duration-200 group"
+          className="hidden md:flex items-center gap-2 text-sm font-sans font-medium text-stone-500 hover:text-primary transition-colors duration-200 group"
         >
           View all categories
           <ArrowUpRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
@@ -170,7 +170,7 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
       >
         <Link
           href="/shop"
-          className="inline-flex items-center gap-2 text-sm font-sans font-medium text-gray-500 hover:text-primary transition-colors duration-200"
+          className="inline-flex items-center gap-2 text-sm font-sans font-medium text-stone-500 hover:text-primary transition-colors duration-200"
         >
           View all categories
           <ArrowUpRight className="w-4 h-4" />

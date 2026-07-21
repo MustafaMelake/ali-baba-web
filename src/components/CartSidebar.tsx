@@ -2,8 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useTransition } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 import { X, Minus, Plus, ArrowRight, ShoppingBag } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
@@ -139,9 +140,17 @@ function CartLineItem({
 
 // ─── Main Drawer ──────────────────────────────────────────────────
 export default function CartSidebar() {
-  const { isOpen, closeCart, items, clearCart, totalItems, totalPrice } =
-    useCartStore();
+  const {
+    isOpen,
+    closeCart,
+    items,
+    clearCart,
+    adoptDbCart,
+    totalItems,
+    totalPrice,
+  } = useCartStore();
   const isLoggedIn = !!useSession().data?.user;
+  const [isClearing, startClearing] = useTransition();
 
   const count = totalItems();
   const total = totalPrice();
@@ -149,8 +158,23 @@ export default function CartSidebar() {
   // Intentional empty: wipe local immediately, and the DB too when logged in
   // (so the cleared cart doesn't re-hydrate from the server on next load).
   function handleClear() {
+    // Snapshot BEFORE the optimistic wipe so a failed server clear can roll
+    // back. `clearCart()` also empties `pendingOps`, so the restore below
+    // takes `adoptDbCart`'s no-pending-ops path — a plain item restore.
+    const snapshot = items;
     clearCart();
-    if (isLoggedIn) void clearDbCartAction();
+    if (!isLoggedIn) return;
+
+    startClearing(async () => {
+      const res = await clearDbCartAction();
+      if (!res.success) {
+        // The saved cart survived on the server. Restoring the local lines
+        // keeps the two in agreement — otherwise the next hydrate silently
+        // resurrects the "cleared" cart with no explanation.
+        adoptDbCart(snapshot);
+        toast.error(res.error);
+      }
+    });
   }
 
   // Close on Escape
@@ -268,9 +292,10 @@ export default function CartSidebar() {
                   {/* Clear */}
                   <button
                     onClick={handleClear}
-                    className="mt-4 w-full text-center font-sans text-xs text-stone-400 hover:text-stone-600 transition-colors"
+                    disabled={isClearing}
+                    className="mt-4 w-full text-center font-sans text-xs text-stone-400 hover:text-stone-600 transition-colors disabled:opacity-50"
                   >
-                    Clear cart
+                    {isClearing ? "Clearing…" : "Clear cart"}
                   </button>
                 </div>
               </>
