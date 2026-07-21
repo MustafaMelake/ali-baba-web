@@ -48,9 +48,39 @@ Every drawer/summary React key and every store lookup (`addItem`, `removeItem`, 
 - While `useSession()` is `isPending`, render a **pulse skeleton, not "Sign In"** — a logged-in user must never see a Sign-In flash. Apply this guard to any new auth-aware UI.
 - "My Orders" / "Wishlist" are an *is-authenticated* check; the "Admin Dashboard" link is a *role* check (`ADMIN`/`MANAGER`).
 
-## Personalization forces `force-dynamic`
+## Caching: never seed per-user state into a shared-cache page
 
-Any page that seeds **per-user wishlist hearts** (`/shop`, `/category/[slug]`, the PDP) or reads the session for personalized render must declare `export const dynamic = "force-dynamic"` — an ISR cache would leak one user's state to the next visitor. Carry this forward on every new product-listing surface. Seed `initialIsFavorited` on the server from `getWishlistedProductIds()` (an O(1) `Set` lookup) so the first paint is already correct — no flash-then-pop-in.
+The rule is **not** "personalization forces `force-dynamic`" — that trade was
+deliberately reversed. The rule is: a page served from a **shared cache must not
+render per-user state at all**. Personalization that would otherwise force a
+catalog route dynamic is hydrated client-side instead.
+
+Three modes, and each catalog surface has already picked one — **do not "fix" a
+page by moving it between them without a reason that outlives the diff:**
+
+| Surface | Mode | Why |
+|---|---|---|
+| `/category/[slug]`, `/product/[slug]` | `export const revalidate = 60` (ISR) | No per-request input, no per-user data → cacheable. This is the perf win the wishlist store exists to protect. |
+| `/shop` | **No export** — dynamic by nature | It `await`s `searchParams` for the server-side category filter, which is request-time data. A `revalidate` here would be **inert**, not wrong; don't add one to "make it consistent." |
+| `/my-orders`, `/wishlist`, `/admin/**` | `export const dynamic = "force-dynamic"` | Genuinely per-user/per-role server-rendered data with no client-hydration path. |
+
+**Wishlist hearts hydrate client-side, never server-seeded.** `getWishlistedProductIds()`
+is called from **`src/lib/wishlist-store.ts` only** — never from a page. The cached
+HTML paints with empty hearts; once `useSession()` resolves, the first `WishlistButton`
+to mount calls `ensureLoaded(userId)`, which fetches **once per user** and shares one
+`ReadonlySet<string>` across every heart on the page. Toggles are optimistic against
+that store and roll back on failure. Guests short-circuit to a known-empty set with no
+round-trip, which also wipes the previous user's hearts on sign-out.
+
+So: **do not reintroduce an `initialIsFavorited` server prop** and do not add
+`force-dynamic` to a catalog route to make wishlist state work. Both undo a deliberate
+decision — the store's docblock calls the dynamic route "the trap this store removes."
+Any new personalized affordance on a cached surface follows the same shape: cached
+shell, client store keyed by user, one fetch, optimistic writes.
+
+While the store's status is `loading` (or `useSession()` is `isPending`), render the
+neutral/empty affordance — see the pulse-skeleton rule in **Auth on the client** above;
+a logged-in user must not see a filled heart flash off.
 
 ## Search params & Suspense
 
