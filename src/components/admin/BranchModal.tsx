@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X, Loader2, Check, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { createBranch, updateBranch } from "@/lib/actions/manage-branches";
-import { cn } from "@/lib/utils";
+import { cn, slugify } from "@/lib/utils";
 
 const inputClasses =
   "w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm text-stone-900 outline-none transition-colors placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20";
@@ -18,15 +18,6 @@ export type EditableBranch = {
   isActive: boolean;
   deliveryFee: number;
 };
-
-/** Mirror of the server-side slugify so the previewed slug matches what's stored. */
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
 
 /**
  * One controlled modal for BOTH create and edit. Pass a `branch` to edit it;

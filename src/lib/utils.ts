@@ -6,6 +6,29 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * THE slug minter — lowercase, trim, collapse non-alphanumerics to "-", strip
+ * stray hyphens.
+ *
+ * Lives here rather than in `action-utils.ts` because admin forms preview the
+ * slug as you type, and that preview must be the *same* function the server
+ * mints with — not a mirror of it that can silently drift. `action-utils.ts`
+ * is server-only by dependency (its gates pull in the session reader, which
+ * reads request headers), so a client component cannot import from it; this
+ * module has no dependencies beyond clsx/tailwind-merge and is safe on both
+ * sides of the boundary.
+ *
+ * Non-latin input (e.g. Arabic) slugifies to "" — callers that need a
+ * guaranteed non-empty slug must supply their own fallback (see menu.ts).
+ */
+export function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+}
+
+/**
  * THE money figure formatter — every price node in the app renders through
  * this. Strictly "en-EG" (Western digits) so the same amount never switches
  * numeral systems between surfaces (the cart drawer once used "ar-EG" —

@@ -8,7 +8,7 @@ import { z } from "zod";
 import { productUpdateSchema, fieldErrors } from "@/lib/validators";
 import { updateProduct } from "@/app/admin/products/actions";
 import { UploadDropzone } from "@/lib/uploadthing";
-import { cn, deriveVariantDiscount } from "@/lib/utils";
+import { cn, deriveVariantDiscount, slugify } from "@/lib/utils";
 
 export type SelectOption = { id: string; name: string };
 
@@ -41,14 +41,6 @@ type VariantRow = {
 
 const inputClasses =
   "w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm text-stone-900 outline-none transition-colors placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20";
-
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
 
 function Field({
   label,

@@ -22,28 +22,38 @@ export default function ReviewGate({ productId }: { productId: string }) {
   const { data: session, isPending } = useSession();
   const userId = session?.user?.id ?? null;
 
-  // null = still resolving for the current user. Reset on account change so a
-  // switch mid-visit can't leak user A's answer to user B.
-  const [hasReviewed, setHasReviewed] = useState<boolean | null>(null);
+  // The answer is stored TAGGED with the identity it was fetched for, rather
+  // than as a bare boolean that an effect resets. Keeping the owner alongside
+  // the value means an account switch invalidates it during render — so user
+  // A's answer can never leak to user B, without the synchronous reset-in-
+  // effect that `react-hooks/set-state-in-effect` (rightly) forbids. Same
+  // owner-guard shape as `wishlist-store.ts`.
+  const [resolved, setResolved] = useState<{
+    owner: string;
+    reviewed: boolean;
+  } | null>(null);
+
+  const owner = userId ? `${userId}:${productId}` : null;
+  // null = no answer for the CURRENT owner yet (fresh, switched, or in flight).
+  const hasReviewed = resolved?.owner === owner ? resolved.reviewed : null;
 
   useEffect(() => {
-    setHasReviewed(null);
-    if (!userId) return;
+    if (!owner) return;
 
     let alive = true;
     hasUserReviewedProduct(productId)
       .then((reviewed) => {
-        if (alive) setHasReviewed(reviewed);
+        if (alive) setResolved({ owner, reviewed });
       })
       .catch(() => {
         // Fail open to the form — the server action re-checks on submit and
         // rejects a duplicate with a clean message anyway.
-        if (alive) setHasReviewed(false);
+        if (alive) setResolved({ owner, reviewed: false });
       });
     return () => {
       alive = false;
     };
-  }, [userId, productId]);
+  }, [owner, productId]);
 
   // Session unresolved, or reviewed-check in flight for a signed-in user.
   if (isPending || (userId && hasReviewed === null)) {

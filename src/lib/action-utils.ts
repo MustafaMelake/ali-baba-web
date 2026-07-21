@@ -46,13 +46,8 @@ export async function ensureAdmin(): Promise<{ error: string } | null> {
   return "error" in gate ? gate : null;
 }
 
-/** Lowercase, trim, collapse non-alphanumerics to "-", strip stray hyphens.
- *  Non-latin input (e.g. Arabic) slugifies to "" — callers that need a
- *  guaranteed non-empty slug must supply their own fallback (see menu.ts). */
-export function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
+/** Re-exported from `@/lib/utils` so server code can keep importing the whole
+ *  helper set from one place. The definition lives there, not here, because
+ *  admin forms preview slugs client-side and this module is server-only by
+ *  dependency — see the docblock on `slugify` itself. */
+export { slugify } from "@/lib/utils";

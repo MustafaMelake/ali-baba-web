@@ -483,7 +483,9 @@ export default function CheckoutPage() {
   const [pricing, setPricing] = useState<PricingSettings | null>(null);
   // Guest carts are frozen in localStorage — their line prices are re-read
   // from the live catalogue before the summary first renders (see below).
-  const [guestRepriced, setGuestRepriced] = useState(false);
+  // Only the async re-price itself is state; whether a re-price is needed at
+  // all is derived below, so the "nothing to do" case never needs an effect.
+  const [guestRepriceDone, setGuestRepriceDone] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [placed, setPlaced] = useState(false);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
@@ -547,12 +549,21 @@ export default function CheckoutPage() {
   // guest sees is exactly what they'll be charged. Waits for cart hydration
   // (items are empty before it) and for the session to resolve (a logged-in
   // user mid-`isPending` must not be mistaken for a guest).
+  // Who actually needs a re-price: a settled GUEST holding a non-empty cart.
+  // Deriving this during render (rather than resolving it inside the effect and
+  // flipping state synchronously) is what keeps the summary gate honest —
+  // logged-in users and empty carts are "ready" by definition, not by side
+  // effect, so there is no cascading render and no reset to get wrong.
+  const needsGuestReprice =
+    hydrated && !sessionPending && !isLoggedIn && cartItems.length > 0;
+
+  // The gate the summary reads: ready unless a re-price is owed and unfinished.
+  const guestRepriced = !needsGuestReprice || guestRepriceDone;
+
   useEffect(() => {
-    if (!hydrated || sessionPending) return;
-    if (isLoggedIn || useCartStore.getState().items.length === 0) {
-      setGuestRepriced(true);
-      return;
-    }
+    // Once per mount, exactly as before — the `guestRepriceDone` guard stops a
+    // cart edit that re-flips `needsGuestReprice` from re-running the fetch.
+    if (!needsGuestReprice || guestRepriceDone) return;
 
     let alive = true;
     refreshPrices()
@@ -564,12 +575,12 @@ export default function CheckoutPage() {
       .finally(() => {
         // Render either way — on failure the stale price shows, but placeOrder
         // still bills the live price, and submission re-validates everything.
-        if (alive) setGuestRepriced(true);
+        if (alive) setGuestRepriceDone(true);
       });
     return () => {
       alive = false;
     };
-  }, [hydrated, sessionPending, isLoggedIn, refreshPrices]);
+  }, [needsGuestReprice, guestRepriceDone, refreshPrices]);
 
   function handleSubmit() {
     if (isPending || placed) return;
