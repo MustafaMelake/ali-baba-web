@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "get-shit-done": {
+      "source": "shoootyou/get-shit-done-multi",
+      "sourceType": "github",
+      "skillPath": "templates/skills/get-shit-done/claude/SKILL.md",
+      "computedHash": "4fc6688598e0fc8dfa104da6d7ca61b3a7fc2e078fa6140d7f0f1d2ae5f52d42"
+    }
+  }
+}
