@@ -20,7 +20,7 @@ writes are Server Actions; the only route handlers are the vendored pass-through
 The framework constraint is about **runtime values**, and the precise boundary matters
 because the safe half is used in every action file we have:
 
-- ✅ **Inline type declarations are safe and are the house pattern.** `export type PlaceOrderResult = …` / `export interface CheckoutPayload { … }` are erased by the compiler, leave no runtime binding, and appear in all 15 `"use server"` modules. Declaring an action's result union at the top of its own file is correct — don't relocate these.
+- ✅ **Inline type declarations are safe and are the house pattern.** `export type PlaceOrderResult = …` / `export interface CheckoutPayload { … }` are erased by the compiler, leave no runtime binding, and appear throughout the `"use server"` modules (15 of the 16 declare at least one). Declaring an action's result union at the top of its own file is correct — don't relocate these.
 - ❌ **`export type { X }` re-exports crash the app.** Under Turbopack a re-export in a `"use server"` file is miscompiled into a runtime reference (this caused the checkout "no branches" bug). If you need to surface a type that lives elsewhere, let consumers `import type` it from its real home instead of forwarding it.
 - ❌ **Exported runtime values** — `export const`, `let`, `var`, `class`, `enum` — are genuinely illegal here. Put shared constants/helpers in a **plain module** (`@/lib/validators`, `@/lib/action-utils`, `@/lib/utils`).
 
@@ -61,7 +61,7 @@ Read sessions **only** through `@/lib/session` (server) or `@/lib/auth-client` (
 
 - Use the singleton from `@/lib/prisma` (never `new PrismaClient()` in an action). The generated client is imported from `@/generated/prisma/client` and `@/generated/prisma/enums`.
 - **Transaction discipline (Neon-aware): keep transactions short and bounded.** `placeOrder` is exactly two statements (one batched `findMany({ id: { in: […] } })` carrying the full three-level promotion hierarchy, then a pure in-memory loop) — never an N+1 `findUnique`-per-line that holds the transaction open in proportion to cart size. `mergeCartAction` is bounded to ≤ 52 statements.
-- Read-only server-only loaders that never take a POST (`dashboard.ts`, `analytics.ts`, the `store-settings.ts` reader) are deliberately **not** `"use server"` — they're server modules imported by RSC pages.
+- Read-only server-only loaders that never take a POST (`dashboard.ts`, `analytics.ts`, the `store-settings.ts` reader) are deliberately **not** `"use server"` — they're server modules imported by RSC pages. The converse also holds: a read a **client island** triggers at interaction time (`getWishlistedProductIds`, `rePriceGuestCart`, `searchCatalog` / `getSearchSuggestions`) **is** a `"use server"` action — that is the only door from the browser to the database. Such a read is public only when it says so: search and guest re-pricing are; the wishlist reads gate on the session.
 
 ## Revalidation is manual — keep the fan-out lists current
 

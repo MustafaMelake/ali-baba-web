@@ -44,21 +44,32 @@ function cardInclude(now: Date) {
     category: {
       select: {
         name: true,
-        promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        promotions: {
+          where: livePromotionWhere(now),
+          select: PROMOTION_SELECT_FIELDS,
+        },
       },
     },
-    promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+    promotions: {
+      where: livePromotionWhere(now),
+      select: PROMOTION_SELECT_FIELDS,
+    },
     variants: {
       where: { isAvailable: true },
       orderBy: { price: "asc" }, // [0] = starting (lowest) price
       include: {
-        promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        promotions: {
+          where: livePromotionWhere(now),
+          select: PROMOTION_SELECT_FIELDS,
+        },
       },
     },
   } satisfies Prisma.ProductInclude;
 }
 
-type CardRow = Prisma.ProductGetPayload<{ include: ReturnType<typeof cardInclude> }>;
+type CardRow = Prisma.ProductGetPayload<{
+  include: ReturnType<typeof cardInclude>;
+}>;
 
 /**
  * Prices a product's starting variant through the Discount Engine and
@@ -73,9 +84,9 @@ function toCard(product: CardRow, now: Date): ShopProduct {
     gatherPromotions(
       starting?.promotions,
       product.promotions,
-      product.category.promotions,
+      product.category.promotions
     ),
-    now,
+    now
   );
   return {
     id: product.id,
@@ -242,13 +253,6 @@ export default async function CollectionsPage() {
             >
               <div className="mx-auto max-w-screen-xl px-6 py-14 md:px-10 md:py-20 lg:px-14">
                 <div className="mb-10 flex flex-col items-center text-center md:mb-14">
-                  <p
-                    dir="rtl"
-                    lang="ar"
-                    className="mb-3 font-sans text-sm font-semibold text-primary"
-                  >
-                    أحدث الإضافات
-                  </p>
                   <h2
                     id="latest-arrivals-heading"
                     className="font-serif text-3xl font-medium tracking-tight text-stone-900 md:text-5xl"

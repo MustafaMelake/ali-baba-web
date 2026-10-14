@@ -147,7 +147,7 @@ done
 
 *Trap 2 — only some exports are dangerous.* An **inline** `export type Foo = …` or
 `export interface Foo {}` is erased by the compiler and is the established house
-pattern in all 15 action files — flagging those is noise. What actually breaks is a
+pattern across the action files — flagging those is noise. What actually breaks is a
 `export type { X }` **re-export** (miscompiled into a runtime reference under
 Turbopack) or an exported runtime **value**:
 

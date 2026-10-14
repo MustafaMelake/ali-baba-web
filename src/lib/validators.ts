@@ -179,6 +179,46 @@ export const categoryUpdateSchema = z.object({
 
 export type CategoryUpdateInput = z.infer<typeof categoryUpdateSchema>;
 
+// ─── Storefront search ───────────────────────────────────────────────────────
+
+/** Shortest query worth a round-trip — anything shorter shows suggestions. */
+export const SEARCH_MIN_QUERY_LENGTH = 2;
+/** Longest query accepted. The search input caps itself at the same length. */
+export const SEARCH_MAX_QUERY_LENGTH = 64;
+/** Words matched per query — bounds the size of the generated `where`. */
+export const SEARCH_MAX_TOKENS = 5;
+
+/**
+ * THE canonical form of a search query. The search palette gates its
+ * round-trip on it and `searchCatalog` matches on it, so both sides always
+ * agree on what was searched. Strips `%`, `_` and `\` — LIKE metacharacters in
+ * the ILIKE the search compiles to, and nothing a product name needs — so
+ * matching stays literal however the driver treats wildcards, then collapses
+ * whitespace.
+ */
+export function normalizeSearchQuery(raw: string): string {
+  return raw.replace(/[%_\\]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/** The words a normalized query matches on (every one must hit). */
+export function searchTokens(query: string): string[] {
+  return query.split(" ").filter(Boolean).slice(0, SEARCH_MAX_TOKENS);
+}
+
+export const searchQuerySchema = z
+  .string()
+  .trim()
+  .max(SEARCH_MAX_QUERY_LENGTH, "That search is too long.")
+  .transform(normalizeSearchQuery)
+  .pipe(
+    z
+      .string()
+      .min(
+        SEARCH_MIN_QUERY_LENGTH,
+        `Type at least ${SEARCH_MIN_QUERY_LENGTH} characters to search.`,
+      ),
+  );
+
 /**
  * Flattens a ZodError into a `{ "path.to.field": "message" }` map. Stable across
  * Zod minor versions (reads `.issues` directly) and handles nested paths like

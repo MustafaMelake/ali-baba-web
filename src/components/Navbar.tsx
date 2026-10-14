@@ -22,6 +22,7 @@ import { useCartStore } from "@/lib/cart-store";
 import { useSession, signOut } from "@/lib/auth-client";
 import CartSidebar from "@/components/CartSidebar";
 import UserMenu from "@/components/UserMenu";
+import SearchLauncher from "@/components/search/SearchLauncher";
 
 const NAV_LINKS = [
   { label: "Home", href: "/" },
@@ -72,11 +73,15 @@ export default function Navbar() {
     return () => mq.removeEventListener("change", onResize);
   }, []);
 
-  // Lock body scroll while mobile menu is open
+  // Lock body scroll while mobile menu is open. Restores the previous value
+  // rather than blanking it, so closing the menu as the search palette opens
+  // can't clobber the palette's own lock.
   useEffect(() => {
-    document.body.style.overflow = mobileOpen ? "hidden" : "";
+    if (!mobileOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow;
     };
   }, [mobileOpen]);
 
@@ -151,6 +156,10 @@ export default function Navbar() {
                 </>
               )}
             </div>
+
+            {/* Search — opens the palette (also ⌘K / Ctrl+K); closes the
+                mobile menu first so a result click lands on a clean page */}
+            <SearchLauncher onOpen={() => setMobileOpen(false)} />
 
             {/* Cart button */}
             <button
