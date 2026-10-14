@@ -146,7 +146,7 @@ model Verification {
 model Branch {
   id       String  @id @default(cuid())
   name     String  @unique
-  /// URL-safe identifier (mirrors Category.slug), e.g. "menouf", "beba".
+  /// URL-safe identifier (mirrors Category.slug), e.g. "menouf".
   slug     String  @unique
   address  String?
   phone    String?
