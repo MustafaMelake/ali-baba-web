@@ -50,12 +50,18 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
           </h2>
         </div>
 
+        {/* Opposite the title — the /collections directory previews every
+            category (featured or not), not just the slider's curated set. */}
         <Link
-          href="/shop"
+          href="/collections"
+          aria-label="View all collections — browse every product category"
           className="hidden md:flex items-center gap-2 text-sm font-sans font-medium text-stone-500 hover:text-primary transition-colors duration-200 group"
         >
-          View all categories
-          <ArrowUpRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+          View all collections
+          <ArrowUpRight
+            className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+            aria-hidden="true"
+          />
         </Link>
       </motion.div>
 
@@ -169,11 +175,15 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
         transition={{ duration: 0.5, delay: 0.3 }}
       >
         <Link
-          href="/shop"
-          className="inline-flex items-center gap-2 text-sm font-sans font-medium text-stone-500 hover:text-primary transition-colors duration-200"
+          href="/collections"
+          aria-label="View all collections — browse every product category"
+          className="inline-flex items-center gap-2 text-sm font-sans font-medium text-stone-500 hover:text-primary transition-colors duration-200 group"
         >
-          View all categories
-          <ArrowUpRight className="w-4 h-4" />
+          View all collections
+          <ArrowUpRight
+            className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+            aria-hidden="true"
+          />
         </Link>
       </motion.div>
     </section>
