@@ -145,7 +145,7 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
         {/* Price + Discover */}
         <div className="mt-4 flex items-center justify-between border-t border-stone-100 pt-3.5">
           <span className="flex items-baseline gap-2">
-            <span className="font-serif text-lg font-medium text-stone-900">
+            <span className="font-serif text-lg font-medium tabular-nums text-stone-900">
               {formatMoney(product.price)}
               <span className="ml-1 font-sans text-xs font-normal text-stone-400">
                 ج.م

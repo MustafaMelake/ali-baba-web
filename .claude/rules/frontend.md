@@ -60,7 +60,7 @@ page by moving it between them without a reason that outlives the diff:**
 
 | Surface | Mode | Why |
 |---|---|---|
-| `/category/[slug]`, `/product/[slug]` | `export const revalidate = 60` (ISR) | No per-request input, no per-user data → cacheable. This is the perf win the wishlist store exists to protect. |
+| `/category/[slug]`, `/product/[slug]`, `/collections` | `export const revalidate = 60` (ISR) | No per-request input, no per-user data → cacheable. This is the perf win the wishlist store exists to protect. |
 | `/shop` | **No export** — dynamic by nature | It `await`s `searchParams` for the server-side category filter, which is request-time data. A `revalidate` here would be **inert**, not wrong; don't add one to "make it consistent." |
 | `/my-orders`, `/wishlist`, `/admin/**` | `export const dynamic = "force-dynamic"` | Genuinely per-user/per-role server-rendered data with no client-hydration path. |
 

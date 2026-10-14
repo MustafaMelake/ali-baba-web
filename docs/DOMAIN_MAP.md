@@ -153,10 +153,10 @@ The sellable universe. Cardinal rule (schema comment, enforced everywhere): **pr
 - **Validation (shared client/server):** `src/lib/validators.ts` — `variantInputSchema` (name 1–80, `price` positive, `compareAtPrice` nullish with cross-field refine `compareAtPrice > price`, sku ≤ 64), `productInputSchema` / `productUpdateSchema` (name 2–120, slug regex `^[a-z0-9]+(?:-[a-z0-9]+)*$`, description ≤ 2000, `variants.min(1)`).
 - **Admin actions:** `src/app/admin/products/actions.ts` (`createProduct`, `updateProduct`, `deleteProduct`); `src/lib/actions/categories.ts` (`createCategory`, `updateCategory`, `deleteCategory` + transactional `ensureUniqueSlug`).
 - **Admin UI:** `src/app/admin/products/{page,new/page,[id]/edit/page}.tsx`, `NewProductForm`, `EditProductForm`, `ProductRowActions`, `src/app/admin/categories/page.tsx`, `NewCategoryModal`, `EditCategoryModal`, `CategoryEditButton`, `CreateCategoryButton`, `DeleteCategoryButton`, `MultiSelect`.
-- **Storefront:** `src/app/(shop)/shop/page.tsx` + `ShopClient.tsx`; `src/app/(shop)/category/[slug]/page.tsx` + `CategoryPageTemplate.tsx`; `src/app/(shop)/product/[slug]/page.tsx`; islands `ProductCard.tsx`, `products/ProductPurchasePanel.tsx`, `products/VariantSelector.tsx`, `ProductGallery.tsx`.
+- **Storefront:** `src/app/(shop)/shop/page.tsx` + `ShopClient.tsx`; `src/app/(shop)/category/[slug]/page.tsx` + `CategoryPageTemplate.tsx`; `src/app/(shop)/collections/page.tsx` (ISR 60 — "Latest Arrivals" + per-category previews); `src/app/(shop)/product/[slug]/page.tsx`; islands `ProductCard.tsx`, `products/ProductPurchasePanel.tsx`, `products/VariantSelector.tsx`, `ProductGallery.tsx`.
 
 ### 3.4 Step-by-Step Data Flow
-**Create:** zod re-parse → single nested `product.create` with `variants.create[]` → P2002 sniffed via `meta.target` to distinguish "SKU taken" vs "slug taken" → revalidates `/admin/products`, `/shop`, `/`.
+**Create:** zod re-parse → single nested `product.create` with `variants.create[]` → P2002 sniffed via `meta.target` to distinguish "SKU taken" vs "slug taken" → revalidates `/admin/products`, `/shop`, `/collections`, `/`.
 
 **Update (the delicate variant reconcile):**
 1. Fetch existing variant ids; compute `keptIds` = incoming ids **∩ existing** (an incoming id not owned by this product is treated as *new* — ownership can't be spoofed to hijack another product's variant).
@@ -164,7 +164,7 @@ The sellable universe. Cardinal rule (schema comment, enforced everywhere): **pr
 3. Slug-owner pre-check (`findUnique(slug)`, excluding self) for a clean message before the transaction.
 4. Transaction: `product.update` + per-variant `update` (kept) / `create` (new); `compareAtPrice ?? null` so *clearing* the field genuinely wipes a legacy discount.
 5. **Post-commit, best-effort** removal loop (deliberately outside the transaction so it can never roll back a valid update): `variant.delete` → on `P2003` (ordered variant) → **archive** instead: `{ isAvailable: false, sku: null }` (frees the unique SKU for reuse), `archivedCount` reported to the UI.
-6. Revalidation fan-out: `/admin/products`, `/shop`, `/`, `/product/[newSlug]`, and `/product/[oldSlug]` when the slug changed.
+6. Revalidation fan-out: `/admin/products`, `/shop`, `/collections`, `/`, `/product/[newSlug]`, and `/product/[oldSlug]` when the slug changed.
 
 **Delete:** `product.delete` → `P2003` → friendly "appears in existing orders — mark Out of Stock instead".
 
@@ -552,6 +552,7 @@ The Prisma/Neon substrate plus the platform's shared coding idioms.
 | `/` homepage | **ISR 60** | 60 s (promo time-expiry only) | category actions → `revalidatePath("/")`; product actions → `revalidatePath("/")`; promotion actions → `revalidatePath("/", "layout")` |
 | `/product/[slug]` | ISR 60 | 60 s | product actions (both slugs on rename); review approve/delete; promotions (layout) |
 | `/category/[slug]` | ISR 60 | 60 s | `updateCategory` (own slug); promotions (layout) |
+| `/collections` | ISR 60 | 60 s | product create/update/delete; category create/update/delete; promotions (layout) |
 | `/shop` | per-request dynamic (reads `searchParams`) | none | n/a (revalidatePath calls exist but are inert-in-effect) |
 | `/menu` | ISR 3600 | 1 h | all menu actions → `revalidatePath("/menu")` |
 | Footer link query | `unstable_cache` tag `footer-links`, TTL 3600 | tag-immediate / 1 h safety | settings actions → `updateTag("footer-links")` |
