@@ -57,23 +57,24 @@ export default function MenuCategoryCard({
 
   return (
     <article className="overflow-hidden rounded-2xl border border-stone-200/70 bg-white shadow-sm">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 p-5">
+      {/* Header — stacks on phones (title, then a full-width action row);
+          side by side from `sm`, where the title side truncates instead. */}
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between sm:gap-4 sm:p-5">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="group flex min-w-0 flex-1 items-center gap-3 text-left"
+          className="group flex min-w-0 flex-1 items-start gap-3 text-left"
           aria-expanded={expanded}
         >
           <ChevronDown
-            className={`h-5 w-5 shrink-0 text-stone-400 transition-transform ${expanded ? "rotate-180" : ""}`}
+            className={`mt-1 h-5 w-5 shrink-0 text-stone-400 transition-transform ${expanded ? "rotate-180" : ""}`}
           />
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="shrink-0 rounded-md bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-stone-500">
                 #{category.order}
               </span>
-              <h2 className="truncate font-serif text-xl font-medium text-stone-900">
+              <h2 className="min-w-0 max-w-full truncate font-serif text-lg font-medium text-stone-900 sm:text-xl">
                 {category.title}
               </h2>
               {category.isFixedPrice && (
@@ -83,20 +84,26 @@ export default function MenuCategoryCard({
                 </span>
               )}
             </div>
-            <p className="mt-0.5 text-xs text-stone-400">
-              {itemCount} item{itemCount === 1 ? "" : "s"} · /{category.slug}
+            <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-stone-400">
+              <span className="shrink-0 tabular-nums">
+                {itemCount} item{itemCount === 1 ? "" : "s"}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="min-w-0 truncate" title={`/${category.slug}`}>
+                /{category.slug}
+              </span>
             </p>
           </div>
         </button>
 
-        {/* Actions */}
-        <div className="flex shrink-0 items-center gap-2">
+        {/* Actions — 40px touch targets on phones, compact pills from `sm`. */}
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap sm:justify-end">
           <button
             type="button"
             onClick={() => setBulkOpen(true)}
             disabled={itemCount === 0}
             title={itemCount === 0 ? "Add items first" : "Adjust all prices"}
-            className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 px-3 py-1.5 text-xs font-semibold text-stone-600 transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-10 items-center gap-1.5 rounded-full border border-stone-200 px-4 text-xs font-semibold text-stone-600 transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 sm:h-8 sm:px-3"
           >
             <Percent className="h-3.5 w-3.5" />
             Prices
@@ -104,7 +111,7 @@ export default function MenuCategoryCard({
           <button
             type="button"
             onClick={() => setEditOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 px-3 py-1.5 text-xs font-semibold text-stone-600 transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+            className="inline-flex h-10 items-center gap-1.5 rounded-full border border-stone-200 px-4 text-xs font-semibold text-stone-600 transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary sm:h-8 sm:px-3"
           >
             <Pencil className="h-3.5 w-3.5" />
             Edit
@@ -119,7 +126,7 @@ export default function MenuCategoryCard({
                 animate={{ opacity: 1, width: "auto" }}
                 exit={{ opacity: 0, width: 0 }}
                 transition={{ duration: 0.18 }}
-                className="inline-flex items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700"
+                className="inline-flex h-10 items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-full border border-red-200 bg-red-50 pl-3 pr-1.5 text-xs font-semibold text-red-700 sm:h-8 sm:pl-2.5 sm:pr-1"
               >
                 <span>Delete?</span>
                 <button
@@ -127,7 +134,7 @@ export default function MenuCategoryCard({
                   onClick={remove}
                   disabled={isPending}
                   aria-label={`Confirm delete ${category.title}`}
-                  className="flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-white transition-colors hover:bg-red-700 disabled:opacity-60"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-red-600 text-white transition-colors hover:bg-red-700 disabled:opacity-60 sm:h-6 sm:w-6"
                 >
                   {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                 </button>
@@ -136,7 +143,7 @@ export default function MenuCategoryCard({
                   onClick={() => setConfirming(false)}
                   disabled={isPending}
                   aria-label="Cancel delete"
-                  className="flex h-5 w-5 items-center justify-center rounded-full text-red-700 transition-colors hover:bg-red-100 disabled:opacity-60"
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-red-700 transition-colors hover:bg-red-100 disabled:opacity-60 sm:h-6 sm:w-6"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -151,7 +158,7 @@ export default function MenuCategoryCard({
                 transition={{ duration: 0.15 }}
                 onClick={() => setConfirming(true)}
                 aria-label={`Delete ${category.title}`}
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-stone-200 text-stone-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 text-stone-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 sm:h-8 sm:w-8"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </motion.button>
@@ -170,7 +177,7 @@ export default function MenuCategoryCard({
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             className="overflow-hidden"
           >
-            <div className="px-5 pb-5">
+            <div className="px-4 pb-4 sm:px-5 sm:pb-5">
               {category.isFixedPrice && (
                 <p className="rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-500">
                   Fixed-price category — new items inherit the shared price. Use{" "}

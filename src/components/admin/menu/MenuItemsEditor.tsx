@@ -52,7 +52,9 @@ function MenuItemRow({ item }: { item: AdminMenuItem }) {
   }
 
   return (
-    <div className="flex items-center gap-2 py-2">
+    // Wraps on narrow cards: price + name hold the first line (the name keeps a
+    // usable width), and Save / Delete drop to a right-aligned second line.
+    <div className="flex flex-wrap items-center gap-2 py-2">
       {/* Price */}
       <input
         type="number"
@@ -62,7 +64,7 @@ function MenuItemRow({ item }: { item: AdminMenuItem }) {
         value={price}
         onChange={(e) => setPrice(e.target.value)}
         aria-label={`Price for ${item.name}`}
-        className={`${fieldClasses} w-24 shrink-0 tabular-nums`}
+        className={`${fieldClasses} w-20 shrink-0 tabular-nums sm:w-24`}
       />
       {/* Name (Arabic, RTL) */}
       <input
@@ -71,54 +73,57 @@ function MenuItemRow({ item }: { item: AdminMenuItem }) {
         dir="rtl"
         lang="ar"
         aria-label="Item name"
-        className={`${fieldClasses} min-w-0 flex-1 text-right`}
+        className={`${fieldClasses} min-w-28 flex-1 text-right`}
       />
 
-      {/* Save (only when dirty) */}
-      {dirty && (
-        <button
-          type="button"
-          onClick={save}
-          disabled={isPending}
-          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg bg-primary px-2.5 text-xs font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-60"
-        >
-          {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-          Save
-        </button>
-      )}
-
-      {/* Delete (inline confirm) */}
-      {confirming ? (
-        <div className="flex shrink-0 items-center gap-1">
+      {/* Save + Delete — one group, so they wrap together and stay right-aligned. */}
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        {/* Save (only when dirty) */}
+        {dirty && (
           <button
             type="button"
-            onClick={remove}
+            onClick={save}
             disabled={isPending}
-            aria-label="Confirm delete"
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-600 text-white transition-colors hover:bg-red-700 disabled:opacity-60"
+            className="inline-flex h-10 shrink-0 items-center gap-1 rounded-lg bg-primary px-3 text-xs font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-60 sm:h-8 sm:px-2.5"
           >
             {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            Save
           </button>
+        )}
+
+        {/* Delete (inline confirm) */}
+        {confirming ? (
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={remove}
+              disabled={isPending}
+              aria-label="Confirm delete"
+              className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-600 text-white transition-colors hover:bg-red-700 disabled:opacity-60 sm:h-8 sm:w-8"
+            >
+              {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              disabled={isPending}
+              aria-label="Cancel delete"
+              className="flex h-10 w-10 items-center justify-center rounded-lg text-stone-500 transition-colors hover:bg-stone-100 sm:h-8 sm:w-8"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : (
           <button
             type="button"
-            onClick={() => setConfirming(false)}
-            disabled={isPending}
-            aria-label="Cancel delete"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-stone-500 transition-colors hover:bg-stone-100"
+            onClick={() => setConfirming(true)}
+            aria-label={`Delete ${item.name}`}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-red-50 hover:text-red-600 sm:h-8 sm:w-8"
           >
-            <X className="h-3.5 w-3.5" />
+            <Trash2 className="h-4 w-4" />
           </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setConfirming(true)}
-          aria-label={`Delete ${item.name}`}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-red-50 hover:text-red-600"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -155,7 +160,7 @@ function AddItemRow({
   }
 
   return (
-    <div className="flex items-center gap-2 border-t border-dashed border-stone-200 pt-3">
+    <div className="flex flex-wrap items-center gap-2 border-t border-dashed border-stone-200 pt-3">
       <input
         type="number"
         min="0"
@@ -165,7 +170,7 @@ function AddItemRow({
         onChange={(e) => setPrice(e.target.value)}
         placeholder="Price"
         aria-label="New item price"
-        className={`${fieldClasses} w-24 shrink-0 tabular-nums`}
+        className={`${fieldClasses} w-20 shrink-0 tabular-nums sm:w-24`}
       />
       <input
         value={name}
@@ -180,13 +185,13 @@ function AddItemRow({
         lang="ar"
         placeholder="اسم الصنف"
         aria-label="New item name"
-        className={`${fieldClasses} min-w-0 flex-1 text-right`}
+        className={`${fieldClasses} min-w-28 flex-1 text-right`}
       />
       <button
         type="button"
         onClick={add}
         disabled={isPending || name.trim() === ""}
-        className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-primary/30 bg-primary/5 px-2.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+        className="ml-auto inline-flex h-10 shrink-0 items-center gap-1 rounded-lg border border-primary/30 bg-primary/5 px-3 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:px-2.5"
       >
         {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
         Add

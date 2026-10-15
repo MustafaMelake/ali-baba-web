@@ -111,20 +111,20 @@ export default function MenuCategoryModal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 16, scale: 0.98 }}
             transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-            className="relative z-10 flex w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+            className="relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
           >
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
               {/* Header */}
-              <div className="flex items-center justify-between border-b border-stone-100 px-6 py-4">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-stone-100 px-5 py-4 sm:px-6">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
                     <Coffee className="h-4.5 w-4.5" />
                   </span>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
                       {isEdit ? "Edit Category" : "New Category"}
                     </p>
-                    <h3 className="font-serif text-xl font-medium text-stone-900">
+                    <h3 className="truncate font-serif text-xl font-medium text-stone-900">
                       {isEdit ? category.title : "Menu category"}
                     </h3>
                   </div>
@@ -133,14 +133,14 @@ export default function MenuCategoryModal({
                   type="button"
                   onClick={() => !isPending && onClose()}
                   aria-label="Close"
-                  className="rounded-lg p-1.5 text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-900"
+                  className="shrink-0 rounded-lg p-2 text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-900"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
               {/* Body */}
-              <div className="space-y-5 px-6 py-5">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 sm:px-6">
                 <div className="space-y-1.5">
                   <label htmlFor="mc-title" className="text-sm font-medium text-stone-700">
                     Title
@@ -196,19 +196,19 @@ export default function MenuCategoryModal({
               </div>
 
               {/* Footer */}
-              <div className="flex items-center justify-end gap-3 border-t border-stone-100 px-6 py-4">
+              <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-stone-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-6">
                 <button
                   type="button"
                   onClick={() => onClose()}
                   disabled={isPending}
-                  className="rounded-full border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-50 disabled:opacity-60"
+                  className="rounded-full border border-stone-200 px-4 py-2.5 text-sm font-medium text-stone-600 sm:py-2 transition-colors hover:bg-stone-50 disabled:opacity-60"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-white sm:py-2 shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isPending ? (
                     <>
