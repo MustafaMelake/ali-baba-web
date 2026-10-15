@@ -21,7 +21,7 @@ import { getPublicPricingSettings } from "@/lib/actions/store-settings";
 import type { PricingSettings } from "@/lib/store-settings";
 import { clearDbCartAction } from "@/lib/actions/cart";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
-import { checkoutSchema, fieldErrors } from "@/lib/validators";
+import { checkoutSchema, fieldErrors, ORDER_NOTES_MAX_LENGTH } from "@/lib/validators";
 import { roundMoney } from "@/lib/discounts";
 import { cn, formatMoney } from "@/lib/utils";
 
@@ -271,12 +271,13 @@ function OrderSummary({
   onSubmit: () => void;
 }) {
   // Mirrors placeOrder's math exactly: discounted subtotal → VAT on it → fee.
-  const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
+  // Same 2-dp rounding points as placeOrder (see @/lib/discounts#roundMoney) —
+  // the subtotal is rounded BEFORE it's taxed, or a float sum like
+  // 239.24999999999997 previews 0.01 less VAT than the server bills.
+  const subtotal = roundMoney(items.reduce((s, i) => s + i.price * i.quantity, 0));
   const delivery = deliveryFee;
-  // Same 2-dp rounding as placeOrder (see @/lib/discounts#roundMoney), so the
-  // previewed VAT/total is exactly what the server bills — piastres and all.
   const tax = pricing.isVatEnabled ? roundMoney(subtotal * pricing.vatRate) : 0;
-  const total = subtotal + delivery + tax;
+  const total = roundMoney(subtotal + delivery + tax);
   // Human label — trims trailing zeros (0.14 → "14", 0.1425 → "14.25").
   const vatPercent = +(pricing.vatRate * 100).toFixed(2);
 
@@ -474,7 +475,10 @@ export default function CheckoutPage() {
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [apartment, setApartment] = useState("");
-  const [notes, setNotes] = useState("");
+  // The order note lives in the cart store, so a note drafted on /cart arrives
+  // here pre-filled (and clearCart() drops it once the order is placed).
+  const notes = useCartStore((s) => s.orderNote);
+  const setNotes = useCartStore((s) => s.setOrderNote);
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [branchId, setBranchId] = useState(""); // pickup: chosen branch id
   const [deliveryAreaId, setDeliveryAreaId] = useState(""); // delivery: branch id, or OTHER_AREAS_OPTION.id
@@ -874,16 +878,6 @@ export default function CheckoutPage() {
                         />
                       </div>
                     </div>
-
-                    <div>
-                      <FieldLabel htmlFor="notes">Delivery Notes</FieldLabel>
-                      <Textarea
-                        id="notes"
-                        placeholder="Ring the bell twice, leave with the doorman…"
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                      />
-                    </div>
                   </motion.div>
                 ) : (
                   <motion.div
@@ -913,6 +907,20 @@ export default function CheckoutPage() {
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              {/* Order notes — shown for BOTH delivery and pickup, because a note
+                  drafted on /cart (gift message, dietary needs) is sent either
+                  way and must stay visible and editable. */}
+              <div className="mt-9">
+                <FieldLabel htmlFor="notes">Order Notes</FieldLabel>
+                <Textarea
+                  id="notes"
+                  placeholder="Gift message, dietary needs, delivery instructions…"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  maxLength={ORDER_NOTES_MAX_LENGTH}
+                />
+              </div>
             </section>
 
             <Divider />

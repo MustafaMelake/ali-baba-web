@@ -93,6 +93,7 @@ export async function updateVatSettings(input: {
     });
 
     revalidatePath("/admin/settings");
+    revalidatePath("/cart"); // summary preview (VAT + delivery estimate)
     return { success: true };
   } catch (err) {
     console.error("updateVatSettings failed:", err);
@@ -148,6 +149,7 @@ export async function updateDeliveryFees(input: {
     ]);
 
     revalidatePath("/admin/settings");
+    revalidatePath("/cart"); // summary preview (VAT + delivery estimate)
     return { success: true };
   } catch (err) {
     if (prismaErrorCode(err) === "P2025") {

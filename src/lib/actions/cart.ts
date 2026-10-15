@@ -335,6 +335,8 @@ export async function getDbCartAction(): Promise<CartActionResult<DbCartItem[]>>
  * exact figure `placeOrder` would bill right now. `compareAtPrice` mirrors the
  * PDP fallback chain (live promo's base price, else the manual column) and
  * `promotionName` names the applied promo so the UI can badge it if desired.
+ * `variantName` / `productSlug` carry what a stored cart line doesn't (its
+ * variant label and PDP link) — both already public on every product page.
  */
 export interface RepricedVariant {
   variantId: string;
@@ -343,6 +345,10 @@ export interface RepricedVariant {
   promotionName: string | null;
   /** False when the variant OR its parent product has been switched off. */
   isAvailable: boolean;
+  /** e.g. "Large" or "6 Pieces". */
+  variantName: string;
+  /** For the /product/[slug] link. */
+  productSlug: string;
 }
 
 /** Ceiling on a single re-price request — keeps this public action's
@@ -388,12 +394,14 @@ export async function rePriceGuestCart(
       where: { id: { in: ids } },
       select: {
         id: true,
+        name: true,
         price: true,
         compareAtPrice: true,
         isAvailable: true,
         promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
         product: {
           select: {
+            slug: true,
             isAvailable: true,
             promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
             category: {
@@ -427,6 +435,8 @@ export async function rePriceGuestCart(
           : v.compareAtPrice?.toNumber() ?? null,
         promotionName: priced.appliedPromotion?.name ?? null,
         isAvailable: v.isAvailable && v.product.isAvailable,
+        variantName: v.name,
+        productSlug: v.product.slug,
       };
     });
 

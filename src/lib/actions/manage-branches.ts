@@ -92,6 +92,7 @@ export async function createBranch(data: {
     });
 
     revalidatePath("/admin/branches");
+    revalidatePath("/cart"); // delivery-fee estimate
     return { success: true, id: created.id };
   } catch (err) {
     const message = uniqueViolationMessage(err);
@@ -129,6 +130,7 @@ export async function updateBranch(
     });
 
     revalidatePath("/admin/branches");
+    revalidatePath("/cart"); // delivery-fee estimate
     return { success: true };
   } catch (err) {
     const message = uniqueViolationMessage(err);
@@ -172,6 +174,7 @@ export async function deleteBranch(id: string): Promise<BranchActionResult> {
     await prisma.branch.delete({ where: { id } });
 
     revalidatePath("/admin/branches");
+    revalidatePath("/cart"); // delivery-fee estimate
     revalidatePath("/admin"); // dashboard branch scoping
     revalidatePath("/admin/orders"); // orders branch scoping
     return { success: true };

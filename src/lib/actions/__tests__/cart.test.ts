@@ -31,7 +31,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockDeep<PrismaClient>() }));
 // the cart paths never call it.
 vi.mock("@/lib/session", () => ({ getServerSession: vi.fn(), requireAdmin: vi.fn() }));
 
-import { syncCartItemAction, mergeCartAction } from "@/lib/actions/cart";
+import { syncCartItemAction, mergeCartAction, rePriceGuestCart } from "@/lib/actions/cart";
 import { getServerSession } from "@/lib/session";
 import { CART_LIMIT_ERROR } from "@/lib/validators";
 
@@ -389,5 +389,79 @@ describe("mergeCartAction — identity transition (server side of the guest-cart
 
     const res = await mergeCartAction([{ variantId: "v1", quantity: 1 }]);
     expect(res).toEqual({ success: true, data: null });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// rePriceGuestCart — the public live read behind /cart and guest checkout
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("rePriceGuestCart — live detail for the cart page", () => {
+  const LIVE = {
+    startDate: new Date("2000-01-01T00:00:00.000Z"),
+    endDate: new Date("2999-12-31T23:59:59.999Z"),
+  };
+
+  it("returns the discounted price, the 'was' price, the promo, the variant label and the PDP slug", async () => {
+    mockPrisma.productVariant.findMany.mockResolvedValue([
+      {
+        id: "v1",
+        name: "Large",
+        price: { toNumber: () => 200 },
+        compareAtPrice: null,
+        isAvailable: true,
+        promotions: [],
+        product: {
+          slug: "chocolate-gateau",
+          isAvailable: true,
+          promotions: [
+            { id: "p1", name: "Eid Offer", type: "PERCENTAGE", value: 10, isActive: true, ...LIVE },
+          ],
+          category: { promotions: [] },
+        },
+      },
+    ] as never);
+
+    const res = await rePriceGuestCart(["v1", "v1", " "]);
+
+    expect(res).toEqual({
+      success: true,
+      data: [
+        {
+          variantId: "v1",
+          price: 180,
+          compareAtPrice: 200,
+          promotionName: "Eid Offer",
+          isAvailable: true,
+          variantName: "Large",
+          productSlug: "chocolate-gateau",
+        },
+      ],
+    });
+    // De-duplicated, blank ids dropped — one bounded `id IN (…)` read.
+    const [args] = mockPrisma.productVariant.findMany.mock.calls[0] as any[];
+    expect(args.where).toEqual({ id: { in: ["v1"] } });
+    expect(args.select).toMatchObject({ name: true, product: { select: { slug: true } } });
+  });
+
+  it("flags a line whose PARENT product was switched off as unavailable", async () => {
+    mockPrisma.productVariant.findMany.mockResolvedValue([
+      {
+        id: "v1",
+        name: "Small",
+        price: { toNumber: () => 90 },
+        compareAtPrice: { toNumber: () => 120 },
+        isAvailable: true,
+        promotions: [],
+        product: { slug: "tart", isAvailable: false, promotions: [], category: { promotions: [] } },
+      },
+    ] as never);
+
+    const res = await rePriceGuestCart(["v1"]);
+
+    expect(res).toMatchObject({
+      success: true,
+      data: [{ isAvailable: false, price: 90, compareAtPrice: 120, promotionName: null }],
+    });
   });
 });

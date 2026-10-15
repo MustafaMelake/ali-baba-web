@@ -289,6 +289,15 @@ export default function CartSidebar() {
                     <ArrowRight className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-1" />
                   </Link>
 
+                  {/* Secondary — the full-page cart (/cart) */}
+                  <Link
+                    href="/cart"
+                    onClick={closeCart}
+                    className="mt-3 flex w-full items-center justify-center rounded-full border border-stone-200 px-8 py-3.5 text-xs font-sans font-semibold uppercase tracking-widest text-stone-700 hover:border-stone-400 transition-colors"
+                  >
+                    View Full Cart
+                  </Link>
+
                   {/* Clear */}
                   <button
                     onClick={handleClear}

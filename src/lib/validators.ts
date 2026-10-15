@@ -97,6 +97,8 @@ export type ProductUpdateInput = z.infer<typeof productUpdateSchema>;
 // mirrors the DB cart's clamp (MAX_QUANTITY in src/lib/actions/cart.ts).
 export const CHECKOUT_MAX_ITEMS = 50;
 export const CHECKOUT_MAX_QUANTITY = 99;
+/** Longest order note — the /cart notes box and checkout share it with the schema. */
+export const ORDER_NOTES_MAX_LENGTH = 1000;
 
 /**
  * Rejection message when a single-line sync would push the persisted cart past
@@ -153,7 +155,7 @@ export const checkoutSchema = z
       .trim()
       .min(1, "Phone number is required")
       .max(30, "Phone number is too long"),
-    orderNotes: optionalText(1000),
+    orderNotes: optionalText(ORDER_NOTES_MAX_LENGTH),
   })
   .superRefine((data, ctx) => {
     // `optionalText` trims, so a whitespace-only address arrives here as "";

@@ -26,7 +26,12 @@ vi.mock("@/lib/actions/cart", () => ({
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 import { useCartStore } from "@/lib/cart-store";
-import { mergeCartAction, syncCartItemAction, getDbCartAction } from "@/lib/actions/cart";
+import {
+  mergeCartAction,
+  syncCartItemAction,
+  getDbCartAction,
+  rePriceGuestCart,
+} from "@/lib/actions/cart";
 import type { DbCartItem } from "@/lib/actions/cart";
 
 const mockedSync = vi.mocked(syncCartItemAction);
@@ -53,7 +58,7 @@ function seed(state: Partial<ReturnType<typeof useCartStore.getState>>) {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  useCartStore.setState({ items: [], pendingOps: {}, isOpen: false });
+  useCartStore.setState({ items: [], pendingOps: {}, isOpen: false, orderNote: "" });
   localStorage.clear();
   // Background reconcile resolves cleanly by default (confirms + clears the op).
   mockedSync.mockResolvedValue({ success: true, data: null });
@@ -278,5 +283,93 @@ describe("clearLocalCart / clearCart — pendingOps hygiene", () => {
     useCartStore.getState().clearCart();
     expect(useCartStore.getState().items).toEqual([]);
     expect(useCartStore.getState().pendingOps).toEqual({});
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// orderNote — drafted on /cart, carried to checkout
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("orderNote", () => {
+  it("is persisted with the cart so the draft survives the trip to checkout", () => {
+    useCartStore.getState().setOrderNote("Happy birthday, Mama!");
+
+    expect(useCartStore.getState().orderNote).toBe("Happy birthday, Mama!");
+    const persisted = JSON.parse(localStorage.getItem("ali-baba-cart") ?? "{}");
+    expect(persisted.state.orderNote).toBe("Happy birthday, Mama!");
+  });
+
+  it("is capped at the checkoutSchema limit (1000)", () => {
+    useCartStore.getState().setOrderNote("x".repeat(1200));
+    expect(useCartStore.getState().orderNote).toHaveLength(1000);
+  });
+
+  it("is dropped by clearCart (order placed / Clear) and clearLocalCart (logout)", () => {
+    useCartStore.getState().setOrderNote("No nuts please");
+    useCartStore.getState().clearCart();
+    expect(useCartStore.getState().orderNote).toBe("");
+
+    useCartStore.getState().setOrderNote("Gift wrap");
+    useCartStore.getState().clearLocalCart();
+    expect(useCartStore.getState().orderNote).toBe("");
+  });
+
+  it("is dropped when the last line is removed — but not before", () => {
+    seed({ items: [line({ variantId: "v1" }), line({ variantId: "v2", quantity: 2 })] });
+    useCartStore.getState().setOrderNote("Gift wrap");
+
+    useCartStore.getState().removeItem("v1");
+    expect(useCartStore.getState().orderNote).toBe("Gift wrap");
+
+    // updateQuantity below 1 is a removal too — the bag is now empty.
+    useCartStore.getState().updateQuantity("v2", 0);
+    expect(useCartStore.getState().items).toEqual([]);
+    expect(useCartStore.getState().orderNote).toBe("");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// refreshPrices — live price + the detail /cart renders
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("refreshPrices", () => {
+  const mockedReprice = vi.mocked(rePriceGuestCart);
+  const liveLine = (variantId: string, price: number) => ({
+    variantId,
+    price,
+    compareAtPrice: 150,
+    promotionName: "Eid Offer",
+    isAvailable: true,
+    variantName: "Large",
+    productSlug: "cake",
+  });
+
+  it("updates changed prices and returns the live lines", async () => {
+    seed({ items: [line({ variantId: "v1", price: 150 }), line({ variantId: "v2", price: 80 })] });
+    mockedReprice.mockResolvedValue({ success: true, data: [liveLine("v1", 120), liveLine("v2", 80)] });
+
+    const result = await useCartStore.getState().refreshPrices();
+
+    expect(result.updated).toBe(1);
+    expect(result.lines).toEqual([liveLine("v1", 120), liveLine("v2", 80)]);
+    expect(useCartStore.getState().items.map((i) => i.price)).toEqual([120, 80]);
+  });
+
+  it("returns null lines (and touches nothing) when the read fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    seed({ items: [line({ variantId: "v1", price: 150 })] });
+    mockedReprice.mockResolvedValue({ success: false, error: "down" });
+
+    const result = await useCartStore.getState().refreshPrices();
+
+    expect(result).toEqual({ updated: 0, lines: null });
+    expect(useCartStore.getState().items[0].price).toBe(150);
+  });
+
+  it("skips the round-trip for an empty cart", async () => {
+    const result = await useCartStore.getState().refreshPrices();
+
+    expect(result).toEqual({ updated: 0, lines: [] });
+    expect(mockedReprice).not.toHaveBeenCalled();
   });
 });

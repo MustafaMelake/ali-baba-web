@@ -229,8 +229,8 @@ Holds purchase intent as `{ variantId, quantity }` — **never prices, names, or
 - **Zustand store:** `src/lib/cart-store.ts` — `persist` to `localStorage` key `ali-baba-cart`; SSR-safe via `SERVER_NOOP_STORAGE` (keeps `.persist` API attached during server render — the checkout page reads `useCartStore.persist.onFinishHydration` at render time and would crash otherwise); `partialize` persists exactly `{ items, pendingOps }` (never `isOpen`).
 - **Auth-lifecycle brain:** `src/components/providers/CartSyncProvider.tsx` (mounted in the **root** layout, so admin routes participate too).
 - **Server actions:** `src/lib/actions/cart.ts` — `mergeCartAction`, `syncCartItemAction`, `getDbCartAction`, `rePriceGuestCart`, `clearDbCartAction`.
-- **UI:** `CartSidebar.tsx` (drawer; mounted by `Navbar`), cart badge in `Navbar.tsx`; primary consumer `src/app/(shop)/checkout/page.tsx`.
-- **Shared limits:** `CHECKOUT_MAX_QUANTITY = 99` and `CHECKOUT_MAX_ITEMS = 50` from `src/lib/validators.ts` — the store clamps to, the cart actions cap/clamp to, and `checkoutSchema` rejects beyond, the *same* numbers.
+- **UI:** `CartSidebar.tsx` (drawer; mounted by `Navbar`; links to `/cart`), cart badge in `Navbar.tsx`; the full-page cart `src/app/(shop)/cart/page.tsx` (ISR-60 shell: VAT settings + branch delivery-fee range) + `src/components/cart/{CartView,CartLineRow,CartSummaryPanel}.tsx` and the display-only totals in `src/lib/cart-summary.ts`; primary consumer `src/app/(shop)/checkout/page.tsx`. The store also persists `orderNote` (drafted on `/cart`, pre-filled at checkout as `orderNotes`, dropped by `clearCart`/`clearLocalCart`); `refreshPrices` returns the live `RepricedVariant[]` (incl. `variantName`/`productSlug`) that `/cart` renders.
+- **Shared limits:** `CHECKOUT_MAX_QUANTITY = 99`, `CHECKOUT_MAX_ITEMS = 50` and `ORDER_NOTES_MAX_LENGTH = 1000` from `src/lib/validators.ts` — the store clamps to, the cart actions cap/clamp to, and `checkoutSchema` rejects beyond, the *same* numbers.
 
 ### 5.4 Step-by-Step Data Flow
 
@@ -362,10 +362,10 @@ A **single-row** table (`id = "store"`) holding VAT (rate + master switch) and t
 - **UI:** `src/app/admin/settings/page.tsx` (ADMIN-gated) + `PricingSettingsManager.tsx`.
 
 ### 8.4 Step-by-Step Data Flow
-Checkout mount → `getPublicPricingSettings` (preview) ‖ `placeOrder` → `getStoreSettings` (billing) — same reader, same row, same defaults. Admin save → upsert (row born on first save) → `revalidatePath("/admin/settings")`.
+Checkout mount → `getPublicPricingSettings` (preview) ‖ `/cart` ISR render → `getStoreSettings` (preview) ‖ `placeOrder` → `getStoreSettings` (billing) — same reader, same row, same defaults. Admin save → upsert (row born on first save) → `revalidatePath("/admin/settings")` + `revalidatePath("/cart")`.
 
 ### 8.5 Intersections & Blast Radius
-Exactly two money consumers: checkout preview and `placeOrder`. The documented failure mode is *"the preview can drift only if this file and orders.ts stop sharing that reader"* — any refactor must preserve the single-reader property. `DEFAULT_PRICING_SETTINGS` drifting from schema defaults would make pre-first-save behavior differ from post-first-save.
+Three money consumers: two previews (checkout, and the `/cart` summary — whose read failure degrades to "Calculated at checkout", never to the defaults, since its HTML is cached) and `placeOrder`. The documented failure mode is *"the preview can drift only if this file and orders.ts stop sharing that reader"* — any refactor must preserve the single-reader property. `DEFAULT_PRICING_SETTINGS` drifting from schema defaults would make pre-first-save behavior differ from post-first-save.
 
 ### 8.6 Technical Debt & Vestigial Code
 - Duplicate of `roundMoney`'s formula inline in `parseFee`/`updateVatSettings` rather than importing it — drift hazard only.
@@ -561,6 +561,7 @@ The Prisma/Neon substrate plus the platform's shared coding idioms.
 | `/product/[slug]` | ISR 60 | 60 s | product actions (both slugs on rename); review approve/delete; promotions (layout) |
 | `/category/[slug]` | ISR 60 | 60 s | `updateCategory` (own slug); promotions (layout) |
 | `/collections` | ISR 60 | 60 s | product create/update/delete; category create/update/delete; promotions (layout) |
+| `/cart` | ISR 60 (shell only — lines render client-side) | 60 s | pricing-settings updates; branch create/update/delete |
 | `/shop` | per-request dynamic (reads `searchParams`) | none | n/a (revalidatePath calls exist but are inert-in-effect) |
 | `/menu` | ISR 3600 | 1 h | all menu actions → `revalidatePath("/menu")` |
 | Footer link query | `unstable_cache` tag `footer-links`, TTL 3600 | tag-immediate / 1 h safety | settings actions → `updateTag("footer-links")` |

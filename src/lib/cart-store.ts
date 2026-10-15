@@ -11,8 +11,13 @@ import {
   getDbCartAction,
   rePriceGuestCart,
   type DbCartItem,
+  type RepricedVariant,
 } from "@/lib/actions/cart";
-import { CHECKOUT_MAX_QUANTITY, CART_LIMIT_ERROR } from "@/lib/validators";
+import {
+  CHECKOUT_MAX_QUANTITY,
+  CART_LIMIT_ERROR,
+  ORDER_NOTES_MAX_LENGTH,
+} from "@/lib/validators";
 
 export interface CartItem {
   /**
@@ -52,6 +57,13 @@ interface CartState {
    * drop the un-synced change (the old data-loss bug).
    */
   pendingOps: Record<string, PendingCartOp>;
+  /**
+   * The customer's order note (gift message, dietary needs, delivery
+   * instructions) — drafted on /cart, pre-filled at checkout, sent as
+   * `orderNotes`. Persisted per device; never synced to the DB cart. Dropped
+   * whenever the bag empties (clearCart, or removing the last line).
+   */
+  orderNote: string;
 
   // Drawer
   openCart: () => void;
@@ -78,9 +90,13 @@ interface CartState {
     isLoggedIn?: boolean,
   ) => void;
 
+  /** Capped at ORDER_NOTES_MAX_LENGTH, the same limit checkoutSchema enforces. */
+  setOrderNote: (note: string) => void;
+
   /** Local-only empty (used by checkout / the "Clear cart" button). Also drops
    *  pending ops — the caller empties the DB side via clearDbCartAction, so
-   *  replaying stale line intents afterwards would resurrect the cart. */
+   *  replaying stale line intents afterwards would resurrect the cart — and
+   *  the order note, which belonged to the emptied cart. */
   clearCart: () => void;
   /**
    * LOGOUT-only wipe. Clears the in-memory + persisted (localStorage) cart —
@@ -109,14 +125,17 @@ interface CartState {
   adoptDbCart: (dbItems: DbCartItem[]) => void;
 
   /**
-   * GUEST price refresh. A guest cart is frozen in localStorage, so a promo
+   * Live price refresh. A guest cart is frozen in localStorage, so a promo
    * that started/expired since an item was added leaves a stale display price
    * (placeOrder would still bill the live one). This re-reads every line's
    * current price from the catalogue and updates only the lines that changed.
-   * Logged-in carts never need it — hydrate/merge already re-price from the DB.
-   * Returns how many lines changed so callers can tell the customer.
+   * Logged-in carts are already re-priced by hydrate/merge, so it's a no-op
+   * for their prices — but /cart calls it for everyone, because the response
+   * also carries what a line can't hold (variant name, PDP slug, the applied
+   * promotion, the "was" price, availability). Returns how many lines changed,
+   * plus that live detail (`null` when the read failed).
    */
-  refreshPrices: () => Promise<{ updated: number }>;
+  refreshPrices: () => Promise<{ updated: number; lines: RepricedVariant[] | null }>;
 
   // Derived (computed inline)
   totalItems: () => number;
@@ -208,6 +227,7 @@ export const useCartStore = create<CartState>()(
         items: [],
         isOpen: false,
         pendingOps: {},
+        orderNote: "",
 
         openCart: () => set({ isOpen: true }),
         closeCart: () => set({ isOpen: false }),
@@ -249,9 +269,12 @@ export const useCartStore = create<CartState>()(
         },
 
         removeItem: (variantId, isLoggedIn) => {
-          set((s) => ({
-            items: s.items.filter((i) => i.variantId !== variantId),
-          }));
+          set((s) => {
+            const items = s.items.filter((i) => i.variantId !== variantId);
+            // The note belonged to the bag — emptying it line by line drops
+            // the note too, as clearCart does, so it can't pre-fill a later order.
+            return items.length === 0 ? { items, orderNote: "" } : { items };
+          });
 
           if (isLoggedIn) fireSync(variantId, 0, "DELETE");
         },
@@ -275,9 +298,12 @@ export const useCartStore = create<CartState>()(
           if (isLoggedIn) fireSync(variantId, clamped, "SET");
         },
 
-        clearCart: () => set({ items: [], pendingOps: {} }),
+        setOrderNote: (note) => set({ orderNote: note.slice(0, ORDER_NOTES_MAX_LENGTH) }),
 
-        clearLocalCart: () => set({ items: [], isOpen: false, pendingOps: {} }),
+        clearCart: () => set({ items: [], pendingOps: {}, orderNote: "" }),
+
+        clearLocalCart: () =>
+          set({ items: [], isOpen: false, pendingOps: {}, orderNote: "" }),
 
         mergeAndSyncCart: async () => {
           const localLines = get()
@@ -379,14 +405,14 @@ export const useCartStore = create<CartState>()(
 
         refreshPrices: async () => {
           const variantIds = get().items.map((i) => i.variantId);
-          if (variantIds.length === 0) return { updated: 0 };
+          if (variantIds.length === 0) return { updated: 0, lines: [] };
 
           const res = await rePriceGuestCart(variantIds);
           if (!res.success) {
             // Non-fatal: the stale price stays on screen, and placeOrder still
             // bills the live price — the next refresh reconciles the display.
             console.error("refreshPrices failed:", res.error);
-            return { updated: 0 };
+            return { updated: 0, lines: null };
           }
 
           const liveById = new Map(res.data.map((v) => [v.variantId, v]));
@@ -404,7 +430,7 @@ export const useCartStore = create<CartState>()(
           });
 
           if (updated > 0) set({ items: next });
-          return { updated };
+          return { updated, lines: res.data };
         },
 
         totalItems: () => get().items.reduce((sum, i) => sum + i.quantity, 0),
@@ -429,7 +455,12 @@ export const useCartStore = create<CartState>()(
       // page-life that died mid-sync survives the reload) — never UI state
       // (isOpen) or session-derived data. Carts persisted before `pendingOps`
       // existed rehydrate fine: the missing key keeps its initial {}.
-      partialize: (s) => ({ items: s.items, pendingOps: s.pendingOps }),
+      // The order note persists too, so a draft survives the trip to checkout.
+      partialize: (s) => ({
+        items: s.items,
+        pendingOps: s.pendingOps,
+        orderNote: s.orderNote,
+      }),
     },
   ),
 );
