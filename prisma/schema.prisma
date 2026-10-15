@@ -55,6 +55,14 @@ enum DiscountType {
   FIXED_AMOUNT // `value` is an absolute amount off (store currency)
 }
 
+/// What a marketing-calendar entry marks (drives its colour on /admin/calendar).
+enum MarketingEventType {
+  RELIGIOUS_HOLIDAY // Ramadan, the Eids, Mawlid, Coptic Christmas/Easter
+  EGYPTIAN_HOLIDAY // national days off (Oct 6, Jul 23, Sham El-Nessim, …)
+  RETAIL_SEASON // shopping peaks (Mother's Day, White Friday, …)
+  CAMPAIGN // the shop's own planned promotion
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Better Auth — standard models
 // Field names & types must match what Better Auth's prismaAdapter expects.
@@ -598,4 +606,40 @@ model FooterLink {
 
   // Matches the storefront read: where isActive, ordered by `order` ascending.
   @@index([isActive, order])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Marketing calendar (admin-only planning)
+//
+// Custom reminders on the /admin/calendar planner — "Summer flash sale, 20%",
+// "Open kahk pre-orders". Built-in Egyptian holidays and retail seasons are NOT
+// stored: they're computed per year in src/lib/marketing-holidays.ts (Hijri
+// dates via the Umm al-Qura calendar), so they never need re-seeding.
+//
+// A row is a planning note only — it never prices anything; a live discount is
+// still a `Promotion`. No relations, so nothing cascades or restricts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model MarketingEvent {
+  id                    String             @id @default(cuid())
+  title                 String
+  type                  MarketingEventType @default(CAMPAIGN)
+  /// First day (inclusive) — a Cairo calendar DATE, no time-of-day.
+  startDate             DateTime           @db.Date
+  /// Last day (inclusive). endDate >= startDate is enforced by the shared
+  /// marketingEventSchema (validators.ts), not the database.
+  endDate               DateTime           @db.Date
+  /// Free-form context, e.g. "Coordinate with the Menouf branch on capacity".
+  notes                 String?
+  /// Planned discount as a whole percent (1–100). A planning target, not
+  /// money and never billed — hence an Int, not a Decimal.
+  targetDiscountPercent Int?
+  /// The plan in a line, e.g. "Pre-order kahk tins + free delivery over 500".
+  strategy              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // The calendar reads date windows: startDate <= rangeEnd AND endDate >= rangeStart.
+  @@index([startDate, endDate])
 }

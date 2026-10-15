@@ -10,7 +10,8 @@ import CreatePromotionButton from "@/components/admin/CreatePromotionButton";
 import PromotionEditButton from "@/components/admin/PromotionEditButton";
 import DeletePromotionButton from "@/components/admin/DeletePromotionButton";
 import PromotionActiveToggle from "@/components/admin/PromotionActiveToggle";
-import type { PromotionFormOptions } from "@/components/admin/PromotionModal";
+import type { PromotionDraft, PromotionFormOptions } from "@/components/admin/PromotionModal";
+import { isDayKey } from "@/lib/marketing-calendar";
 
 export const metadata = {
   title: "Promotions | Admin",
@@ -38,9 +39,34 @@ function scheduleState(start: Date, end: Date) {
   return { label: "Live", cls: "bg-emerald-50 text-emerald-700 ring-emerald-600/20" };
 }
 
-export default async function AdminPromotionsPage() {
+type DraftParams = { draft?: string; name?: string; start?: string; end?: string; value?: string };
+
+/**
+ * The marketing calendar's "Create promotion" hand-off (`?draft=1&name=…`).
+ * Only pre-fills the form — every field is still re-validated by
+ * createPromotion on submit — but a malformed value is dropped rather than
+ * shown, so a hand-edited URL can't seed nonsense.
+ */
+function parsePromotionDraft(params: DraftParams): PromotionDraft | undefined {
+  if (params.draft !== "1") return undefined;
+  const name = params.name?.trim().slice(0, 120);
+  const value = Number(params.value);
+  return {
+    name: name || undefined,
+    startDate: isDayKey(params.start) ? params.start : undefined,
+    endDate: isDayKey(params.end) ? params.end : undefined,
+    value: Number.isFinite(value) && value > 0 && value <= 100 ? value : undefined,
+  };
+}
+
+export default async function AdminPromotionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<DraftParams>;
+}) {
   // ADMIN-only: the shared layout admits MANAGERs, so this bounces them to /admin.
   await requireAdminPage();
+  const draft = parsePromotionDraft(await searchParams);
 
   const [promotions, categories, products] = await Promise.all([
     prisma.promotion.findMany({
@@ -99,7 +125,14 @@ export default async function AdminPromotionsPage() {
         eyebrow="Merchandising"
         title="Promotions"
         description="Create time-boxed discounts and target them at specific categories, products or variants."
-        action={<CreatePromotionButton options={options} />}
+        action={
+          // Keyed by the draft so a new hand-off remounts it (and reopens the form).
+          <CreatePromotionButton
+            key={draft ? JSON.stringify(draft) : "new"}
+            options={options}
+            draft={draft}
+          />
+        }
       />
 
       <div className="overflow-hidden rounded-2xl border border-stone-200/70 bg-white shadow-sm">

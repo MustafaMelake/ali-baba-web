@@ -39,6 +39,17 @@ export type EditablePromotion = {
   variantIds: string[];
 };
 
+/**
+ * Pre-filled values for a NEW promotion — e.g. the marketing calendar's
+ * "Create promotion" hand-off. Dates are "yyyy-mm-dd"; `value` is a percent.
+ */
+export type PromotionDraft = {
+  name?: string;
+  value?: number;
+  startDate?: string;
+  endDate?: string;
+};
+
 /** Render a Date / ISO string as the "yyyy-mm-dd" a date input expects (local). */
 function toDateInputValue(value: string | undefined): string {
   if (!value) return "";
@@ -62,11 +73,14 @@ function dateInputFromNow(days: number): string {
  */
 export default function PromotionModal({
   promotion,
+  draft,
   options,
   isOpen,
   onClose,
 }: {
   promotion?: EditablePromotion;
+  /** Create-mode defaults; ignored when editing. */
+  draft?: PromotionDraft;
   options: PromotionFormOptions;
   isOpen: boolean;
   onClose: () => void;
@@ -89,17 +103,19 @@ export default function PromotionModal({
   useEffect(() => {
     if (!isOpen) return;
     /* eslint-disable react-hooks/set-state-in-effect -- intentional: prime the form on open */
-    setName(promotion?.name ?? "");
+    setName(promotion?.name ?? draft?.name ?? "");
     setType(promotion?.type ?? DiscountType.PERCENTAGE);
-    setValue(promotion ? String(promotion.value) : "");
-    setStartDate(toDateInputValue(promotion?.startDate) || dateInputFromNow(0));
-    setEndDate(toDateInputValue(promotion?.endDate) || dateInputFromNow(30));
+    setValue(promotion ? String(promotion.value) : draft?.value != null ? String(draft.value) : "");
+    setStartDate(
+      toDateInputValue(promotion?.startDate) || draft?.startDate || dateInputFromNow(0),
+    );
+    setEndDate(toDateInputValue(promotion?.endDate) || draft?.endDate || dateInputFromNow(30));
     setIsActive(promotion?.isActive ?? true);
     setCategoryIds(promotion?.categoryIds ?? []);
     setProductIds(promotion?.productIds ?? []);
     setVariantIds(promotion?.variantIds ?? []);
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [isOpen, promotion]);
+  }, [isOpen, promotion, draft]);
 
   // Esc to close + lock background scroll while open.
   useEffect(() => {

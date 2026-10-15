@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { FulfillmentMethod } from "@/generated/prisma/enums";
+import { FulfillmentMethod, MarketingEventType } from "@/generated/prisma/enums";
+import { daysBetween, isDayKey } from "@/lib/marketing-calendar";
 
 /**
  * Shared validation schemas — imported by BOTH the client forms (for instant
@@ -218,6 +219,71 @@ export const searchQuerySchema = z
         `Type at least ${SEARCH_MIN_QUERY_LENGTH} characters to search.`,
       ),
   );
+
+// ─── Marketing calendar ──────────────────────────────────────────────────────
+
+/** Longest reminder accepted — past a year it's a typo, not a season. */
+export const MARKETING_EVENT_MAX_DAYS = 366;
+
+// A Cairo calendar date as the date input submits it ("YYYY-MM-DD").
+const calendarDate = z.string().trim().refine(isDayKey, "Pick a valid date.");
+
+// Optional free text: blank collapses to null so the column stays NULL.
+const optionalNote = (max: number, label: string) =>
+  z
+    .string()
+    .trim()
+    .max(max, `${label} is too long (max ${max} characters).`)
+    .nullish()
+    .transform((value) => value || null);
+
+/**
+ * A custom marketing-calendar reminder, shared by the calendar form (instant
+ * feedback) and the marketing-events actions (the authoritative re-parse).
+ * `targetDiscountPercent` is a planning note in whole percent — it never
+ * prices anything; a live discount is still a Promotion.
+ */
+export const marketingEventSchema = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(2, "Title must be at least 2 characters.")
+      .max(120, "Title is too long (max 120 characters)."),
+    type: z.enum(MarketingEventType, { error: "Pick an event type." }),
+    startDate: calendarDate,
+    endDate: calendarDate,
+    notes: optionalNote(1000, "Notes"),
+    strategy: optionalNote(300, "Strategy"),
+    targetDiscountPercent: z
+      .number({ error: "Enter the target discount as a number." })
+      .int("Use a whole percentage.")
+      .min(1, "Target discount must be at least 1%.")
+      .max(100, "Target discount can't exceed 100%.")
+      .nullish()
+      .transform((value) => value ?? null),
+  })
+  .superRefine((data, ctx) => {
+    if (!isDayKey(data.startDate) || !isDayKey(data.endDate)) return;
+    if (data.endDate < data.startDate) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["endDate"],
+        message: "End date can't be before the start date.",
+      });
+    } else if (daysBetween(data.startDate, data.endDate) + 1 > MARKETING_EVENT_MAX_DAYS) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["endDate"],
+        message: "A reminder can span at most a year.",
+      });
+    }
+  });
+
+/** What the calendar form sends (blank optionals may still be "" / undefined). */
+export type MarketingEventInput = z.input<typeof marketingEventSchema>;
+/** The normalized reminder the actions write. */
+export type MarketingEventData = z.output<typeof marketingEventSchema>;
 
 /**
  * Flattens a ZodError into a `{ "path.to.field": "message" }` map. Stable across
