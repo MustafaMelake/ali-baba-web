@@ -4,6 +4,7 @@ import FaqsSection from "@/components/FaqsSection";
 import Hero from "@/components/Hero";
 import OurStory from "@/components/OurStory";
 import PromoWidget from "@/components/PromoWidget";
+import SeasonalOverlay from "@/components/SeasonalOverlay";
 import { prisma } from "@/lib/prisma";
 import { getStorefrontLocations } from "@/lib/actions/locations";
 import { livePromotionWhere } from "@/lib/discounts";
@@ -97,6 +98,12 @@ export default async function ShopHomePage() {
     // Navbar + Footer come from the (shop) layout, which also owns the <main>
     // landmark and the fixed-navbar clearance padding.
     <div className="min-h-screen bg-background font-sans" dir="ltr">
+      {/* Once-per-session seasonal intro. Homepage only — not the (shop)
+          layout — so a cart, checkout or product page never opens with it:
+          each new tab is a fresh sessionStorage session. Client-only, so the
+          cached HTML stays identical for every visitor. */}
+      <SeasonalOverlay />
+
       {/* Strongest live promotion — a self-contained Server Component handed
           to the client Hero as a slot, where it renders as the top-left seal;
           renders nothing when no promotion is live. */}

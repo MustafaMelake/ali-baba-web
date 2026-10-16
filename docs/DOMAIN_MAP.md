@@ -47,6 +47,7 @@
 | `useCartStore` | `src/lib/cart-store.ts` | `localStorage` (`ali-baba-cart`), partialized to `items` + `pendingOps` | Cart lines + unsynced-intent ledger |
 | `useWishlistStore` | `src/lib/wishlist-store.ts` | none (per page-life) | Favorited product-id set |
 | `useAdminUi` | `src/lib/admin-ui-store.ts` | none (deliberately) | Admin mobile-nav drawer flag |
+| `useSeasonalIntro` | `src/lib/seasonal-intro-store.ts` | `sessionStorage` (`ali-baba-seasonal-intro` — the season whose intro this tab played) | Homepage seasonal-intro latch: once per tab session, never under reduced motion |
 
 **Global providers.** `src/app/layout.tsx` wraps the entire tree (storefront *and* admin) in `<CartSyncProvider>` and mounts the `sonner` `<Toaster>`. `src/app/(shop)/layout.tsx` provides the storefront chrome: fixed `Navbar` (which mounts the `CartSidebar` drawer), the single `<main>` landmark with navbar clearance, and the RSC `Footer`.
 

@@ -137,3 +137,111 @@
     @apply font-sans;
   }
 }
+
+/*
+  Seasonal intro — src/components/SeasonalOverlay.tsx. Every keyframe moves
+  only transform/opacity, so the browser runs it on the compositor thread: the
+  intro plays while the homepage is still hydrating, and main-thread work can't
+  make it stutter. Each keyframe repeats its motion INSIDE one long iteration
+  (two crossings; four full swings or turns): an iteration boundary costs a
+  main-thread style pass — React listens for `animationiteration` — so none may
+  fall in the few seconds the intro is on screen. Per-particle distances arrive
+  as custom properties.
+*/
+
+/* Two crossings per iteration; the wrap at 50% happens off-screen. */
+@keyframes season-fall {
+  0%,
+  50.01% {
+    transform: translate3d(0, -12vh, 0);
+  }
+  50%,
+  100% {
+    transform: translate3d(var(--drift), 112vh, 0);
+  }
+}
+
+@keyframes season-rise {
+  0%,
+  50.01% {
+    transform: translate3d(0, 108vh, 0);
+  }
+  50%,
+  100% {
+    transform: translate3d(var(--drift), -12vh, 0);
+  }
+}
+
+/* Pendulum swing — the tilt rides the swing, the way a falling leaf rocks. */
+@keyframes season-sway {
+  0%,
+  25%,
+  50%,
+  75%,
+  100% {
+    transform: translateX(calc(var(--sway) * -1)) rotate(calc(var(--rock) * -1));
+  }
+  12.5%,
+  37.5%,
+  62.5%,
+  87.5% {
+    transform: translateX(var(--sway)) rotate(var(--rock));
+  }
+}
+
+@keyframes season-spin {
+  0%,
+  25%,
+  50%,
+  75%,
+  100% {
+    transform: rotate(0deg);
+  }
+  12.5%,
+  37.5%,
+  62.5%,
+  87.5% {
+    transform: rotate(var(--turn));
+  }
+}
+
+/* An orthographic 3D turn — a petal or leaf catching the air edge-on. */
+@keyframes season-flutter {
+  0%,
+  25%,
+  50%,
+  75%,
+  100% {
+    transform: rotate3d(1, 0.35, 0, 0deg);
+  }
+  12.5%,
+  37.5%,
+  62.5%,
+  87.5% {
+    transform: rotate3d(1, 0.35, 0, var(--turn));
+  }
+}
+
+@keyframes season-twinkle {
+  0%,
+  25%,
+  50%,
+  75%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.55) rotate(0deg);
+  }
+  12.5%,
+  37.5%,
+  62.5%,
+  87.5% {
+    opacity: 1;
+    transform: scale(1) rotate(var(--turn));
+  }
+}
+
+@keyframes season-countdown {
+  to {
+    transform: scaleX(0);
+  }
+}
