@@ -74,7 +74,7 @@ export default async function WishlistPage() {
 
                     {/* Sale badge — only while a promotion is live */}
                     {onSale && (
-                      <div className="absolute left-3.5 top-3.5 z-10 rounded-full bg-primary px-2.5 py-1 font-sans text-[11px] font-bold tracking-wide text-white shadow-sm">
+                      <div className="absolute left-3.5 top-3.5 z-10 rounded-full bg-gradient-to-br from-red-600 via-red-700 to-red-800 px-2.5 py-1 font-sans text-[11px] font-bold tracking-wide text-white tabular-nums shadow-[0_6px_16px_-6px_rgba(153,27,27,0.7)] ring-1 ring-red-900/20">
                         -{percentOff}%
                       </div>
                     )}

@@ -4,7 +4,7 @@ import useEmblaCarousel from "embla-carousel-react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowUpRight, Sparkles } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 
 export interface CategorySliderProps {
   categories: {
@@ -116,7 +116,7 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
                     {cat.id}
                   </span>
 
-                  {/* Promotion badge — premium glassmorphic pill, top-right.
+                  {/* Promotion badge — crimson pill (matches the hero PromoSeal), top-right.
                       Slides in from above, then pulses gently to draw the eye. */}
                   {cat.discountLabel && (
                     <motion.div
@@ -127,7 +127,7 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
                       transition={{ duration: 0.5, ease: "easeOut", delay: i * 0.08 + 0.25 }}
                     >
                       <motion.span
-                        className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-gradient-to-br from-primary to-primary/80 px-3.5 py-1.5 text-[11px] font-sans font-bold uppercase tracking-[0.12em] text-white shadow-lg shadow-primary/30 backdrop-blur-md ring-1 ring-inset ring-white/10"
+                        className="inline-flex items-center justify-center rounded-full bg-gradient-to-br from-red-600 via-red-700 to-red-800 px-3.5 py-1.5 text-[11px] font-sans font-bold uppercase tracking-[0.12em] text-white tabular-nums shadow-lg shadow-red-900/30 ring-1 ring-red-900/20"
                         animate={{ scale: [1, 1.06, 1] }}
                         transition={{
                           duration: 2.2,
@@ -135,7 +135,6 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
                           ease: "easeInOut",
                         }}
                       >
-                        <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
                         {cat.discountLabel}
                       </motion.span>
                     </motion.div>
