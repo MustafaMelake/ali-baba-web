@@ -8,11 +8,32 @@ import { ArrowRight } from "lucide-react";
 // Cinematic cubic-bezier — fast start, silky deceleration
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
-export default function Hero() {
+interface HeroProps {
+  /**
+   * Optional server-rendered promotion seal (the page passes <PromoWidget />),
+   * so this client island stays presentational and never fetches. The slot
+   * may render nothing when no promotion is live.
+   */
+  promo?: React.ReactNode;
+}
+
+export default function Hero({ promo }: HeroProps) {
   return (
     <div className="w-full bg-white">
       {/* ─── Upper Typography Block ──────────────────────────── */}
-      <div className="max-w-5xl mx-auto px-6 text-center pt-32 md:pt-44 pb-10 md:pb-14">
+      <div className="relative max-w-5xl mx-auto px-6 text-center pt-32 md:pt-44 pb-10 md:pb-14">
+        {/*
+          Promo seal — pinned top-left inside the top padding band, so it sits
+          above the eyebrow's left flank without shifting the headline (no
+          layout cost when the slot renders nothing). The fixed navbar is
+          already cleared by the (shop) layout's <main> padding.
+        */}
+        {promo && (
+          <div className="absolute left-6 top-8 md:top-14 lg:top-12 z-10">
+            {promo}
+          </div>
+        )}
+
         {/* Eyebrow kicker */}
         <motion.p
           className="text-[11px] font-sans font-semibold uppercase tracking-[0.35em] text-stone-400 mb-8 md:mb-10"

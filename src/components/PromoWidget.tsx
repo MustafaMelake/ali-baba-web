@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { livePromotionWhere } from "@/lib/discounts";
 import { DiscountType } from "@/generated/prisma/enums";
 import { STORE_TZ } from "@/lib/timezone";
-import PromoWidgetBanner from "@/components/PromoWidgetBanner";
+import PromoSeal from "@/components/PromoSeal";
 
 /** Only show the "Ends …" urgency line when the offer genuinely ends soon —
  *  an evergreen promotion parked on a far-future endDate shouldn't nag. */
@@ -16,17 +16,19 @@ const endsOnFmt = new Intl.DateTimeFormat("en-GB", {
 });
 
 /**
- * Server Component that surfaces the single strongest live promotion as a
- * storefront banner. Fetches with the same `livePromotionWhere(now)` strict
- * liveness filter as every price surface, coerces the Decimal `value` to a
- * plain number, and hands display-ready props to the thin client leaf
- * <PromoWidgetBanner /> (which exists only for the framer-motion entrance).
+ * Server Component that surfaces the single strongest live promotion as the
+ * circular seal in the homepage Hero (passed in through Hero's `promo` slot,
+ * so the client Hero never fetches). Fetches with the same
+ * `livePromotionWhere(now)` strict liveness filter as every price surface,
+ * coerces the Decimal `value` to a plain number, and hands display-ready props
+ * to the thin client leaf <PromoSeal /> (which exists only for the
+ * framer-motion entrance).
  *
- * Renders nothing when no promotion is live — the section disappears rather
+ * Renders nothing when no promotion is live — the seal disappears rather
  * than showing an empty shell.
  *
  * Caching: no per-user state is read, so the widget inherits its page's
- * shared ISR window (60s on `/` and `/category/[slug]`). Promotion mutations
+ * shared ISR window (60s on `/`). Promotion mutations
  * already bust the whole storefront tree via `revalidatePath("/", "layout")`,
  * so admin changes appear on the next request; only pure time-based liveness
  * (a window opening/closing untouched) can lag up to a minute — exactly the
@@ -45,7 +47,7 @@ export default async function PromoWidget() {
       value: true,
       endDate: true,
       // Deep-link target: a promotion aimed at exactly one category sends the
-      // CTA straight to that collection; anything broader lands on /shop.
+      // seal straight to that collection; anything broader lands on /collections.
       categories: { select: { slug: true } },
     },
   });
@@ -74,7 +76,7 @@ export default async function PromoWidget() {
   const href =
     featured.categories.length === 1
       ? `/category/${featured.categories[0].slug}`
-      : "/shop";
+      : "/collections";
 
   const endsOn =
     featured.endDate.getTime() - now.getTime() <= ENDS_SOON_WINDOW_MS
@@ -82,7 +84,7 @@ export default async function PromoWidget() {
       : null;
 
   return (
-    <PromoWidgetBanner
+    <PromoSeal
       headline={featured.name}
       percentOff={percentOff}
       href={href}

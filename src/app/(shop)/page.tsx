@@ -97,11 +97,10 @@ export default async function ShopHomePage() {
     // Navbar + Footer come from the (shop) layout, which also owns the <main>
     // landmark and the fixed-navbar clearance padding.
     <div className="min-h-screen bg-background font-sans" dir="ltr">
-      <Hero />
-
-      {/* Strongest live promotion — self-contained Server Component; renders
-          nothing when no promotion is live. */}
-      <PromoWidget />
+      {/* Strongest live promotion — a self-contained Server Component handed
+          to the client Hero as a slot, where it renders as the top-left seal;
+          renders nothing when no promotion is live. */}
+      <Hero promo={<PromoWidget />} />
 
       <CategorySlider categories={sliderCategories} />
 
