@@ -9,6 +9,7 @@ import {
   resolvePrice,
 } from "@/lib/discounts";
 import { searchQuerySchema, searchTokens } from "@/lib/validators";
+import { LISTABLE_PRODUCT } from "@/lib/catalog";
 
 /**
  * Storefront search — the two reads behind the search palette
@@ -77,15 +78,6 @@ const CATEGORY_LIMIT = 3;
 const NAME_CANDIDATE_LIMIT = 24;
 const SUGGESTED_CATEGORY_LIMIT = 8;
 const SUGGESTED_PRODUCT_LIMIT = 4;
-
-/**
- * Listable = available AND has an available variant. The starting variant is
- * what a hit is priced from, so an archived one must never surface.
- */
-const LISTABLE_PRODUCT = {
-  isAvailable: true,
-  variants: { some: { isAvailable: true } },
-} satisfies Prisma.ProductWhereInput;
 
 /** Case-insensitive substring match — compiles to ILIKE on Postgres. */
 function matching(token: string) {

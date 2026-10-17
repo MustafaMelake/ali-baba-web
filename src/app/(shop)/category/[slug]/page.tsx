@@ -4,6 +4,7 @@ import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import CategoryPageTemplate from "@/components/CategoryPageTemplate";
 import { livePromotionWhere, PROMOTION_SELECT_FIELDS } from "@/lib/discounts";
+import { LISTABLE_PRODUCT } from "@/lib/catalog";
 
 // Shared ISR cache: this page is identical for every visitor (wishlist hearts
 // hydrate client-side from the shared store), so it regenerates at most once a
@@ -67,7 +68,7 @@ export default async function CategoryPage({
   // featured and standard categories. Live promotions are joined at category /
   // product / variant level for the Discount Engine (see CategoryPageTemplate).
   const rawProducts = await prisma.product.findMany({
-    where: { isAvailable: true, categoryId: category.id },
+    where: { ...LISTABLE_PRODUCT, categoryId: category.id },
     include: {
       category: {
         select: {
@@ -77,7 +78,8 @@ export default async function CategoryPage({
       },
       promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
       variants: {
-        orderBy: { price: "asc" }, // [0] = starting (lowest) price
+        where: { isAvailable: true },
+        orderBy: { price: "asc" }, // [0] = starting (lowest) available price
         include: {
           promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
         },
@@ -107,6 +109,7 @@ export default async function CategoryPage({
         `Discover our ${category.name} collection — each piece handcrafted with care.`
       }
       products={products}
+      now={now}
     />
   );
 }

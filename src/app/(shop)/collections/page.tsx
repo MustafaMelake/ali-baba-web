@@ -10,6 +10,7 @@ import {
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
 } from "@/lib/discounts";
+import { LISTABLE_PRODUCT } from "@/lib/catalog";
 
 // Shared ISR cache (60s), matching the category pages and the PDP: this page is
 // identical for every visitor (wishlist hearts hydrate client-side from the
@@ -23,16 +24,6 @@ export const revalidate = 60;
 const LATEST_ARRIVALS_LIMIT = 8;
 /** Products previewed per category section — the "View all" link goes deeper. */
 const PER_CATEGORY_LIMIT = 4;
-
-/**
- * A product is listable only if it AND at least one of its variants is
- * available — otherwise the card's starting variant (what quick-add charges)
- * could be an archived one that `placeOrder` would reject.
- */
-const LISTABLE_PRODUCT = {
-  isAvailable: true,
-  variants: { some: { isAvailable: true } },
-} satisfies Prisma.ProductWhereInput;
 
 /**
  * The standard card include: category name + the three-level live-promotion

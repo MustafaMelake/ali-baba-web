@@ -6,6 +6,7 @@ import {
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
 } from "@/lib/discounts";
+import { LISTABLE_PRODUCT } from "@/lib/catalog";
 import ShopClient from "./ShopClient";
 
 // No per-user data here anymore (wishlist hearts hydrate client-side from the
@@ -37,7 +38,7 @@ export default async function ShopPage({
       // the grid only ever ships the products it renders (LCP scales with the
       // page size, not the whole catalog).
       where: {
-        isAvailable: true,
+        ...LISTABLE_PRODUCT,
         ...(categoryParam ? { category: { slug: categoryParam } } : {}),
       },
       include: {
@@ -52,6 +53,7 @@ export default async function ShopPage({
         promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
         // [0] = starting price; carry each variant's own live promotions.
         variants: {
+          where: { isAvailable: true },
           orderBy: { price: "asc" },
           include: {
             promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },

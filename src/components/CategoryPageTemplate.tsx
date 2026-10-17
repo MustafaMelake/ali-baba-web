@@ -13,8 +13,9 @@ import {
  * `prisma.product.findMany({ include: { category: true, variants: ... } })`
  * straight through; the extra fields Prisma returns are simply ignored.
  *
- * `variants` is expected to be ordered ascending by price so `variants[0]` is
- * the starting (lowest) price.
+ * `variants` is expected to hold only AVAILABLE variants, ordered ascending by
+ * price, so `variants[0]` is the starting (lowest) price quick-add can buy —
+ * query with `LISTABLE_PRODUCT` and `variants: { where: { isAvailable: true } }`.
  *
  * The optional `promotions` lists (variant / product / category level) feed the
  * Discount Engine — include only LIVE rows from the query (see livePromotionWhere).
@@ -43,6 +44,8 @@ export interface CategoryPageTemplateProps {
   description: string;
   /** Products belonging to this category, already fetched server-side. */
   products: CategoryProduct[];
+  /** The instant the query filtered promotions against — prices use the same one. */
+  now: Date;
 }
 
 /**
@@ -59,6 +62,7 @@ export default function CategoryPageTemplate({
   title,
   description,
   products,
+  now,
 }: CategoryPageTemplateProps) {
   return (
     // Navbar/Footer (and the fixed-navbar clearance) come from the (shop)
@@ -141,6 +145,7 @@ export default function CategoryPageTemplate({
                     product.promotions,
                     product.category.promotions,
                   ),
+                  now,
                 );
                 const card: ShopProduct = {
                   id: product.id,

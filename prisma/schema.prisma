@@ -82,8 +82,8 @@ model User {
   // The rule "a MANAGER must have a branchId" is conditional and CANNOT be
   // expressed in Prisma — enforce it in app logic (and/or the DB CHECK
   // constraint described in the migration note).
-  branchId      String?
-  branch        Branch?  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id], onDelete: Restrict)
 
   // Auth relations
   sessions Session[]
@@ -163,13 +163,13 @@ model Branch {
 
   /// Flat delivery fee (EGP) charged when this branch fulfils a DELIVERY order.
   /// Orders with no branch ("Other Areas") use StoreSettings.defaultDeliveryFee.
-  deliveryFee Decimal @default(35)
+  deliveryFee Decimal @default(35) @db.Decimal(12, 2)
 
   /// Users assigned to this branch (typically role == MANAGER).
   managers User[]
 
   /// Orders fulfilled by this branch (see Order.branchId).
-  orders   Order[]
+  orders Order[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -244,17 +244,17 @@ model Product {
 }
 
 model ProductVariant {
-  id             String  @id @default(cuid())
+  id             String   @id @default(cuid())
   productId      String
-  product        Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   /// e.g. "Scoop", "1 Litre", "6 Pieces"
   name           String
-  sku            String? @unique
+  sku            String?  @unique
   /// Money as Decimal (not Float) so currency never drifts on binary rounding.
-  price          Decimal
+  price          Decimal  @db.Decimal(12, 2)
   /// Optional strikethrough / original price for promotions.
-  compareAtPrice Decimal?
-  isAvailable    Boolean @default(true)
+  compareAtPrice Decimal? @db.Decimal(12, 2)
+  isAvailable    Boolean  @default(true)
 
   cartItems  CartItem[]
   orderItems OrderItem[]
@@ -342,9 +342,9 @@ model Order {
   items OrderItem[]
 
   // Money columns are Decimal so historical receipts never carry float drift.
-  subtotal    Decimal
-  deliveryFee Decimal @default(0)
-  totalAmount Decimal
+  subtotal    Decimal @db.Decimal(12, 2)
+  deliveryFee Decimal @default(0) @db.Decimal(12, 2)
+  totalAmount Decimal @db.Decimal(12, 2)
 
   status      OrderStatus       @default(PENDING)
   fulfillment FulfillmentMethod @default(DELIVERY)
@@ -385,7 +385,7 @@ model OrderItem {
   // Snapshot captured at purchase time (price resolved server-side from the variant).
   productName String
   variantName String
-  unitPrice   Decimal
+  unitPrice   Decimal @db.Decimal(12, 2)
   quantity    Int
 
   @@index([orderId])
@@ -421,12 +421,12 @@ model MenuCategory {
 }
 
 model MenuItem {
-  id    String @id @default(cuid())
+  id    String  @id @default(cuid())
   /// Item name — typically Arabic (rendered RTL on the storefront).
   name  String
-  price Decimal
+  price Decimal @db.Decimal(12, 2)
   /// Display order within its category (ascending).
-  order Int    @default(0)
+  order Int     @default(0)
 
   categoryId String
   category   MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
@@ -456,7 +456,7 @@ model Promotion {
   name      String
   type      DiscountType
   /// PERCENTAGE → percent off; FIXED_AMOUNT → currency off. Decimal for money-safety.
-  value     Decimal
+  value     Decimal      @db.Decimal(12, 2)
   startDate DateTime
   endDate   DateTime
   isActive  Boolean      @default(true)
@@ -505,7 +505,7 @@ model StoreSettings {
 
   /// Delivery fee (EGP) for DELIVERY orders not routed to a branch
   /// ("Other Areas" at checkout, or a branch that went inactive mid-order).
-  defaultDeliveryFee Decimal @default(35)
+  defaultDeliveryFee Decimal @default(35) @db.Decimal(12, 2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -524,13 +524,13 @@ model StoreSettings {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Faq {
-  id       String @id @default(cuid())
+  id       String  @id @default(cuid())
   /// The customer-facing question, e.g. "Do you offer custom cake designs?".
   question String
   /// The answer body rendered inside the accordion panel.
   answer   String
   /// Ascending display position on the storefront (lower = earlier).
-  order    Int    @default(0)
+  order    Int     @default(0)
   /// Hidden from the storefront when false, without deleting the row.
   isActive Boolean @default(true)
 
@@ -556,7 +556,7 @@ model Faq {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Location {
-  id          String @id @default(cuid())
+  id          String  @id @default(cuid())
   /// Category pill label, e.g. "Patisserie" or "Café & Lounge".
   tag         String
   /// Opening-hours line, e.g. "09:00 AM - 11:00 PM".
@@ -574,9 +574,9 @@ model Location {
   /// Category/MenuPage discriminator columns.
   type        String
   /// Ascending display position on the storefront (lower = earlier).
-  order       Int    @default(0)
+  order       Int     @default(0)
   /// Hidden from the storefront when false, without deleting the row.
-  isActive Boolean @default(true)
+  isActive    Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -586,18 +586,18 @@ model Location {
 }
 
 model FooterLink {
-  id    String @id @default(cuid())
+  id       String  @id @default(cuid())
   /// Display text, e.g. "Our Story" or "Instagram".
-  label String
+  label    String
   /// The href — an internal path ("/category/oriental-sweets") or absolute URL.
-  url   String
+  url      String
   /// Column heading this link renders under in the footer, e.g. "Customer
   /// Service" or "About Us". Links sharing a group form one nav column.
-  group String @default("Explore")
+  group    String  @default("Explore")
   /// Ascending sort position within the footer (lower = earlier). Drives both
   /// the order within a column and the left-to-right order of the columns
   /// (a column's position follows its earliest-ordered link).
-  order Int    @default(0)
+  order    Int     @default(0)
   /// Hidden from the storefront when false, without deleting the row.
   isActive Boolean @default(true)
 

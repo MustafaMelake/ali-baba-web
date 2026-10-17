@@ -109,14 +109,14 @@ export default async function ShopPage({
     prisma.category.findMany({ orderBy: { name: "asc" }, select: { name: true, slug: true } }),
     prisma.product.findMany({
       where: {
-        isAvailable: true,
+        ...LISTABLE_PRODUCT, // src/lib/catalog.ts — product AND ≥1 variant available
         // Narrow by slug only when ?category= is present.
         ...(categoryParam ? { category: { slug: categoryParam } } : {}),
       },
       include: {
         category: { select: { name: true, promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
         promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-        variants: { orderBy: { price: "asc" }, include: { promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
+        variants: { where: { isAvailable: true }, orderBy: { price: "asc" }, include: { promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -179,12 +179,12 @@ export default async function CategoryPage({ params }) {
 
   const now = new Date();
   const products = await prisma.product.findMany({
-    where: { isAvailable: true, categoryId: category.id },   // resolved, indexed FK
-    include: { /* category + product + variant live promotions, variants price-asc */ },
+    where: { ...LISTABLE_PRODUCT, categoryId: category.id },   // resolved, indexed FK
+    include: { /* category + product + variant live promotions; AVAILABLE variants, price-asc */ },
     orderBy: { createdAt: "desc" },
   });
 
-  return <CategoryPageTemplate title={category.name} description={...} products={products} />;
+  return <CategoryPageTemplate title={category.name} description={...} products={products} now={now} />;
 }
 ```
 
