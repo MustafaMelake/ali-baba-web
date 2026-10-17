@@ -1,7 +1,15 @@
 "use client";
 
-import { useEffect, useEffectEvent, useRef, useState, useTransition } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { Search } from "lucide-react";
+import { isApplePlatform, isSearchShortcut } from "@/lib/keyboard";
 import { getSearchSuggestions, type SearchSuggestions } from "@/lib/actions/search";
 import SearchModal from "@/components/search/SearchModal";
 
@@ -12,6 +20,9 @@ import SearchModal from "@/components/search/SearchModal";
  * Past it they're dropped, not shown while revalidating.
  */
 const SUGGESTIONS_TTL_MS = 60_000;
+
+/** The platform never changes during a visit — nothing to subscribe to. */
+const noSubscription = () => () => {};
 
 /**
  * The Navbar's entry point to the search palette: the icon button, the
@@ -25,6 +36,13 @@ export default function SearchLauncher({ onOpen }: { onOpen?: () => void }) {
   const fetchedAtRef = useRef(0);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  // The platform is unknown on the server, so the HTML names both shortcuts;
+  // the browser then narrows it to the one that actually works there.
+  const keyShortcut = useSyncExternalStore(
+    noSubscription,
+    () => (isApplePlatform() ? "Meta+K" : "Control+K"),
+    () => "Meta+K Control+K",
+  );
 
   // Idempotent within the TTL — hover, focus and open all call it, so the
   // suggestions are usually in hand before the palette even opens.
@@ -70,12 +88,12 @@ export default function SearchLauncher({ onOpen }: { onOpen?: () => void }) {
     else openSearch();
   });
 
-  // ⌘K / Ctrl+K toggles the palette from anywhere on the storefront.
+  // ⌘K on Apple platforms, Ctrl+K elsewhere, toggles the palette from anywhere
+  // on the storefront (see isSearchShortcut for why never both).
   useEffect(() => {
+    const apple = isApplePlatform();
     function onKeyDown(e: KeyboardEvent) {
-      // `code` keeps the shortcut on the physical K key under an Arabic layout.
-      const isK = e.code === "KeyK" || e.key === "k" || e.key === "K";
-      if (!isK || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (!isSearchShortcut(e, apple)) return;
       e.preventDefault();
       onShortcut();
     }
@@ -94,7 +112,7 @@ export default function SearchLauncher({ onOpen }: { onOpen?: () => void }) {
         aria-label="Search the store"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-keyshortcuts="Meta+K Control+K"
+        aria-keyshortcuts={keyShortcut}
         className="relative flex items-center justify-center w-10 h-10 md:w-11 md:h-11 rounded-full text-foreground hover:bg-stone-100 transition-colors"
       >
         <Search className="w-5 h-5" />

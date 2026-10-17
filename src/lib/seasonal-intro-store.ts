@@ -16,6 +16,9 @@ import { storeSeason, type Season } from "@/lib/seasons";
  *     be kept, and an intro on every reload is worse than none;
  *   • a background tab → waits for its first visible moment, so the timer
  *     never runs out while nobody is looking.
+ * The three seconds start at `shown()`, which the scene calls once it is on
+ * screen: the scene is its own chunk and arrives a moment after `begin()`, so
+ * timing from the decision would shorten the intro by that download.
  * The status lives here rather than in the component, so leaving the homepage
  * and coming back within one page load can't replay it.
  */
@@ -23,7 +26,7 @@ import { storeSeason, type Season } from "@/lib/seasons";
 /** sessionStorage key — holds the season whose intro this tab has played. */
 const STORAGE_KEY = "ali-baba-seasonal-intro";
 
-/** How long the intro stays on screen before it fades out. */
+/** How long the intro stays on screen (from `shown()`) before it fades out. */
 export const SEASONAL_INTRO_MS = 3000;
 
 type IntroStatus = "idle" | "waiting" | "playing" | "done";
@@ -32,8 +35,10 @@ interface SeasonalIntroState {
   status: IntroStatus;
   /** The season on screen — set only while the intro is playing. */
   season: Season | null;
-  /** Decide (once per page load) whether to play, and start the timer if so. */
+  /** Decide (once per page load) whether to play. */
   begin: () => void;
+  /** The scene is on screen — start its three seconds. Idempotent. */
+  shown: () => void;
   /** End the intro now — the timer, the skip button and Escape all land here. */
   finish: () => void;
 }
@@ -53,6 +58,9 @@ function claimSession(season: Season): boolean {
     return false;
   }
 }
+
+/** Set once the three seconds are running, so a remount can't extend them. */
+let clockStarted = false;
 
 export const useSeasonalIntro = create<SeasonalIntroState>()((set, get) => ({
   status: "idle",
@@ -83,6 +91,11 @@ export const useSeasonalIntro = create<SeasonalIntroState>()((set, get) => ({
     }
 
     set({ status: "playing", season });
+  },
+
+  shown: () => {
+    if (get().status !== "playing" || clockStarted) return;
+    clockStarted = true;
     setTimeout(get().finish, SEASONAL_INTRO_MS);
   },
 

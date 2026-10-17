@@ -8,6 +8,7 @@ import { Plus, Check, ArrowUpRight } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { formatMoney } from "@/lib/utils";
+import { percentOff } from "@/lib/discounts";
 import WishlistButton from "@/components/products/WishlistButton";
 
 export interface ShopProduct {
@@ -41,9 +42,8 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
   // A promotion is on when the "was" price is strictly above the selling price.
   const onSale =
     product.compareAtPrice != null && product.compareAtPrice > product.price;
-  const percentOff = onSale
-    ? Math.round((1 - product.price / product.compareAtPrice!) * 100)
-    : 0;
+  // Rounded down — the badge never advertises more than the real markdown.
+  const discountPercent = onSale ? percentOff(product.price, product.compareAtPrice!) : 0;
 
   function quickAdd() {
     addItem(
@@ -79,10 +79,10 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
           <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-60 group-hover:opacity-90 transition-opacity duration-500" />
         </Link>
 
-        {/* Sale badge — only while a promotion is live */}
-        {onSale && (
+        {/* Sale badge — only while a markdown of at least 1% is live */}
+        {discountPercent > 0 && (
           <div className="absolute top-3 left-3 z-10 rounded-full bg-gradient-to-br from-red-600 via-red-700 to-red-800 px-2.5 py-1 font-sans text-[11px] font-bold tracking-wide text-white tabular-nums shadow-[0_6px_16px_-6px_rgba(153,27,27,0.7)] ring-1 ring-red-900/20">
-            -{percentOff}%
+            -{discountPercent}%
           </div>
         )}
 

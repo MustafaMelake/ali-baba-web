@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { FulfillmentMethod, MarketingEventType } from "@/generated/prisma/enums";
 import { daysBetween, isDayKey } from "@/lib/marketing-calendar";
+import { roundMoney } from "@/lib/discounts";
 
 /**
  * Shared validation schemas — imported by BOTH the client forms (for instant
@@ -109,6 +110,21 @@ export const ORDER_NOTES_MAX_LENGTH = 1000;
  */
 export const CART_LIMIT_ERROR = "Cart cannot exceed 50 distinct items.";
 
+/** Ceiling on any single delivery fee (EGP) — blocks fat-fingered "3500000" typos. */
+export const MAX_DELIVERY_FEE = 10_000;
+
+/**
+ * THE delivery-fee rule, shared by both admin surfaces that set one (the
+ * Settings fee sheet and the Branch modal): a finite number in
+ * [0, MAX_DELIVERY_FEE] — 0 means free delivery — rounded to 2 dp like all
+ * money. Returns null when invalid.
+ */
+export function parseDeliveryFee(value: number): number | null {
+  const fee = Number(value);
+  if (!Number.isFinite(fee) || fee < 0 || fee > MAX_DELIVERY_FEE) return null;
+  return roundMoney(fee);
+}
+
 /** One order line as the client ships it — the server re-resolves the price. */
 export const checkoutItemSchema = z.object({
   variantId: z.string().trim().min(1, "Missing variant."),
@@ -140,6 +156,13 @@ export const checkoutSchema = z
       .max(
         CHECKOUT_MAX_ITEMS,
         `Orders are limited to ${CHECKOUT_MAX_ITEMS} different items.`,
+      )
+      // One line per variant — the cart is keyed by variantId, so only a
+      // crafted payload repeats one, and that would sidestep the per-line
+      // CHECKOUT_MAX_QUANTITY cap and split one item across order lines.
+      .refine(
+        (items) => new Set(items.map((item) => item.variantId)).size === items.length,
+        "Each item can only appear once in an order.",
       ),
     fulfillment: z.enum(FulfillmentMethod),
     addressLine: optionalText(500),
@@ -173,14 +196,6 @@ export const checkoutSchema = z
   });
 
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
-
-export const categoryUpdateSchema = z.object({
-  id: z.string().min(1, "Missing category id"),
-  subtitle: optionalText(160),
-  image: optionalText(2048),
-});
-
-export type CategoryUpdateInput = z.infer<typeof categoryUpdateSchema>;
 
 // ─── Storefront search ───────────────────────────────────────────────────────
 

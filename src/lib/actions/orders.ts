@@ -10,11 +10,11 @@ import {
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
-  roundMoney,
 } from "@/lib/discounts";
 import { getStoreSettings } from "@/lib/store-settings";
 import { prismaErrorCode } from "@/lib/action-utils";
 import { checkoutSchema } from "@/lib/validators";
+import { orderTotals } from "@/lib/cart-summary";
 
 // التسعير الرسمي بيتقري من قاعدة البيانات وقت الطلب (مش ثوابت في الكود):
 // رسوم التوصيل من الـ Branch المختار (أو defaultDeliveryFee لـ "مناطق أخرى")،
@@ -167,7 +167,6 @@ export async function placeOrder(
       // O(1) per-line lookups; the loop below does no database work at all.
       const variantById = new Map(dbVariants.map((v) => [v.id, v]));
 
-      let subtotal = 0;
       const orderItemsData: {
         variantId: string;
         productName: string;
@@ -215,9 +214,6 @@ export async function placeOrder(
           );
         }
 
-        // Quantity is schema-guaranteed: an integer in [1, CHECKOUT_MAX_QUANTITY].
-        subtotal += finalPrice * item.quantity;
-
         // Snapshot لبيانات السطر وقت الشراء (الاسم/الـ variant/السعر النهائي بعد الخصم).
         orderItemsData.push({
           variantId: dbVariant.id,
@@ -228,38 +224,27 @@ export async function placeOrder(
         });
       }
 
-      // Money hygiene: every unit price is 2-dp (resolvePrice → roundMoney),
-      // but a binary-float ACCUMULATION of them can still drift — 3 × 33.33
-      // sums to 99.99000000000001, and that drift would otherwise be stored
-      // and compound in revenue aggregates. Round the final sum ONCE, here,
-      // so the persisted subtotal is the exact 2-dp figure the summary shows
-      // (per-line rounding is already done; re-rounding each line would be a
-      // no-op, and rounding only at the end keeps parity with the preview's
-      // own reduce-then-display math).
-      subtotal = roundMoney(subtotal);
-
-      // DELIVERY → the fulfilling branch's own fee; branchless delivery
-      // ("Other Areas", or a branch that went inactive mid-checkout) → the
-      // global default. PICKUP is always free. The admin mutations already
-      // persist fees rounded to 2dp — roundMoney here is defensive, so a
-      // legacy/hand-edited Branch row can't smuggle drift into the order.
-      const deliveryFee =
-        data.fulfillment === FulfillmentMethod.DELIVERY
-          ? roundMoney(branch?.deliveryFee ?? settings.defaultDeliveryFee)
-          : 0;
+      // The bill, through the SAME function the /cart and checkout previews
+      // call (src/lib/cart-summary.ts): subtotal rounded once (3 × 33.33 sums
+      // to 99.99000000000001), VAT on that rounded, discounted subtotal, the
+      // fee, then the total rounded — nothing off the 2-dp grid reaches the
+      // Decimal columns. DELIVERY → the fulfilling branch's own fee;
+      // branchless delivery ("Other Areas", or a branch that went inactive
+      // mid-checkout) → the global default. PICKUP is always free.
       // VAT غير مخزّن في عمود مستقل — مدموج في totalAmount، وبيتحسب كـ residual
       // وقت العرض (totalAmount - subtotal - deliveryFee) فيفضل دايماً متسق،
       // حتى لو الأدمن غيّر النسبة أو قفل الضريبة بعد ما الأوردر اتعمل.
-      // 2-dp money rounding (NOT Math.round to whole EGP) so the tax keeps its
-      // piastres and totalAmount reconciles exactly with the shown summary.
-      // Computed from the ROUNDED subtotal — the same base the customer saw.
-      const vat = settings.isVatEnabled
-        ? roundMoney(subtotal * settings.vatRate)
-        : 0;
-      // Sum of three clean 2-dp values, rounded once more: binary addition of
-      // 2-dp floats can itself reintroduce an epsilon (the 0.1 + 0.2 class),
-      // and this is the last stop before the value hits the Decimal column.
-      const totalAmount = roundMoney(subtotal + deliveryFee + vat);
+      const {
+        subtotal,
+        deliveryFee,
+        total: totalAmount,
+      } = orderTotals(
+        orderItemsData.map((line) => ({ price: line.unitPrice, quantity: line.quantity })),
+        settings,
+        data.fulfillment === FulfillmentMethod.DELIVERY
+          ? (branch?.deliveryFee ?? settings.defaultDeliveryFee)
+          : 0,
+      );
 
       // إنشاء الأوردر مع سطوره في عملية واحدة (nested write).
       const order = await tx.order.create({
@@ -268,6 +253,9 @@ export async function placeOrder(
           subtotal,
           deliveryFee,
           totalAmount,
+          // The rate actually applied — the receipt names it; the amount
+          // stays the residual. 0, not the dormant setting, when VAT is off.
+          vatRate: settings.isVatEnabled ? settings.vatRate : 0,
           fulfillment: data.fulfillment,
           status: OrderStatus.PENDING,
           // Schema-guaranteed: non-empty (trimmed) for DELIVERY orders.

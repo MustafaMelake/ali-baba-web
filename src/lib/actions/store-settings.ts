@@ -16,6 +16,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
+import { parseDeliveryFee } from "@/lib/validators";
 import {
   getStoreSettings,
   STORE_SETTINGS_ID,
@@ -34,19 +35,6 @@ import {
 export type SettingsActionResult =
   | { success: true }
   | { success: false; error: string };
-
-/** Sanity ceiling for any single fee — blocks fat-fingered "3500000" typos. */
-const MAX_FEE = 10_000;
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Validate a fee: a finite number in [0, MAX_FEE]. Returns null when invalid. */
-function parseFee(value: number): number | null {
-  const fee = Number(value);
-  if (!Number.isFinite(fee) || fee < 0 || fee > MAX_FEE) return null;
-  // 2-dp money precision, mirroring the Discount Engine's rounding.
-  return Math.round((fee + Number.EPSILON) * 100) / 100;
-}
 
 // ── Public read (checkout preview) ───────────────────────────────────────────
 
@@ -115,7 +103,7 @@ export async function updateDeliveryFees(input: {
   const denied = await ensureAdmin();
   if (denied) return { success: false, error: denied.error };
 
-  const defaultFee = parseFee(input.defaultFee);
+  const defaultFee = parseDeliveryFee(input.defaultFee);
   if (defaultFee === null) {
     return { success: false, error: "The default delivery fee must be a number between 0 and 10,000." };
   }
@@ -124,7 +112,7 @@ export async function updateDeliveryFees(input: {
   for (const row of input.branchFees ?? []) {
     const branchId = row?.branchId?.trim();
     if (!branchId) continue;
-    const fee = parseFee(row.fee);
+    const fee = parseDeliveryFee(row.fee);
     if (fee === null) {
       return { success: false, error: "Every branch fee must be a number between 0 and 10,000." };
     }

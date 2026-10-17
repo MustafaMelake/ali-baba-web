@@ -139,10 +139,10 @@
 }
 
 /*
-  Seasonal intro — src/components/SeasonalOverlay.tsx. Every keyframe moves
+  Seasonal intro — src/components/SeasonScene.tsx. Every keyframe moves
   only transform/opacity, so the browser runs it on the compositor thread: the
-  intro plays while the homepage is still hydrating, and main-thread work can't
-  make it stutter. Each keyframe repeats its motion INSIDE one long iteration
+  intro plays while the homepage is still settling in, and main-thread work
+  can't make it stutter. Each keyframe repeats its motion INSIDE one long iteration
   (two crossings; four full swings or turns): an iteration boundary costs a
   main-thread style pass — React listens for `animationiteration` — so none may
   fall in the few seconds the intro is on screen. Per-particle distances arrive

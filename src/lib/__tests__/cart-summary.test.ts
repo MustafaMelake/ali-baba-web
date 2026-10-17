@@ -9,7 +9,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, expect, it } from "vitest";
-import { estimateDelivery, summarizeCart, type SummaryLine } from "@/lib/cart-summary";
+import {
+  estimateDelivery,
+  orderTotals,
+  summarizeCart,
+  type SummaryLine,
+  vatLabel,
+} from "@/lib/cart-summary";
 import type { PricingSettings } from "@/lib/store-settings";
 
 const VAT_14: PricingSettings = { vatRate: 0.14, isVatEnabled: true, defaultDeliveryFee: 35 };
@@ -110,5 +116,62 @@ describe("estimateDelivery", () => {
 
   it("offers no pickup without an active branch", () => {
     expect(estimateDelivery([], 35)).toEqual({ min: 35, max: 35, pickupAvailable: false });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// orderTotals — THE order of operations, shared by /cart, checkout and placeOrder
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("orderTotals", () => {
+  it("rounds the subtotal, taxes it, adds delivery, then rounds the total", () => {
+    const totals = orderTotals(lines(["a", 120, 2], ["b", 35.5, 1]), VAT_14, 35);
+
+    expect(totals).toEqual({
+      subtotal: 275.5,
+      vat: 38.57, // roundMoney(275.5 × 0.14)
+      deliveryFee: 35,
+      total: 349.07,
+    });
+  });
+
+  it("keeps an accumulated subtotal on the 2-dp grid (3 × 33.33)", () => {
+    const totals = orderTotals(lines(["a", 33.33, 3]), VAT_14, 0);
+
+    expect(totals.subtotal).toBe(99.99); // not 99.99000000000001
+    expect(totals.vat).toBe(14); // roundMoney(99.99 × 0.14 = 13.9986)
+    expect(totals.total).toBe(113.99);
+  });
+
+  it("taxes the subtotal only — never the delivery fee", () => {
+    const totals = orderTotals(lines(["a", 100, 1]), VAT_14, 50);
+
+    expect(totals.vat).toBe(14);
+    expect(totals.total).toBe(164);
+  });
+
+  it("charges no VAT when it's switched off", () => {
+    const totals = orderTotals(lines(["a", 100, 1]), NO_VAT, 35);
+
+    expect(totals.vat).toBe(0);
+    expect(totals.total).toBe(135);
+  });
+
+  it("rounds a delivery fee that arrives off the 2-dp grid", () => {
+    expect(orderTotals(lines(["a", 10, 1]), NO_VAT, 12.345).deliveryFee).toBe(12.35);
+  });
+});
+
+describe("vatLabel — the VAT line's label on summaries and receipts", () => {
+  it.each([
+    [0.14, "VAT (14%)"],
+    [0.1425, "VAT (14.25%)"],
+    [0, "VAT (0%)"],
+  ])("rate %s reads %s", (rate, label) => {
+    expect(vatLabel(rate)).toBe(label);
+  });
+
+  it("names no rate for an order placed before rates were recorded", () => {
+    expect(vatLabel(null)).toBe("VAT");
   });
 });

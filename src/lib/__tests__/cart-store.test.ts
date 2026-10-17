@@ -457,3 +457,31 @@ describe("ownerId — the one-merge guarantee", () => {
     expect(useCartStore.getState().ownerId).toBeNull();
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The 50-distinct-line cap — enforced locally, so a guest cart can't outgrow it
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("addItem — CHECKOUT_MAX_ITEMS distinct lines", () => {
+  const fifty = () => Array.from({ length: 50 }, (_, i) => line({ variantId: `v${i}` }));
+
+  it("refuses a 51st distinct line and says why (checkout would reject it)", async () => {
+    const { toast } = await import("sonner");
+    seed({ items: fifty() });
+
+    useCartStore.getState().addItem(line({ variantId: "v_new" }));
+
+    expect(useCartStore.getState().items).toHaveLength(50);
+    expect(useCartStore.getState().items.some((i) => i.variantId === "v_new")).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith("Cart cannot exceed 50 distinct items.");
+    expect(mockedSync).not.toHaveBeenCalled();
+  });
+
+  it("still adds units to a line already in a full bag", () => {
+    seed({ items: fifty() });
+
+    useCartStore.getState().addItem({ ...line({ variantId: "v3" }), quantity: 2 });
+
+    expect(useCartStore.getState().items.find((i) => i.variantId === "v3")!.quantity).toBe(3);
+  });
+});

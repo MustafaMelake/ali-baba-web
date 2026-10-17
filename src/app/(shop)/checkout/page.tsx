@@ -24,6 +24,7 @@ import type { PricingSettings } from "@/lib/store-settings";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
 import { checkoutSchema, fieldErrors, ORDER_NOTES_MAX_LENGTH } from "@/lib/validators";
 import { roundMoney } from "@/lib/discounts";
+import { orderTotals, subtotalOf, vatLabel } from "@/lib/cart-summary";
 import { cn, formatMoney } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
@@ -267,30 +268,25 @@ function OrderSummary({
   onRetryPricing: () => void;
   retryingPricing: boolean;
 }) {
-  // Mirrors placeOrder's math exactly: discounted subtotal → VAT on it → fee.
-  // Same 2-dp rounding points as placeOrder (see @/lib/discounts#roundMoney) —
-  // the subtotal is rounded BEFORE it's taxed, or a float sum like
-  // 239.24999999999997 previews 0.01 less VAT than the server bills.
-  const subtotal = roundMoney(items.reduce((s, i) => s + i.price * i.quantity, 0));
+  // The SAME function placeOrder bills with (src/lib/cart-summary.ts), so
+  // the total shown here is the total charged. Without the live settings
+  // there is no honest total: VAT and delivery are never guessed, and the
+  // order can't be placed until they load.
+  const totals = pricing && deliveryFee !== null ? orderTotals(items, pricing, deliveryFee) : null;
+  const total = totals?.total ?? null;
 
   const rows: { label: string; value: number; free?: boolean }[] = [
-    { label: "Subtotal", value: subtotal },
+    { label: "Subtotal", value: totals?.subtotal ?? subtotalOf(items) },
   ];
-  // Without the live settings there is no honest total: VAT and delivery are
-  // never guessed, and the order can't be placed until they load.
-  let total: number | null = null;
-  if (pricing && deliveryFee !== null) {
-    const tax = pricing.isVatEnabled ? roundMoney(subtotal * pricing.vatRate) : 0;
-    total = roundMoney(subtotal + deliveryFee + tax);
+  if (pricing && totals) {
     rows.push({
       label: mode === "pickup" ? "Pickup" : "Delivery",
-      value: deliveryFee,
+      value: totals.deliveryFee,
       // Pickup is always free; a 0-fee delivery branch reads as free too.
-      free: deliveryFee === 0,
+      free: totals.deliveryFee === 0,
     });
     if (pricing.isVatEnabled) {
-      // Human label — trims trailing zeros (0.14 → "14", 0.1425 → "14.25").
-      rows.push({ label: `VAT (${+(pricing.vatRate * 100).toFixed(2)}%)`, value: tax });
+      rows.push({ label: vatLabel(pricing.vatRate), value: totals.vat });
     }
   }
 
@@ -327,7 +323,7 @@ function OrderSummary({
               </p>
             </div>
             <span className="shrink-0 font-sans text-sm font-semibold text-stone-900 tabular-nums">
-              {formatMoney(item.price * item.quantity)}
+              {formatMoney(roundMoney(item.price * item.quantity))}
               <span className="font-normal text-stone-400 text-xs ml-0.5">
                 ج.م
               </span>
@@ -742,12 +738,16 @@ export default function CheckoutPage() {
             care — we&apos;ll be in touch shortly.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Link
-              href="/my-orders"
-              className="inline-flex items-center gap-2.5 rounded-full bg-stone-900 px-8 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-white hover:bg-stone-700 transition-colors"
-            >
-              View My Orders
-            </Link>
+            {/* A guest order belongs to no account, so /my-orders could only
+                bounce a guest to /login — offer it to signed-in buyers only. */}
+            {isLoggedIn && (
+              <Link
+                href="/my-orders"
+                className="inline-flex items-center gap-2.5 rounded-full bg-stone-900 px-8 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-white hover:bg-stone-700 transition-colors"
+              >
+                View My Orders
+              </Link>
+            )}
             <Link
               href="/"
               className="inline-flex items-center gap-2.5 rounded-full border border-stone-200 px-8 py-3.5 font-sans text-sm font-semibold uppercase tracking-widest text-stone-600 hover:border-stone-400 transition-colors"

@@ -345,6 +345,11 @@ model Order {
   subtotal    Decimal @db.Decimal(12, 2)
   deliveryFee Decimal @default(0) @db.Decimal(12, 2)
   totalAmount Decimal @db.Decimal(12, 2)
+  /// The VAT rate this order was billed at (0 when VAT was off), snapshotted
+  /// for the receipt's label only — the VAT AMOUNT stays the residual
+  /// totalAmount − subtotal − deliveryFee. A Float like StoreSettings.vatRate:
+  /// a rate, not money. Null on orders placed before it was recorded.
+  vatRate     Float?
 
   status      OrderStatus       @default(PENDING)
   fulfillment FulfillmentMethod @default(DELIVERY)

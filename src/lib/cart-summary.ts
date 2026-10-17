@@ -1,18 +1,54 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Cart summary preview — the money figures on the /cart page.
+// Order totals — the money order of operations, in ONE place.
 //
-// DISPLAY ONLY: placeOrder re-derives every figure server-side and is the sole
-// authority on what's billed. This mirrors its ORDER OF OPERATIONS so the
-// preview can't drift from the bill (see business-logic.md "Money math"):
+// `orderTotals` is the single implementation of business-logic.md "Money
+// math", and all three surfaces call it: the /cart preview, the checkout
+// preview, and placeOrder's billing. The shown total and the billed total are
+// therefore the same code, not two copies kept in step:
 //   discounted line prices → subtotal = roundMoney(Σ price × qty)
 //   → VAT = roundMoney(subtotal × vatRate), on the DISCOUNTED subtotal
-//   → delivery is added at checkout, once the area is known.
-// No discount math lives here — line prices arrive already resolved by the
-// Discount Engine; "savings" only compares them with the live "was" price.
+//   → deliveryFee = roundMoney(fee) → total = roundMoney(subtotal + fee + VAT).
+// Pure (no Prisma), so it runs on the client and the server alike. No discount
+// math lives here — line prices arrive already resolved by the Discount
+// Engine; "savings" only compares them with the live "was" price.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { roundMoney } from "@/lib/discounts";
 import type { PricingSettings } from "@/lib/store-settings";
+
+/** A priced line — `price` is the discounted unit price that gets billed. */
+export interface PricedLine {
+  price: number;
+  quantity: number;
+}
+
+export interface OrderTotals {
+  subtotal: number;
+  vat: number;
+  deliveryFee: number;
+  total: number;
+}
+
+/** Σ price × qty, rounded once — the base both VAT and the total build on. */
+export function subtotalOf(lines: readonly PricedLine[]): number {
+  return roundMoney(lines.reduce((sum, line) => sum + line.price * line.quantity, 0));
+}
+
+/**
+ * THE money order of operations (four rounding points; never reorder). VAT is
+ * charged on the rounded, discounted subtotal and never on delivery.
+ * `deliveryFee` is the fee already resolved for the order (0 for pickup).
+ */
+export function orderTotals(
+  lines: readonly PricedLine[],
+  pricing: Pick<PricingSettings, "vatRate" | "isVatEnabled">,
+  deliveryFee: number,
+): OrderTotals {
+  const subtotal = subtotalOf(lines);
+  const vat = pricing.isVatEnabled ? roundMoney(subtotal * pricing.vatRate) : 0;
+  const fee = roundMoney(deliveryFee);
+  return { subtotal, vat, deliveryFee: fee, total: roundMoney(subtotal + fee + vat) };
+}
 
 export interface SummaryLine {
   variantId: string;
@@ -48,15 +84,18 @@ export function summarizeCart(
   wasPriceOf: (variantId: string) => number | null,
   pricing: PricingSettings | null,
 ): CartTotals {
-  const subtotal = roundMoney(lines.reduce((sum, line) => sum + line.price * line.quantity, 0));
+  // Delivery is added at checkout, once the area is known — 0 here.
+  const { subtotal, vat, total } = orderTotals(
+    lines,
+    pricing ?? { vatRate: 0, isVatEnabled: false },
+    0,
+  );
   const savings = roundMoney(
     lines.reduce((sum, line) => {
       const was = wasPriceOf(line.variantId);
       return was != null && was > line.price ? sum + (was - line.price) * line.quantity : sum;
     }, 0),
   );
-  const vat = pricing?.isVatEnabled ? roundMoney(subtotal * pricing.vatRate) : 0;
-
   return {
     itemCount: lines.reduce((sum, line) => sum + line.quantity, 0),
     originalTotal: roundMoney(subtotal + savings),
@@ -64,8 +103,17 @@ export function summarizeCart(
     subtotal,
     vat,
     vatPercent: pricing ? +(pricing.vatRate * 100).toFixed(2) : 0,
-    totalBeforeDelivery: roundMoney(subtotal + vat),
+    totalBeforeDelivery: total,
   };
+}
+
+/**
+ * The VAT line's label: "VAT (14%)", trailing zeros trimmed ("VAT (14.25%)").
+ * `null` — an order placed before its rate was recorded — names no rate
+ * rather than guess one: the store's rate may have changed since.
+ */
+export function vatLabel(rate: number | null): string {
+  return rate === null ? "VAT" : `VAT (${+(rate * 100).toFixed(2)}%)`;
 }
 
 /** What delivery can cost, across every active branch area and "Other Areas". */

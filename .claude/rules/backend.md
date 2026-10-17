@@ -42,7 +42,7 @@ Read sessions **only** through `@/lib/session` (server) or `@/lib/auth-client` (
 | Guard (`src/lib/session.ts`) | On failure | Reads role from |
 |---|---|---|
 | `getServerSession()` | returns `null` | Better Auth (wrapped in React `cache()` — one hit per request) |
-| `requireAdmin()` | **throws** | session payload — gate on every ADMIN-only Server Action |
+| `requireAdmin()` | **throws** | session payload — ADMIN-only **read loaders** (`getAnalytics`, `getAdminFaqs`, …) behind `requireAdminPage` pages. **Mutations never call it directly** — they gate through `ensureAdmin()`/`ensureAdminSession()` (which wrap it) so an expired session becomes a toast, not a crashed page; the product actions were the last direct callers |
 | `requireAdminPage()` | **redirects** (`/login` or `/admin`) | session — bounces a MANAGER off ADMIN-only pages |
 | `requireDashboardAccess()` | **throws** | **live DB** (`role` + `branchId`) — for dashboard/orders loaders |
 | `resolveBranchScope(scope, requested?)` | throws on foreign branch | — collapses caller × requested into one `branchId \| undefined` |

@@ -30,6 +30,8 @@ import {
   resolvePrice,
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
+  advertisedPercent,
+  percentOff,
   type PromotionLike,
 } from "@/lib/discounts";
 
@@ -400,5 +402,43 @@ describe("PROMOTION_SELECT_FIELDS", () => {
       endDate: true,
       isActive: true,
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Advertised percentages — badges and seals round DOWN, never up
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("advertisedPercent — a promotion's percentage, as advertised", () => {
+  it.each([
+    [20, 20],
+    [12.5, 12],
+    [33.99, 33],
+    [99.5, 99],
+    [0.4, 0],
+  ])("%s percent is advertised as %s", (percent, shown) => {
+    expect(advertisedPercent(percent)).toBe(shown);
+  });
+
+  it("isn't knocked down a whole point by float noise just below an integer", () => {
+    expect(advertisedPercent(19.999999999999996)).toBe(20);
+  });
+});
+
+describe("percentOff — the was → now markdown on a badge", () => {
+  it.each([
+    [80, 100, 20], // (1 − 0.8) × 100 is 19.999… in floating point
+    [56, 80, 30], //  …and this one is 30.000…4
+    [87.5, 100, 12], // 12.5% is never advertised as 13%
+    [66.67, 100, 33],
+    [99.99, 100, 0],
+  ])("%s marked down from %s shows %s percent off", (price, was, shown) => {
+    expect(percentOff(price, was)).toBe(shown);
+  });
+
+  it("is 0 when nothing is actually marked down", () => {
+    expect(percentOff(100, 100)).toBe(0);
+    expect(percentOff(120, 100)).toBe(0);
+    expect(percentOff(50, 0)).toBe(0);
   });
 });

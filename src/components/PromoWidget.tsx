@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { livePromotionWhere } from "@/lib/discounts";
+import { advertisedPercent, livePromotionWhere } from "@/lib/discounts";
 import { DiscountType } from "@/generated/prisma/enums";
 import { STORE_TZ } from "@/lib/timezone";
 import PromoSeal from "@/components/PromoSeal";
@@ -70,7 +70,7 @@ export default async function PromoWidget() {
 
   const percentOff =
     featured.type === DiscountType.PERCENTAGE
-      ? Math.round(featured.value.toNumber())
+      ? advertisedPercent(featured.value.toNumber()) // never rounds the discount UP
       : null;
 
   const href =

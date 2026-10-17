@@ -7,7 +7,7 @@ import PromoWidget from "@/components/PromoWidget";
 import SeasonalOverlay from "@/components/SeasonalOverlay";
 import { prisma } from "@/lib/prisma";
 import { getStorefrontLocations } from "@/lib/actions/locations";
-import { livePromotionWhere } from "@/lib/discounts";
+import { advertisedPercent, livePromotionWhere } from "@/lib/discounts";
 import { DiscountType } from "@/generated/prisma/enums";
 
 // Shared ISR cache (60s), matching the PDP and category pages: this page reads
@@ -37,7 +37,8 @@ function discountLabelFor(
   );
   if (percentages.length > 0) {
     const best = Math.max(...percentages.map((p) => p.value));
-    return `${Math.round(best)}% OFF`;
+    // Rounded down — 12.5% is advertised as "12% OFF", never "13% OFF".
+    return `${advertisedPercent(best)}% OFF`;
   }
 
   return "SALE";

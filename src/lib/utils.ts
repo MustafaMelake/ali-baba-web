@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { percentOff } from "@/lib/discounts"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -85,8 +86,9 @@ export function deriveVariantDiscount(priceInput: string, compareAtInput: string
     price > 0 &&
     Number.isFinite(compareAt) &&
     compareAt > price
-  const percentOff = isOnSale ? Math.round((1 - price / compareAt) * 100) : 0
-  return { isOnSale, percentOff }
+  // The storefront badge's own math, so the admin preview shows the same figure.
+  const percent = isOnSale ? percentOff(price, compareAt) : 0
+  return { isOnSale, percentOff: percent }
 }
 
 /** SCREAMING_SNAKE_CASE enum value -> "Title Case" — e.g. ORIENTAL_SWEETS -> "Oriental Sweets". */

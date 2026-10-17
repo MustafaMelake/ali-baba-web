@@ -14,6 +14,7 @@ import {
   type RepricedVariant,
 } from "@/lib/actions/cart";
 import {
+  CHECKOUT_MAX_ITEMS,
   CHECKOUT_MAX_QUANTITY,
   CART_LIMIT_ERROR,
   ORDER_NOTES_MAX_LENGTH,
@@ -274,6 +275,13 @@ export const useCartStore = create<CartState>()(
           const existing = get().items.find(
             (i) => i.variantId === newItem.variantId,
           );
+          // The distinct-line ceiling checkout and the DB cart enforce — held
+          // here too, so a GUEST bag (never synced) can't outgrow what can be
+          // ordered. Adding units to a line already in the bag stays allowed.
+          if (!existing && get().items.length >= CHECKOUT_MAX_ITEMS) {
+            toast.error(CART_LIMIT_ERROR);
+            return;
+          }
           const newQuantity = Math.min(
             (existing?.quantity ?? 0) + amount,
             CHECKOUT_MAX_QUANTITY,

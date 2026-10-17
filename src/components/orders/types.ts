@@ -46,6 +46,9 @@ export type OrderView = {
   // the receipt always reconciles to the canonical `totalAmount`.
   subtotal: number;
   vat: number;
+  /** The VAT rate the order was billed at (0.14), for the label — null on
+   *  orders placed before it was recorded. See vatLabel(). */
+  vatRate: number | null;
   deliveryFee: number;
   totalAmount: number;
 

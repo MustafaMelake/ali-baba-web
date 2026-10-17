@@ -29,11 +29,11 @@ vi.mock("@/lib/session", () => ({ requireAdmin: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/uploadthing-server", () => ({ deleteUploadedFiles: vi.fn() }));
 
-import { updateProduct, deleteProduct } from "@/app/admin/products/actions";
+import { createProduct, updateProduct, deleteProduct } from "@/app/admin/products/actions";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
 import { deleteUploadedFiles } from "@/lib/uploadthing-server";
-import type { ProductUpdateInput } from "@/lib/validators";
+import type { ProductInput, ProductUpdateInput } from "@/lib/validators";
 
 const mockPrisma = prisma as unknown as DeepMockProxy<PrismaClient>;
 const mockedRequireAdmin = vi.mocked(requireAdmin);
@@ -257,10 +257,45 @@ describe("deleteProduct — cascade delete & FK defense", () => {
 // Admin gate
 // ═════════════════════════════════════════════════════════════════════════════
 
-describe("catalog actions — admin gate", () => {
-  it("deleteProduct rejects when requireAdmin throws (non-admin caller), touching no data", async () => {
+/** A valid ProductInput for createProduct. */
+function createInput(overrides: Partial<ProductInput> = {}): ProductInput {
+  return {
+    name: "Pistachio Kunafa",
+    slug: "pistachio-kunafa",
+    description: "",
+    categoryId: "cat1",
+    images: [],
+    variants: [{ name: "Small", price: 120 }],
+    ...overrides,
+  } as ProductInput;
+}
+
+describe("catalog actions — admin gate (an envelope, never a throw)", () => {
+  // An expired session mid-edit must surface as a toast, not crash the form:
+  // the house contract is { success: false, error } across the boundary.
+  it.each([
+    ["updateProduct", () => updateProduct("prod1", updateInput())],
+    ["deleteProduct", () => deleteProduct("prod1")],
+    ["createProduct", () => createProduct(createInput())],
+  ])("%s returns the error envelope for a non-admin, touching no data", async (_name, call) => {
     mockedRequireAdmin.mockRejectedValueOnce(new Error("Unauthorized: admin access required."));
-    await expect(deleteProduct("prod1")).rejects.toThrow("Unauthorized");
+
+    await expect(call()).resolves.toEqual({
+      success: false,
+      error: "Unauthorized: admin access required.",
+    });
+    expect(mockPrisma.product.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.product.create).not.toHaveBeenCalled();
     expect(mockPrisma.product.delete).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("createProduct — validation feedback", () => {
+  it("returns the first validation issue rather than a generic message", async () => {
+    const res = await createProduct(createInput({ name: "K" }));
+
+    expect(res).toEqual({ success: false, error: "Name must be at least 2 characters" });
+    expect(mockPrisma.product.create).not.toHaveBeenCalled();
   });
 });

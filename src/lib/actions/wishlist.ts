@@ -22,9 +22,11 @@ export type WishlistProduct = {
   slug: string;
   image: string;
   category: string;
-  /** Final (possibly discounted) starting price. */
-  price: number;
-  /** Undiscounted "was" price — set only when a live promotion applies. */
+  /** Final (possibly discounted) starting price; `null` when the product can't
+   *  be bought right now (switched off, or every variant archived). */
+  price: number | null;
+  /** Struck-through "was" price — the base price under a live promotion, else
+   *  the variant's manual Compare-At; `null` when neither applies. */
   compareAtPrice: number | null;
 };
 
@@ -118,29 +120,40 @@ export async function getWishlistItems(): Promise<GetWishlistResult> {
     });
 
     const data: WishlistProduct[] = items.map(({ product }) => {
+      const card = {
+        id: product.id,
+        name: product.name,
+        slug: product.slug,
+        image: product.images[0] ?? "/placeholder.jpg",
+        category: product.category.name,
+      };
+
+      // Saved products stay listed even when the catalog would hide them (the
+      // heart is how the shopper removes one) — but with no price, since
+      // placeOrder would reject them. Same rule as LISTABLE_PRODUCT.
       const starting = product.variants[0];
+      if (!product.isAvailable || !starting) {
+        return { ...card, price: null, compareAtPrice: null };
+      }
+
       const priced = resolvePrice(
-        starting?.price ?? 0,
+        starting.price,
         gatherPromotions(
-          starting?.promotions,
+          starting.promotions,
           product.promotions,
           product.category.promotions,
         ),
         now,
       );
       return {
-        id: product.id,
-        name: product.name,
-        slug: product.slug,
-        image: product.images[0] ?? "/placeholder.jpg",
-        category: product.category.name,
+        ...card,
         price: priced.finalPrice,
         // Live promo → struck-through base price; otherwise fall back to the
         // variant's manual Compare-At (mirrors the PDP and storefront cards).
         // The Decimal column is serialized to a plain number for the client.
         compareAtPrice: priced.hasDiscount
           ? priced.basePrice
-          : starting?.compareAtPrice?.toNumber() ?? null,
+          : starting.compareAtPrice?.toNumber() ?? null,
       };
     });
 

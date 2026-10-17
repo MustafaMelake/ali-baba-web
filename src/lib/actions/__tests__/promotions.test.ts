@@ -8,6 +8,9 @@
 //     targets (directly, through its product, or through its category) — on
 //     create, on update, and when an inactive promotion is switched back on;
 //   • a PERCENTAGE discount must stay below 100%.
+// …plus the field rules every save runs first (validatePromotion): the gate,
+// name, type, a positive value, a Cairo-day window that ends on or after it
+// starts, and at least one target.
 // placeOrder's own 0 EGP refusal (orders.test.ts) is the backstop for prices
 // edited after a promotion was saved.
 //
@@ -31,6 +34,7 @@ import {
   type PromotionInput,
 } from "@/lib/actions/promotions";
 import { requireAdmin } from "@/lib/session";
+import { revalidatePath } from "next/cache";
 import { DiscountType } from "@/generated/prisma/enums";
 
 const mockPrisma = prisma as unknown as DeepMockProxy<PrismaClient>;
@@ -62,6 +66,7 @@ function input(overrides: Partial<PromotionInput> = {}): PromotionInput {
 
 beforeEach(() => {
   mockReset(mockPrisma);
+  vi.mocked(revalidatePath).mockClear();
   mockedRequireAdmin.mockReset();
   mockedRequireAdmin.mockResolvedValue({ user: { id: "admin_1", role: "ADMIN" } } as never);
   mockPrisma.promotion.create.mockResolvedValue({ id: "promo_1" } as never);
@@ -189,5 +194,88 @@ describe("togglePromotionActive — re-checks prices when switching on", () => {
 
     expect(res).toEqual({ success: true });
     expect(mockPrisma.productVariant.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("createPromotion — field rules", () => {
+  it("answers a non-admin with an error envelope and writes nothing", async () => {
+    mockedRequireAdmin.mockRejectedValue(new Error("nope"));
+
+    const res = await createPromotion(input());
+
+    expect(res).toEqual({ success: false, error: "Unauthorized: admin access required." });
+    expect(mockPrisma.promotion.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a one-letter name", { name: " E " }, "Name must be at least 2 characters."],
+    ["an unknown type", { type: "BOGO" as DiscountType }, "Choose a valid discount type."],
+    ["a zero value", { value: 0 }, "Discount value must be a positive number."],
+    ["a negative value", { value: -10 }, "Discount value must be a positive number."],
+    ["a non-numeric value", { value: Number.NaN }, "Discount value must be a positive number."],
+    ["a blank start date", { startDate: "" }, "Start date is invalid."],
+    ["an unparseable end date", { endDate: "next week" }, "End date is invalid."],
+    ["an end before the start", { startDate: "2026-10-27", endDate: "2026-10-20" }, "End date must be on or after the start date."],
+    ["no targets at all", { categoryIds: [], productIds: [""], variantIds: [] }, "Link the promotion to at least one category, product or variant."],
+  ])("refuses %s", async (_label, overrides, error) => {
+    const res = await createPromotion(input(overrides));
+
+    expect(res).toEqual({ success: false, error });
+    expect(mockPrisma.promotion.create).not.toHaveBeenCalled();
+  });
+
+  it("runs a date-only window from Cairo midnight to the last millisecond of its final Cairo day", async () => {
+    // 27 Oct is still summer time (UTC+3); Egypt's clocks go back on 29 Oct,
+    // so 3 Nov ends at UTC+2 — the window's edges must follow the wall clock.
+    await createPromotion(input({ startDate: "2026-10-27", endDate: "2026-11-03" }));
+
+    expect(mockPrisma.promotion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          startDate: new Date("2026-10-26T21:00:00.000Z"),
+          endDate: new Date("2026-11-03T21:59:59.999Z"),
+        }),
+      }),
+    );
+  });
+
+  it("allows a one-day promotion (start and end on the same day)", async () => {
+    const res = await createPromotion(input({ startDate: "2026-10-20", endDate: "2026-10-20" }));
+
+    expect(res).toEqual({ success: true, id: "promo_1" });
+  });
+
+  it("drops blank and repeated targets before linking them", async () => {
+    await createPromotion(
+      input({ categoryIds: ["cat_oriental", "", "cat_oriental"], productIds: [], variantIds: ["var_small", "var_small"] }),
+    );
+
+    expect(mockPrisma.promotion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          categories: { connect: [{ id: "cat_oriental" }] },
+          products: { connect: [] },
+          variants: { connect: [{ id: "var_small" }] },
+        }),
+      }),
+    );
+  });
+
+  it("refreshes the whole storefront tree on save", async () => {
+    await createPromotion(input({ type: DiscountType.PERCENTAGE, value: 10 }));
+
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/promotions");
+    expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
+  });
+
+  it("translates a target deleted mid-edit (P2025)", async () => {
+    mockPrisma.promotion.create.mockRejectedValue(Object.assign(new Error("gone"), { code: "P2025" }));
+
+    const res = await createPromotion(input({ type: DiscountType.PERCENTAGE, value: 10 }));
+
+    expect(res).toEqual({
+      success: false,
+      error: "One of the selected items no longer exists. Refresh and try again.",
+    });
   });
 });

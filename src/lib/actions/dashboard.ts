@@ -392,6 +392,7 @@ export async function getOrders(
         order.subtotal.toNumber() -
         order.deliveryFee.toNumber(),
     ),
+    vatRate: order.vatRate,
     deliveryFee: order.deliveryFee.toNumber(),
     totalAmount: order.totalAmount.toNumber(),
     itemCount: order.items.reduce((n, it) => n + it.quantity, 0),

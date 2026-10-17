@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, User, Phone, StickyNote, MapPin, Truck, Store } from "lucide-react";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
 import { formatEGP, formatMoney, prettyLabel } from "@/lib/utils";
+import { vatLabel } from "@/lib/cart-summary";
 import StatusPill from "./StatusPill";
 import type { OrderView } from "./types";
 
@@ -198,7 +199,7 @@ export default function OrderDetailModal({
                   {/* Summary */}
                   <div className="mt-2 space-y-2 border-t border-stone-200 pt-4">
                     <SummaryRow label="Subtotal" value={formatEGP(order.subtotal)} />
-                    <SummaryRow label="VAT (14%)" value={formatEGP(order.vat)} />
+                    <SummaryRow label={vatLabel(order.vatRate)} value={formatEGP(order.vat)} />
                     <SummaryRow
                       label="Delivery Fee"
                       value={order.deliveryFee > 0 ? formatEGP(order.deliveryFee) : "Free"}

@@ -43,7 +43,7 @@ export default async function AdminLayout({
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#FAFAFA]">
+    <div className="flex h-dvh overflow-hidden bg-[#FAFAFA]">
       <Sidebar role={session.user.role} />
 
       <div className="flex min-w-0 flex-1 flex-col">

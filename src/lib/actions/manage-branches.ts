@@ -18,6 +18,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { ensureAdmin, prismaErrorCode, slugify } from "@/lib/action-utils";
+import { MAX_DELIVERY_FEE, parseDeliveryFee } from "@/lib/validators";
 
 export type CreateBranchResult =
   | { success: true; id: string }
@@ -57,13 +58,16 @@ function validateBranchInput(
   }
 
   // Missing fee falls back to the schema default (35 EGP). Zero is allowed —
-  // it means the branch delivers for free.
-  const deliveryFee = Number(data.deliveryFee ?? 35);
-  if (!Number.isFinite(deliveryFee) || deliveryFee < 0) {
-    return { error: "Delivery fee must be zero or a positive number." };
+  // it means the branch delivers for free. The ceiling and rounding are the
+  // Settings fee sheet's own rule (parseDeliveryFee), so neither door is laxer.
+  const deliveryFee = parseDeliveryFee(data.deliveryFee ?? 35);
+  if (deliveryFee === null) {
+    return {
+      error: `Delivery fee must be a number between 0 and ${MAX_DELIVERY_FEE.toLocaleString("en-US")}.`,
+    };
   }
 
-  return { name, slug, deliveryFee: Math.round(deliveryFee * 100) / 100 };
+  return { name, slug, deliveryFee };
 }
 
 // ── Create ───────────────────────────────────────────────────────────────────

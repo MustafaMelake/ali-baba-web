@@ -19,7 +19,7 @@ imported into every session — read them before touching the corresponding laye
 | Styling | **Tailwind CSS v4** | Token-driven: serif headings, `stone-*` neutrals, one turquoise `primary` accent, `rounded-full` pills. |
 | Database | **PostgreSQL (Neon)** via **Prisma 7** + `@prisma/adapter-pg` | Relational, **not** MongoDB. Every money column is `Decimal` (except `StoreSettings.vatRate`, a `Float` rate). |
 | Auth & RBAC | **Better Auth 1.6** | DB-backed sessions (not JWT). `role`: `USER \| ADMIN \| MANAGER`. Read only through `@/lib/session` / `@/lib/auth-client`. |
-| Client state | **Zustand 5** (`persist`) | Used narrowly for the cart only, keyed by `variantId`. Everything else is server state. |
+| Client state | **Zustand 5** (`persist`) | Four narrow client-only stores — the cart (persisted, keyed by `variantId`), the wishlist-heart id set, the admin mobile-nav toggle, the seasonal-intro latch. None fetches catalogs/orders/tables: everything else is server state. |
 | Pricing | **Discount Engine** `src/lib/discounts.ts` | One pure, dependency-free resolver shared by storefront, cart, checkout preview **and** `placeOrder`. |
 | Media / feedback / motion | UploadThing · `sonner` · `framer-motion` · Recharts · Embla | Admin-only uploads; a toast on every mutation. |
 

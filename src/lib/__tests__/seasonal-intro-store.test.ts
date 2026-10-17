@@ -4,7 +4,8 @@
 // Seasonal intro latch — client store suite.
 //
 // `useSeasonalIntro` decides whether the homepage's seasonal intro plays and
-// owns its three-second lifetime. The promises it keeps: at most once per tab
+// owns its three-second lifetime — counted from when the scene is on screen
+// (`shown()`), since the scene is a separate chunk that arrives after `begin()`. The promises it keeps: at most once per tab
 // session (a reload or a client-side navigation must not replay it), never
 // under prefers-reduced-motion, never crash the homepage when storage is
 // blocked, and never spend its one play on a background tab nobody is viewing.
@@ -74,9 +75,10 @@ describe("useSeasonalIntro — first visit", () => {
     expect(intro.getState().season).toBe("autumn");
   });
 
-  it("ends by itself after three seconds", async () => {
+  it("ends by itself three seconds after the scene is on screen", async () => {
     const intro = await loadPage();
     intro.getState().begin();
+    intro.getState().shown();
 
     vi.advanceTimersByTime(2_999);
     expect(intro.getState().season).toBe("autumn");
@@ -85,10 +87,32 @@ describe("useSeasonalIntro — first visit", () => {
     expect(intro.getState().season).toBeNull();
   });
 
+  it("does not start the clock while the scene is still loading", async () => {
+    const intro = await loadPage();
+    intro.getState().begin();
+
+    vi.advanceTimersByTime(10_000);
+    expect(intro.getState().season).toBe("autumn");
+
+    intro.getState().shown();
+    vi.advanceTimersByTime(3_000);
+    expect(intro.getState().season).toBeNull();
+  });
+
   it("ends immediately when skipped", async () => {
     const intro = await loadPage();
     intro.getState().begin();
     intro.getState().finish();
+    expect(intro.getState().season).toBeNull();
+  });
+
+  it("cannot be restarted by a late shown() once it has ended", async () => {
+    const intro = await loadPage();
+    intro.getState().begin();
+    intro.getState().finish();
+    intro.getState().shown();
+    vi.advanceTimersByTime(3_000);
+    expect(intro.getState().status).toBe("done");
     expect(intro.getState().season).toBeNull();
   });
 });
@@ -102,13 +126,15 @@ describe("useSeasonalIntro — once per session", () => {
     expect(reloaded.getState().season).toBeNull();
   });
 
-  it("keeps its original end time through a repeat begin()", async () => {
+  it("keeps its original end time through a repeat begin() and shown()", async () => {
     const intro = await loadPage();
     intro.getState().begin();
+    intro.getState().shown();
     vi.advanceTimersByTime(1_000);
 
     // StrictMode re-runs effects, and returning to "/" mounts a fresh overlay.
     intro.getState().begin();
+    intro.getState().shown();
     expect(intro.getState().season).toBe("autumn");
 
     vi.advanceTimersByTime(1_999);

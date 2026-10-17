@@ -9,7 +9,7 @@ is needed.
 
 - **Default to a Server Component.** Fetch data directly with Prisma in the component body (or a server-only loader) — no API route, no client `fetch`, no first-paint spinner. The HTML arrives already populated.
 - **Reach for `"use client"` only for interactivity**: form state, `useTransition`, optimistic UI, animation, `useSession()`, portals. Keep islands thin leaves (`ProductPurchasePanel`, `EditProductForm`, `ReviewActions`, `AdminOrderFilters` are the reference shapes).
-- **There is NO client-side data layer.** No Redux, React Query, or SWR anywhere. Zustand is used *only* for the cart (`src/lib/cart-store.ts`). Order lists, wishlist counts, catalogs, admin tables, analytics are all server state re-derived through Server Components on navigation.
+- **There is NO client-side data layer.** No Redux, React Query, or SWR anywhere. Zustand holds only client-owned UI state, in four narrow stores: the cart (`src/lib/cart-store.ts`, the only persisted one), the wishlist-heart id set (`src/lib/wishlist-store.ts`, see **Caching** below), the admin mobile-nav toggle (`src/lib/admin-ui-store.ts`), and the seasonal-intro latch (`src/lib/seasonal-intro-store.ts`). A new store must be equally narrow — order lists, catalogs, admin tables, analytics are all server state re-derived through Server Components on navigation, never cached in a store.
 
 ## Mutations — the universal pattern
 
@@ -94,6 +94,7 @@ Filters, search, and pagination live in the **URL** (`searchParams`), not client
 
 - **framer-motion idioms**: a single shared `layoutId` pill animates between active tabs (`layoutId="admin-status-pill"` / `"order-status-pill"`); destructive actions use an inline confirm-in-place control (`AnimatePresence` width/opacity), not a modal.
 - **Every modal dialog and drawer uses `useDialogFocus(open)`** (`src/lib/use-dialog-focus.ts`) on its `role="dialog" aria-modal="true"` element: focus moves in on open (an `autoFocus` field wins), Tab/Shift+Tab stay inside the topmost dialog, and focus returns to the opener on close. Each dialog still owns its Escape handler. (The search palette predates the hook and keeps its own equivalent trap.)
+- **Decoration loads lazily and fails silently.** A purely decorative client chunk (the seasonal intro's `SeasonScene`) is `next/dynamic(…, { ssr: false })` from a Client Component (a Server Component can't pass `ssr: false`), rendered only once it will actually show — and its loader **`.catch`es to an empty component**: Next's app-router `dynamic` is a bare `React.lazy`, so a failed chunk fetch (offline, deploy skew) otherwise throws into the route's error boundary and replaces the page. Time anything user-visible from when the chunk *mounts*, not when it was requested (React reveals Suspense content in ~300 ms batches).
 - **Portals** (`createPortal(…, document.body)`) guard with a render-time check — `if (typeof document === "undefined") return null;` — **not** a `mounted` flag set in `useEffect` (that trips `react-hooks/set-state-in-effect`). Safe because these drawers start closed, so there's nothing to mismatch.
 
 ## Styling

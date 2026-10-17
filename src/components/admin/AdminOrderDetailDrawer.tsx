@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { OrderStatus, FulfillmentMethod } from "@/generated/prisma/enums";
 import { updateOrderStatus } from "@/lib/actions/orders";
 import { formatEGP, formatMoney, prettyLabel } from "@/lib/utils";
+import { vatLabel } from "@/lib/cart-summary";
 import StatusPill from "@/components/orders/StatusPill";
 import type { AdminOrderView } from "./order-types";
 
@@ -318,7 +319,7 @@ export default function AdminOrderDetailDrawer({
 
                   <div className="mt-2 space-y-2 border-t border-stone-200 pt-4">
                     <SummaryRow label="Subtotal" value={formatEGP(order.subtotal)} />
-                    <SummaryRow label="VAT (14%)" value={formatEGP(order.vat)} />
+                    <SummaryRow label={vatLabel(order.vatRate)} value={formatEGP(order.vat)} />
                     <SummaryRow
                       label="Delivery Fee"
                       value={order.deliveryFee > 0 ? formatEGP(order.deliveryFee) : "Free"}

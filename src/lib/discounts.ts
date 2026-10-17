@@ -83,6 +83,22 @@ export function roundMoney(n: Numeric): number {
 }
 
 /**
+ * A discount percentage as advertised on a badge or seal: a whole number,
+ * rounded DOWN so the advertised discount never exceeds the real one (12.5% is
+ * "12%", never "13%"). The tiny tolerance keeps float noise just below an
+ * integer — `(1 − 0.8) × 100` is 19.999… — from knocking a whole point off.
+ */
+export function advertisedPercent(percent: number): number {
+  return Math.floor(percent + 1e-9);
+}
+
+/** The whole-percent markdown from `wasPrice` to `price` for a sale badge; 0 when not marked down. */
+export function percentOff(price: number, wasPrice: number): number {
+  if (!(wasPrice > 0) || price >= wasPrice) return 0;
+  return advertisedPercent((1 - price / wasPrice) * 100);
+}
+
+/**
  * A Prisma `where` matching only currently-live promotions. Spread it into a
  * relation include, e.g. `promotions: { where: livePromotionWhere(now), … }`.
  * Pass a single `now` per request so every level (variant/product/category)

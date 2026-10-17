@@ -773,3 +773,61 @@ describe("placeOrder — clears the buyer's saved cart atomically", () => {
     expect(mockPrisma.cartItem.deleteMany).not.toHaveBeenCalled();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VAT rate snapshot — names the rate on the receipt; the amount stays residual
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("placeOrder — snapshots the VAT rate it billed at", () => {
+  it("records the store's rate when VAT is on", async () => {
+    stubSettings({ vatRate: 0.1425, isVatEnabled: true });
+
+    await placeOrder(payload());
+
+    expect(persistedOrder().vatRate).toBe(0.1425);
+  });
+
+  it("records 0 when VAT is switched off — not the dormant configured rate", async () => {
+    stubSettings({ vatRate: 0.14, isVatEnabled: false });
+
+    await placeOrder(payload());
+
+    expect(persistedOrder().vatRate).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Duplicate lines — a variant appears in an order at most once
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("placeOrder — one line per variant", () => {
+  it("rejects a crafted payload that repeats a variant (sidestepping the 99-per-item cap)", async () => {
+    const res = await placeOrder(
+      payload({
+        items: [
+          { variantId: "v1", quantity: 99 },
+          { variantId: "v1", quantity: 99 },
+        ],
+      }),
+    );
+
+    expect(res.success).toBe(false);
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.order.count).not.toHaveBeenCalled(); // refused before any DB work
+  });
+
+  it("still accepts distinct variants of the same product", async () => {
+    stubVariants([variantRow({ id: "v1", price: 100 }), variantRow({ id: "v2", price: 150 })]);
+
+    const res = await placeOrder(
+      payload({
+        items: [
+          { variantId: "v1", quantity: 1 },
+          { variantId: "v2", quantity: 1 },
+        ],
+      }),
+    );
+
+    expect(res.success).toBe(true);
+  });
+});

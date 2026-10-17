@@ -2,8 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin } from "@/lib/session";
-import { prismaErrorCode } from "@/lib/action-utils";
+import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
 import { deleteUploadedFiles } from "@/lib/uploadthing-server";
 import {
   productInputSchema,
@@ -38,7 +37,8 @@ export async function updateProduct(
   id: string,
   input: ProductUpdateInput,
 ): Promise<UpdateProductResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
   if (!id) return { success: false, error: "Missing product id." };
 
   const parsed = productUpdateSchema.safeParse(input);
@@ -181,7 +181,8 @@ export type DeleteProductResult =
  * rather than a 500.
  */
 export async function deleteProduct(id: string): Promise<DeleteProductResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
   if (!id) return { success: false, error: "Missing product id." };
 
   // Images captured BEFORE the delete — once the row is gone nothing points at
@@ -237,11 +238,15 @@ export async function deleteProduct(id: string): Promise<DeleteProductResult> {
 export async function createProduct(
   input: ProductInput,
 ): Promise<CreateProductResult> {
-  await requireAdmin();
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
 
   const parsed = productInputSchema.safeParse(input);
   if (!parsed.success) {
-    return { success: false, error: "Invalid product data." };
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid product data.",
+    };
   }
   const data = parsed.data;
 
