@@ -697,3 +697,79 @@ describe("updateOrderStatus — concurrent deletion (P2025)", () => {
     expect(res).toEqual({ success: false, error: "That order no longer exists." });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Free-line guard — a 0 EGP line is never billed
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("placeOrder — refuses 0 EGP lines", () => {
+  it("rejects the whole order when a promotion has priced a line at 0", async () => {
+    stubVariants([
+      variantRow({
+        id: "v1",
+        price: 100,
+        productName: "Basbousa",
+        productPromos: [livePromo({ type: DiscountType.FIXED_AMOUNT, value: 100 })],
+      }),
+    ]);
+
+    const res = await placeOrder(payload());
+
+    expect(res).toEqual({ success: false, error: expect.stringContaining("Basbousa") });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("still bills a line discounted to a few piastres", async () => {
+    stubVariants([
+      variantRow({
+        id: "v1",
+        price: 100,
+        productPromos: [livePromo({ type: DiscountType.FIXED_AMOUNT, value: 99.99 })],
+      }),
+    ]);
+
+    const res = await placeOrder(payload());
+
+    expect(res.success).toBe(true);
+    expect(persistedOrder().subtotal).toBe(0.01);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cart clearing — the ordered lines leave the saved cart in the SAME transaction
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("placeOrder — clears the buyer's saved cart atomically", () => {
+  it("deletes the signed-in buyer's ordered cart lines inside the order transaction", async () => {
+    mockedSession.mockResolvedValue({ user: { id: "u1" } } as never);
+    stubVariants([variantRow({ id: "v1", price: 100 }), variantRow({ id: "v2", price: 50 })]);
+
+    await placeOrder(
+      payload({ items: [{ variantId: "v1", quantity: 1 }, { variantId: "v2", quantity: 2 }] }),
+    );
+
+    expect(mockPrisma.cartItem.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "u1", variantId: { in: ["v1", "v2"] } },
+    });
+    // Same transaction: the cart is only cleared once the order row exists.
+    const created = mockPrisma.order.create.mock.invocationCallOrder[0];
+    const cleared = mockPrisma.cartItem.deleteMany.mock.invocationCallOrder[0];
+    expect(cleared).toBeGreaterThan(created);
+  });
+
+  it("touches no cart for a guest order", async () => {
+    await placeOrder(payload());
+
+    expect(mockPrisma.cartItem.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("keeps the cart when the order is refused", async () => {
+    mockedSession.mockResolvedValue({ user: { id: "u1" } } as never);
+    stubVariants([variantRow({ id: "v1", price: 100, variantAvailable: false })]);
+
+    const res = await placeOrder(payload());
+
+    expect(res.success).toBe(false);
+    expect(mockPrisma.cartItem.deleteMany).not.toHaveBeenCalled();
+  });
+});

@@ -58,7 +58,7 @@ function seed(state: Partial<ReturnType<typeof useCartStore.getState>>) {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  useCartStore.setState({ items: [], pendingOps: {}, isOpen: false, orderNote: "" });
+  useCartStore.setState({ items: [], pendingOps: {}, isOpen: false, orderNote: "", ownerId: null });
   localStorage.clear();
   // Background reconcile resolves cleanly by default (confirms + clears the op).
   mockedSync.mockResolvedValue({ success: true, data: null });
@@ -203,7 +203,7 @@ describe("mergeAndSyncCart — guest → auth without losing intent", () => {
     mockedMerge.mockResolvedValue({ success: true, data: null });
     mockedGetDbCart.mockResolvedValue({ success: true, data: [line({ variantId: "v1", quantity: 4 })] });
 
-    await useCartStore.getState().mergeAndSyncCart();
+    await useCartStore.getState().mergeAndSyncCart("u1");
 
     expect(mockedMerge).toHaveBeenCalledWith([{ variantId: "v_guest", quantity: 2 }]);
     expect(useCartStore.getState().items).toEqual([line({ variantId: "v1", quantity: 4 })]);
@@ -215,7 +215,7 @@ describe("mergeAndSyncCart — guest → auth without losing intent", () => {
     });
     mockedMerge.mockResolvedValue({ success: false, error: "network down" });
 
-    await useCartStore.getState().mergeAndSyncCart();
+    await useCartStore.getState().mergeAndSyncCart("u1");
 
     // Local items are NOT dropped…
     expect(useCartStore.getState().items).toHaveLength(2);
@@ -238,7 +238,7 @@ describe("mergeAndSyncCart — guest → auth without losing intent", () => {
     // The post-merge DB read still reflects the pre-op quantity (5).
     mockedGetDbCart.mockResolvedValue({ success: true, data: [line({ variantId: "v1", quantity: 5, name: "DB" })] });
 
-    await useCartStore.getState().mergeAndSyncCart();
+    await useCartStore.getState().mergeAndSyncCart("u1");
 
     const v1 = useCartStore.getState().items.find((i) => i.variantId === "v1")!;
     expect(v1.quantity).toBe(8); // the pending op replayed → local intent survived the transition
@@ -249,7 +249,7 @@ describe("mergeAndSyncCart — guest → auth without losing intent", () => {
     seed({ items: [] });
     mockedGetDbCart.mockResolvedValue({ success: true, data: [line({ variantId: "v1", quantity: 1 })] });
 
-    await useCartStore.getState().mergeAndSyncCart();
+    await useCartStore.getState().mergeAndSyncCart("u1");
 
     expect(mockedMerge).not.toHaveBeenCalled(); // nothing to merge up
     expect(useCartStore.getState().items).toEqual([line({ variantId: "v1", quantity: 1 })]);
@@ -371,5 +371,89 @@ describe("refreshPrices", () => {
 
     expect(result).toEqual({ updated: 0, lines: [] });
     expect(mockedReprice).not.toHaveBeenCalled();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ownerId — a cart is merged into an account at most once, across tabs
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("ownerId — the one-merge guarantee", () => {
+  it("claims the cart for the account after a successful merge, and persists the claim", async () => {
+    seed({ items: [line({ variantId: "v1", quantity: 2 })] });
+    mockedGetDbCart.mockResolvedValue({ success: true, data: [line({ variantId: "v1", quantity: 2 })] });
+
+    await useCartStore.getState().mergeAndSyncCart("u1");
+
+    expect(useCartStore.getState().ownerId).toBe("u1");
+    const persisted = JSON.parse(localStorage.getItem("ali-baba-cart") ?? "{}");
+    expect(persisted.state.ownerId).toBe("u1");
+  });
+
+  it("claims the cart even when the merge fails — its lines are now this account's pending intent", async () => {
+    seed({ items: [line({ variantId: "v1", quantity: 2 })] });
+    mockedMerge.mockResolvedValue({ success: false, error: "network down" });
+
+    await useCartStore.getState().mergeAndSyncCart("u1");
+
+    expect(useCartStore.getState().ownerId).toBe("u1");
+  });
+
+  it("does not merge a cart this account already owns — it hydrates instead", async () => {
+    seed({ items: [line({ variantId: "v1", quantity: 2 })], ownerId: "u1" });
+    mockedGetDbCart.mockResolvedValue({ success: true, data: [line({ variantId: "v1", quantity: 2 })] });
+
+    await useCartStore.getState().mergeAndSyncCart("u1");
+
+    expect(mockedMerge).not.toHaveBeenCalled();
+    expect(useCartStore.getState().items).toEqual([line({ variantId: "v1", quantity: 2 })]);
+  });
+
+  it("still merges a cart owned by a DIFFERENT account's leftover (never trusted as this account's)", async () => {
+    seed({ items: [line({ variantId: "v1", quantity: 2 })], ownerId: "someone_else" });
+
+    await useCartStore.getState().mergeAndSyncCart("u1");
+
+    expect(mockedMerge).toHaveBeenCalledWith([{ variantId: "v1", quantity: 2 }]);
+  });
+
+  it("second tab: after another tab merged, re-reading storage prevents a double merge", async () => {
+    // This tab still holds the guest cart in memory…
+    seed({ items: [line({ variantId: "v1", quantity: 2 })], ownerId: null });
+    // …while the tab that signed in has already merged it and persisted the claim.
+    localStorage.setItem(
+      "ali-baba-cart",
+      JSON.stringify({
+        state: { items: [line({ variantId: "v1", quantity: 2 })], pendingOps: {}, orderNote: "", ownerId: "u1" },
+        version: 0,
+      }),
+    );
+    mockedGetDbCart.mockResolvedValue({ success: true, data: [line({ variantId: "v1", quantity: 2 })] });
+
+    // What CartSyncProvider does when this tab notices the sign-in.
+    await useCartStore.persist.rehydrate();
+    await useCartStore.getState().mergeAndSyncCart("u1");
+
+    expect(mockedMerge).not.toHaveBeenCalled();
+    expect(useCartStore.getState().items[0].quantity).toBe(2);
+  });
+
+  it("hydrateFromDb adopts the DB cart and claims it", async () => {
+    mockedGetDbCart.mockResolvedValue({ success: true, data: [line({ variantId: "v9", quantity: 1 })] });
+
+    await useCartStore.getState().hydrateFromDb("u1");
+
+    expect(useCartStore.getState().items).toEqual([line({ variantId: "v9", quantity: 1 })]);
+    expect(useCartStore.getState().ownerId).toBe("u1");
+  });
+
+  it("logout releases the claim; emptying the bag after an order keeps it", () => {
+    seed({ items: [line({ variantId: "v1" })], ownerId: "u1" });
+
+    useCartStore.getState().clearCart();
+    expect(useCartStore.getState().ownerId).toBe("u1");
+
+    useCartStore.getState().clearLocalCart();
+    expect(useCartStore.getState().ownerId).toBeNull();
   });
 });

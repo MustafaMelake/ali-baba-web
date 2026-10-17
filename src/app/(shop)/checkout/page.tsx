@@ -11,6 +11,8 @@ import {
   Check,
   Truck,
   Store,
+  AlertCircle,
+  RotateCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCartStore, type CartItem } from "@/lib/cart-store";
@@ -19,22 +21,12 @@ import { placeOrder } from "@/lib/actions/orders";
 import { getActiveBranches } from "@/lib/actions/branches";
 import { getPublicPricingSettings } from "@/lib/actions/store-settings";
 import type { PricingSettings } from "@/lib/store-settings";
-import { clearDbCartAction } from "@/lib/actions/cart";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
 import { checkoutSchema, fieldErrors, ORDER_NOTES_MAX_LENGTH } from "@/lib/validators";
 import { roundMoney } from "@/lib/discounts";
 import { cn, formatMoney } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
-
-// Preview-only fallback used ONLY if the pricing fetch fails (mirrors the
-// StoreSettings schema defaults). Never used for billing — `placeOrder`
-// re-reads the real values from the database.
-const FALLBACK_PRICING: PricingSettings = {
-  vatRate: 0.14,
-  isVatEnabled: true,
-  defaultDeliveryFee: 35,
-};
 
 type BranchOption = {
   id: string;
@@ -261,37 +253,45 @@ function OrderSummary({
   pricing,
   loading,
   onSubmit,
+  onRetryPricing,
+  retryingPricing,
 }: {
   items: CheckoutItem[];
   mode: Mode;
-  /** Resolved fee for the current selection (0 for pickup) — display only. */
-  deliveryFee: number;
-  pricing: PricingSettings;
+  /** Resolved fee for the current selection (0 for pickup) — display only; null until pricing loads. */
+  deliveryFee: number | null;
+  /** The store's live VAT + delivery settings — null when they couldn't be loaded. */
+  pricing: PricingSettings | null;
   loading: boolean;
   onSubmit: () => void;
+  onRetryPricing: () => void;
+  retryingPricing: boolean;
 }) {
   // Mirrors placeOrder's math exactly: discounted subtotal → VAT on it → fee.
   // Same 2-dp rounding points as placeOrder (see @/lib/discounts#roundMoney) —
   // the subtotal is rounded BEFORE it's taxed, or a float sum like
   // 239.24999999999997 previews 0.01 less VAT than the server bills.
   const subtotal = roundMoney(items.reduce((s, i) => s + i.price * i.quantity, 0));
-  const delivery = deliveryFee;
-  const tax = pricing.isVatEnabled ? roundMoney(subtotal * pricing.vatRate) : 0;
-  const total = roundMoney(subtotal + delivery + tax);
-  // Human label — trims trailing zeros (0.14 → "14", 0.1425 → "14.25").
-  const vatPercent = +(pricing.vatRate * 100).toFixed(2);
 
   const rows: { label: string; value: number; free?: boolean }[] = [
     { label: "Subtotal", value: subtotal },
-    {
-      label: mode === "pickup" ? "Pickup" : "Delivery",
-      value: delivery,
-      // Pickup is always free; a 0-fee delivery branch reads as free too.
-      free: delivery === 0,
-    },
   ];
-  if (pricing.isVatEnabled) {
-    rows.push({ label: `VAT (${vatPercent}%)`, value: tax });
+  // Without the live settings there is no honest total: VAT and delivery are
+  // never guessed, and the order can't be placed until they load.
+  let total: number | null = null;
+  if (pricing && deliveryFee !== null) {
+    const tax = pricing.isVatEnabled ? roundMoney(subtotal * pricing.vatRate) : 0;
+    total = roundMoney(subtotal + deliveryFee + tax);
+    rows.push({
+      label: mode === "pickup" ? "Pickup" : "Delivery",
+      value: deliveryFee,
+      // Pickup is always free; a 0-fee delivery branch reads as free too.
+      free: deliveryFee === 0,
+    });
+    if (pricing.isVatEnabled) {
+      // Human label — trims trailing zeros (0.14 → "14", 0.1425 → "14.25").
+      rows.push({ label: `VAT (${+(pricing.vatRate * 100).toFixed(2)}%)`, value: tax });
+    }
   }
 
   return (
@@ -354,24 +354,48 @@ function OrderSummary({
           </div>
         ))}
 
-        <div className="border-t border-stone-200 pt-4 flex justify-between items-baseline">
-          <span className="font-serif text-xl font-medium text-stone-900">
-            Total
-          </span>
-          <span className="font-serif text-2xl font-medium text-stone-900 tabular-nums">
-            {formatMoney(total)}
-            <span className="font-sans font-normal text-sm text-stone-500 ml-1">
-              ج.م
+        {total === null ? (
+          <div
+            role="alert"
+            className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+          >
+            <p className="flex items-start gap-2 font-medium">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              We couldn&apos;t load the store&apos;s current VAT and delivery prices.
+            </p>
+            <p className="mt-1 pl-6 text-xs leading-relaxed text-amber-800">
+              Your total can&apos;t be shown yet, so ordering is paused until they load.
+            </p>
+            <button
+              type="button"
+              onClick={onRetryPricing}
+              disabled={retryingPricing}
+              className="ml-6 mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-60"
+            >
+              <RotateCw className={cn("h-3.5 w-3.5", retryingPricing && "animate-spin")} aria-hidden="true" />
+              {retryingPricing ? "Trying again…" : "Try again"}
+            </button>
+          </div>
+        ) : (
+          <div className="border-t border-stone-200 pt-4 flex justify-between items-baseline">
+            <span className="font-serif text-xl font-medium text-stone-900">
+              Total
             </span>
-          </span>
-        </div>
+            <span className="font-serif text-2xl font-medium text-stone-900 tabular-nums">
+              {formatMoney(total)}
+              <span className="font-sans font-normal text-sm text-stone-500 ml-1">
+                ج.م
+              </span>
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Place Order CTA */}
       <button
         type="button"
         onClick={onSubmit}
-        disabled={loading || items.length === 0}
+        disabled={loading || items.length === 0 || total === null}
         className="mt-7 relative w-full overflow-hidden rounded-full bg-stone-900 py-4 font-sans text-sm font-semibold uppercase tracking-widest text-white shadow-[0_4px_24px_rgba(0,0,0,0.22)] hover:bg-stone-700 active:scale-[0.99] transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-50"
       >
         <AnimatePresence mode="wait" initial={false}>
@@ -397,8 +421,12 @@ function OrderSummary({
               transition={{ duration: 0.2 }}
             >
               Place Order
-              <span className="opacity-60">·</span>
-              {formatMoney(total)} ج.م
+              {total !== null && (
+                <>
+                  <span className="opacity-60">·</span>
+                  {formatMoney(total)} ج.م
+                </>
+              )}
             </motion.span>
           )}
         </AnimatePresence>
@@ -485,6 +513,11 @@ export default function CheckoutPage() {
   // Global pricing knobs (VAT + default delivery fee) — null until fetched so
   // the summary never flashes totals computed from stale hardcoded numbers.
   const [pricing, setPricing] = useState<PricingSettings | null>(null);
+  // The settings request failed: the summary says so and offers a retry —
+  // VAT and delivery are never guessed (a guessed total could differ from
+  // what placeOrder bills), and submission stays locked until they load.
+  const [pricingFailed, setPricingFailed] = useState(false);
+  const [retryingPricing, startRetryPricing] = useTransition();
   // Guest carts are frozen in localStorage — their line prices are re-read
   // from the live catalogue before the summary first renders (see below).
   // Only the async re-price itself is state; whether a re-price is needed at
@@ -534,9 +567,7 @@ export default function CheckoutPage() {
         if (alive) setPricing(settings);
       })
       .catch(() => {
-        // Totals degrade to the schema-default preview. Billing is unaffected —
-        // placeOrder reads the real values from the DB.
-        if (alive) setPricing(FALLBACK_PRICING);
+        if (alive) setPricingFailed(true);
       });
 
     return () => {
@@ -586,8 +617,23 @@ export default function CheckoutPage() {
     };
   }, [needsGuestReprice, guestRepriceDone, refreshPrices]);
 
+  function retryPricing() {
+    startRetryPricing(async () => {
+      try {
+        const settings = await getPublicPricingSettings();
+        startRetryPricing(() => {
+          setPricing(settings);
+          setPricingFailed(false);
+        });
+      } catch {
+        toast.error("Still couldn't load prices. Please try again in a moment.");
+      }
+    });
+  }
+
   function handleSubmit() {
-    if (isPending || placed) return;
+    // No live pricing → no honest total to confirm against.
+    if (isPending || placed || !pricing) return;
 
     const addressLine = [address.trim(), apartment.trim()]
       .filter(Boolean)
@@ -647,10 +693,10 @@ export default function CheckoutPage() {
         return;
       }
 
-      // The order now owns these items — empty the cart everywhere. Locally
-      // first (instant UI), then the DB when logged in so it doesn't re-hydrate.
+      // The order now owns these items. placeOrder already removed them from a
+      // signed-in buyer's saved cart in the order's own transaction — only the
+      // local copy is left to empty.
       clearCart();
-      if (isLoggedIn) void clearDbCartAction();
       setOrderNumber(res.orderNumber);
       setPlaced(true);
       toast.success(`Order #${res.orderNumber} placed — thank you!`);
@@ -658,11 +704,11 @@ export default function CheckoutPage() {
   }
 
   // Hold the background until the cart has rehydrated, the pricing settings
-  // have loaded, AND (for guests) the cart lines have been re-priced from the
-  // live catalogue — prevents an empty-cart flash for customers who already
-  // have items, and never shows a total that differs from what placeOrder
-  // will bill.
-  if (!hydrated || !pricing || !guestRepriced) {
+  // have loaded (or definitively failed — the summary then says so), AND (for
+  // guests) the cart lines have been re-priced from the live catalogue —
+  // prevents an empty-cart flash for customers who already have items, and
+  // never shows a total that differs from what placeOrder will bill.
+  if (!hydrated || (!pricing && !pricingFailed) || !guestRepriced) {
     return <div className="min-h-screen bg-[#FAFAFA]" />;
   }
 
@@ -717,9 +763,10 @@ export default function CheckoutPage() {
 
   // Preview fee for the CURRENT selection — mirrors placeOrder's server-side
   // resolution exactly: pickup → 0; delivery → the chosen area-branch's fee,
-  // or the global default for "Other Areas".
-  const previewDeliveryFee =
-    mode === "pickup"
+  // or the global default for "Other Areas". Null until the settings load.
+  const previewDeliveryFee = !pricing
+    ? null
+    : mode === "pickup"
       ? 0
       : deliveryAreaId && deliveryAreaId !== OTHER_AREAS_OPTION.id
         ? branches.find((b) => b.id === deliveryAreaId)?.deliveryFee ??
@@ -944,6 +991,8 @@ export default function CheckoutPage() {
                   pricing={pricing}
                   loading={isPending}
                   onSubmit={handleSubmit}
+                  onRetryPricing={retryPricing}
+                  retryingPricing={retryingPricing}
                 />
               </div>
             </section>
@@ -959,6 +1008,8 @@ export default function CheckoutPage() {
                 pricing={pricing}
                 loading={isPending}
                 onSubmit={handleSubmit}
+                onRetryPricing={retryPricing}
+                retryingPricing={retryingPricing}
               />
             </div>
           </div>

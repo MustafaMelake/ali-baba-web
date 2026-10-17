@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { useDialogFocus } from "@/lib/use-dialog-focus";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Loader2, Check, BadgePercent } from "lucide-react";
@@ -87,6 +88,8 @@ export default function PromotionModal({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  // Focus moves in on open, Tab stays inside, and returns to the opener on close.
+  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
   const isEdit = Boolean(promotion);
 
   const [name, setName] = useState("");
@@ -177,6 +180,7 @@ export default function PromotionModal({
           />
 
           <motion.div
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-label={isEdit ? "Edit promotion" : "Create promotion"}

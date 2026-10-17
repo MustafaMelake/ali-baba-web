@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useSession } from "@/lib/auth-client";
-import { useCartStore } from "@/lib/cart-store";
-import { getDbCartAction } from "@/lib/actions/cart";
+import { CART_STORAGE_KEY, useCartStore } from "@/lib/cart-store";
 
 /**
  * CartSyncProvider — bridges the client cart with the persisted (DB) cart
@@ -27,6 +26,13 @@ import { getDbCartAction } from "@/lib/actions/cart";
  * We tell them apart with refs: `firstResolve` marks the very first non-pending
  * session reading after mount, and `knownUserId` records the last id we acted
  * on so each transition fires exactly once (no loops, no redundant calls).
+ *
+ * Tabs share localStorage but not their in-memory stores, and Better Auth
+ * refetches the session when a tab regains focus — so a second tab can notice
+ * a sign-in that another tab already merged. Two guards keep that from merging
+ * the same guest cart twice: every tab re-reads the cart when another tab
+ * writes it, and the merge itself is skipped for a cart the account already
+ * owns (`ownerId`, see cart-store.ts).
  */
 export default function CartSyncProvider({
   children,
@@ -36,8 +42,11 @@ export default function CartSyncProvider({
   const { data: session, isPending } = useSession();
   const userId = session?.user?.id ?? null;
 
-  // Zustand actions have stable identity — safe to use as effect deps.
+  // Zustand actions have stable identity — safe to use as effect deps. (They
+  // source their own items from the store, which is why this provider never
+  // subscribes to `items` — doing so would re-run the effect on every edit.)
   const mergeAndSyncCart = useCartStore((s) => s.mergeAndSyncCart);
+  const hydrateFromDb = useCartStore((s) => s.hydrateFromDb);
   const clearLocalCart = useCartStore((s) => s.clearLocalCart);
 
   // Have we handled the first resolved session reading yet?
@@ -45,22 +54,15 @@ export default function CartSyncProvider({
   // The user id whose transition we last acted on (null = guest).
   const knownUserId = useRef<string | null>(null);
 
-  /**
-   * Pull the DB cart and adopt it as the source of truth. Adoption goes
-   * through the store's `adoptDbCart`, which is merge-aware: unsynced local
-   * intent (pendingOps) is replayed over the server payload and re-synced in
-   * the background, so a sync that failed in a previous page-life can't be
-   * silently erased by this hydrate. (`mergeAndSyncCart`/`adoptDbCart` source
-   * their own items from the store, which is why this provider never
-   * subscribes to `items` — doing so would re-run the effect on every edit.)
-   */
-  const hydrateFromDb = useCallback(async () => {
-    const res = await getDbCartAction();
-    if (res.success) {
-      useCartStore.getState().adoptDbCart(res.data);
-    } else {
-      console.error("CartSyncProvider: hydrate failed —", res.error);
+  // Another tab changed the persisted cart — adopt it, so this tab's next
+  // write can't overwrite it with a stale copy and its next decision sees
+  // that tab's ownership claim.
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key === CART_STORAGE_KEY) void useCartStore.persist.rehydrate();
     }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   useEffect(() => {
@@ -75,7 +77,7 @@ export default function CartSyncProvider({
     if (firstResolve.current) {
       firstResolve.current = false;
       knownUserId.current = userId;
-      if (userId) void hydrateFromDb();
+      if (userId) void hydrateFromDb(userId);
       return;
     }
 
@@ -87,8 +89,12 @@ export default function CartSyncProvider({
     knownUserId.current = userId;
 
     if (prevUserId === null && userId !== null) {
-      // ── Guest → Logged in: the one true merge moment. ──
-      void mergeAndSyncCart();
+      // ── Guest → Logged in: the one true merge moment. Re-read storage
+      //    first: if another tab already merged this cart, its claim is
+      //    there and the merge becomes a plain hydrate. ──
+      void Promise.resolve(useCartStore.persist.rehydrate()).then(() =>
+        mergeAndSyncCart(userId),
+      );
     } else if (userId === null) {
       // ── Logged in → Guest (logout): wipe local + persisted storage so the
       //    next guest on this device sees nothing. DB cart is left intact. ──
@@ -97,7 +103,7 @@ export default function CartSyncProvider({
       // ── Account switch A → B without an intervening guest state: drop A's
       //    local cart, then hydrate B's from the DB. ──
       clearLocalCart();
-      void hydrateFromDb();
+      void hydrateFromDb(userId);
     }
   }, [userId, isPending, mergeAndSyncCart, clearLocalCart, hydrateFromDb]);
 

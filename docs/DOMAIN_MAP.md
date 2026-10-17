@@ -44,7 +44,7 @@
 
 | Store | File | Persistence | Purpose |
 |---|---|---|---|
-| `useCartStore` | `src/lib/cart-store.ts` | `localStorage` (`ali-baba-cart`), partialized to `items` + `pendingOps` | Cart lines + unsynced-intent ledger |
+| `useCartStore` | `src/lib/cart-store.ts` | `localStorage` (`ali-baba-cart`), partialized to `items` + `pendingOps` + `orderNote` + `ownerId` | Cart lines, unsynced-intent ledger, order note, and the account the cart belongs to |
 | `useWishlistStore` | `src/lib/wishlist-store.ts` | none (per page-life) | Favorited product-id set |
 | `useAdminUi` | `src/lib/admin-ui-store.ts` | none (deliberately) | Admin mobile-nav drawer flag |
 | `useSeasonalIntro` | `src/lib/seasonal-intro-store.ts` | `sessionStorage` (`ali-baba-seasonal-intro` — the season whose intro this tab played) | Homepage seasonal-intro latch: once per tab session, never under reduced motion |
@@ -227,7 +227,7 @@ Holds purchase intent as `{ variantId, quantity }` — **never prices, names, or
 - **`CartItem`** — `userId` → User (`Cascade`), `variantId` → ProductVariant (`Cascade` — cart lines vanish with their variant, so orphans are impossible), `quantity Int @default(1)`, **`@@unique([userId, variantId])`** (the upsert key), indexes on both FKs.
 
 ### 5.3 File Boundaries
-- **Zustand store:** `src/lib/cart-store.ts` — `persist` to `localStorage` key `ali-baba-cart`; SSR-safe via `SERVER_NOOP_STORAGE` (keeps `.persist` API attached during server render — the checkout page reads `useCartStore.persist.onFinishHydration` at render time and would crash otherwise); `partialize` persists exactly `{ items, pendingOps }` (never `isOpen`).
+- **Zustand store:** `src/lib/cart-store.ts` — `persist` to `localStorage` key `ali-baba-cart`; SSR-safe via `SERVER_NOOP_STORAGE` (keeps `.persist` API attached during server render — the checkout page reads `useCartStore.persist.onFinishHydration` at render time and would crash otherwise); `partialize` persists exactly `{ items, pendingOps, orderNote, ownerId }` (never `isOpen`).
 - **Auth-lifecycle brain:** `src/components/providers/CartSyncProvider.tsx` (mounted in the **root** layout, so admin routes participate too).
 - **Server actions:** `src/lib/actions/cart.ts` — `mergeCartAction`, `syncCartItemAction`, `getDbCartAction`, `rePriceGuestCart`, `clearDbCartAction`.
 - **UI:** `CartSidebar.tsx` (drawer; mounted by `Navbar`; links to `/cart`), cart badge in `Navbar.tsx`; the full-page cart `src/app/(shop)/cart/page.tsx` (ISR-60 shell: VAT settings + branch delivery-fee range) + `src/components/cart/{CartView,CartLineRow,CartSummaryPanel}.tsx` and the display-only totals in `src/lib/cart-summary.ts`; primary consumer `src/app/(shop)/checkout/page.tsx`. The store also persists `orderNote` (drafted on `/cart`, pre-filled at checkout as `orderNotes`, dropped by `clearCart`/`clearLocalCart`); `refreshPrices` returns the live `RepricedVariant[]` (incl. `variantName`/`productSlug`) that `/cart` renders.
@@ -243,8 +243,8 @@ Holds purchase intent as `{ variantId, quantity }` — **never prices, names, or
 3. On confirmation the entry is cleared **only if it still exactly matches** the sent op (a newer op supersedes and keeps waiting for its own confirmation). On failure it simply stays — persisted to `localStorage` — for the next hydrate to replay.
 
 **Session transitions (`CartSyncProvider`):** distinguishes four cases using `firstResolve` / `knownUserId` refs (waits out `isPending`; guards against session refetch re-runs):
-- *Already-logged-in on mount* → **hydrate**: `getDbCartAction` → `adoptDbCart` (no quantity summing ⇒ no double-count).
-- *Guest → logged-in* → **the one true merge moment**: `mergeAndSyncCart()`.
+- *Already-logged-in on mount* → **hydrate**: `hydrateFromDb(userId)` → `getDbCartAction` → `adoptDbCart` (no quantity summing ⇒ no double-count), and the cart is claimed for the account (`ownerId`).
+- *Guest → logged-in* → **the one true merge moment**: re-read storage, then `mergeAndSyncCart(userId)` — which hydrates instead when the persisted `ownerId` already names this account (another tab merged it first). Every tab also re-reads the cart when another tab writes it (`storage` event).
 - *Logged-in → guest (logout)* → `clearLocalCart()` (local + persisted wipe **including pendingOps**; DB cart deliberately survives for the next sign-in).
 - *Account switch A→B* → wipe, then hydrate B.
 
@@ -257,7 +257,7 @@ Holds purchase intent as `{ variantId, quantity }` — **never prices, names, or
 ### 5.5 Intersections & Blast Radius
 - **Auth (§1):** the provider's transition detection is the single point deciding merge-vs-hydrate — reordering `useSession` semantics or removing `router.refresh()` after login breaks guest-cart folding.
 - **Discounts (§4):** both hydrate paths and the guest re-price flow re-price through `resolvePrice`; cart display prices are *advisory* (placeOrder re-prices regardless).
-- **Checkout (§6):** consumes `items`, calls `clearCart()` + `clearDbCartAction()` on success. `clearCart` also drops pendingOps — required, otherwise replay would resurrect a purchased cart.
+- **Checkout (§6):** consumes `items`, calls `clearCart()` on success — `placeOrder` already removed the ordered lines from the signed-in buyer's DB cart inside its own transaction. `clearCart` also drops pendingOps — required, otherwise replay would resurrect a purchased cart.
 - **Catalog (§3):** variant Cascade means a deleted variant silently removes DB cart lines; local guest lines for it are left for `placeOrder`'s availability guard to report.
 
 ### 5.6 Technical Debt & Vestigial Code
@@ -292,13 +292,14 @@ Converts a cart into an immutable, **server-priced** `Order` with per-line snaps
 4. **Throttle** *(commit `ce9af23`)*: `count(Order where customerPhone = exact ∧ status = PENDING)` — `≥ 3` ⇒ refuse with "Too many pending orders…". Runs before any other DB work; a confirmed/cancelled order frees a slot. Count-then-create is non-atomic (accepted for a throttle).
 5. **Branch re-validation:** client-sent `branchId` is only honored if `findFirst({ id, isActive: true })` — stale/forged/inactive ids degrade to `null` (order surfaces to super-admin) rather than failing the order. The row's `deliveryFee` is captured here as the authoritative fee.
 6. **Settings read:** `getStoreSettings()` fresh per order — the preview's numbers are never trusted.
-7. **The transaction (deliberately exactly two statements, Neon-friendly):**
+7. **The transaction (deliberately at most three statements, Neon-friendly):**
    a. One batched `productVariant.findMany({ id IN deduped ids })` carrying the full three-level live-promotion hierarchy + product availability.
-   b. Pure in-memory loop: missing/unavailable variant (or parent product) ⇒ **throw** — the whole order rolls back, partial orders are impossible. Per line: `gatherPromotions` → `resolvePrice(variant.price, …, now)` (one `now` for the whole order) → accumulate subtotal → push snapshot `{ variantId, productName, variantName, unitPrice: finalPrice, quantity }`.
+   b. Pure in-memory loop: missing/unavailable variant (or parent product), or a line that resolves to 0 EGP ⇒ **throw** — the whole order rolls back, partial orders are impossible. Per line: `gatherPromotions` → `resolvePrice(variant.price, …, now)` (one `now` for the whole order) → accumulate subtotal → push snapshot `{ variantId, productName, variantName, unitPrice: finalPrice, quantity }`.
    c. **Money hygiene** *(commit `a3421a5`)*: `subtotal = roundMoney(subtotal)`; `deliveryFee` = DELIVERY ? `roundMoney(branch.fee ?? settings.defaultDeliveryFee)` : 0; `vat = isVatEnabled ? roundMoney(subtotal × vatRate) : 0`; `totalAmount = roundMoney(subtotal + deliveryFee + vat)`. Four rounding points; nothing off-grid reaches the `Decimal` money columns.
    d. Nested `order.create` with `items.create[]`, `status: PENDING`, resolved `branchId`.
+   e. Signed-in buyer only: `cartItem.deleteMany({ userId, variantId IN ordered ids })` — the ordered lines leave the saved cart atomically with the order (a line added on another device meanwhile stays).
 8. **Post-commit:** `revalidatePath("/admin")`, `"/admin/orders"`, and `"/my-orders"` (when authenticated); returns `{ orderNumber, orderId }`.
-9. **Client success:** `clearCart()` (local, incl. pendingOps) + `clearDbCartAction()` (when logged in), success screen with order number.
+9. **Client success:** `clearCart()` (local, incl. pendingOps), success screen with order number.
 
 **Status lifecycle — `updateOrderStatus`:** `requireDashboardAccess` (ADMIN|MANAGER, DB-fresh) → status validated against the enum (never trusts the wire) → MANAGER path re-reads the order's `branchId` and refuses foreign/unassigned orders → `order.update` → revalidates board + dashboard. `P2025` → "no longer exists".
 
@@ -535,7 +536,7 @@ The Prisma/Neon substrate plus the platform's shared coding idioms.
 - `prisma/schema.prisma` — generator `prisma-client` emitting to `src/generated/prisma` (gitignored — regenerated by `postinstall`/`build`; imported as `@/generated/prisma/client` and `/enums`), datasource URL supplied by `prisma.config.ts`.
 - `src/lib/validators.ts` — the shared-schema pattern (plain module importable from both client components and `"use server"` files).
 - `src/lib/action-utils.ts` — the consolidated Server-Action helpers (`prismaErrorCode`, `ensureAdmin` / session-returning `ensureAdminSession`, `slugify`). A plain module (not `"use server"`) imported by every action file; **server-only** by dependency (the admin gates pull in the session reader).
-- Transaction discipline (Neon-aware): `placeOrder` is exactly two statements; `mergeCartAction` is bounded to ≤ 52 statements; menu/category slug loops run inside their transactions but iterate on unique-check misses only.
+- Transaction discipline (Neon-aware): `placeOrder` is at most three statements; `mergeCartAction` is bounded to ≤ 52 statements; menu/category slug loops run inside their transactions but iterate on unique-check misses only.
 
 ### 15.3 Recurring Idioms (audit once, then verify consistency)
 

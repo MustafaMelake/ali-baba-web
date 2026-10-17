@@ -133,10 +133,11 @@ export async function placeOrder(
     const now = new Date();
 
     // Transaction يضمن تماسك الداتا: إمّا الأوردر بكل سطوره يتعمل، أو لا شيء.
-    // Kept deliberately SHORT for Neon: exactly two statements — one batched
-    // variant read, one nested order create — regardless of how many lines the
-    // order has (was a findUnique per line, an N+1 that held the transaction
-    // open in proportion to cart size).
+    // Kept deliberately SHORT for Neon: at most three statements — one batched
+    // variant read, one nested order create and, for a signed-in buyer, one
+    // cart delete — regardless of how many lines the order has (was a
+    // findUnique per line, an N+1 that held the transaction open in
+    // proportion to cart size).
     const newOrder = await prisma.$transaction(async (tx) => {
       // ONE read for the whole cart. The schema has already capped items at
       // CHECKOUT_MAX_ITEMS, so this `id IN (…)` list is bounded too.
@@ -202,6 +203,18 @@ export async function placeOrder(
         );
         const { finalPrice } = resolvePrice(dbVariant.price, promotions, now);
 
+        // The engine floors at 0, so a promotion that reaches a line's price
+        // would give it away. promotions.ts refuses those at save time; this
+        // catches a price edited afterwards — refuse rather than bill 0 EGP.
+        if (finalPrice <= 0) {
+          console.error(
+            `placeOrder: refused a 0 EGP line — check the promotions on variant ${dbVariant.id}`,
+          );
+          throw new OrderLineUnavailableError(
+            `${dbVariant.product.name} can't be ordered right now. Please remove it from your cart.`,
+          );
+        }
+
         // Quantity is schema-guaranteed: an integer in [1, CHECKOUT_MAX_QUANTITY].
         subtotal += finalPrice * item.quantity;
 
@@ -249,7 +262,7 @@ export async function placeOrder(
       const totalAmount = roundMoney(subtotal + deliveryFee + vat);
 
       // إنشاء الأوردر مع سطوره في عملية واحدة (nested write).
-      return tx.order.create({
+      const order = await tx.order.create({
         data: {
           userId,
           subtotal,
@@ -269,6 +282,18 @@ export async function placeOrder(
         },
         select: { id: true, orderNumber: true },
       });
+
+      // The ordered lines leave the buyer's saved cart in the SAME transaction,
+      // so a dropped connection after checkout can't hydrate them back into
+      // the cart. Only the ordered variants: a line added on another device
+      // meanwhile stays.
+      if (userId) {
+        await tx.cartItem.deleteMany({
+          where: { userId, variantId: { in: variantIds } },
+        });
+      }
+
+      return order;
     });
 
     // تحديث كاش لوحة التحكم فوراً (الإيرادات + الطلبات اللحظية) وصفحة طلبات اليوزر.

@@ -19,6 +19,9 @@ import {
   ORDER_NOTES_MAX_LENGTH,
 } from "@/lib/validators";
 
+/** localStorage key of the persisted cart — shared by every tab of the site. */
+export const CART_STORAGE_KEY = "ali-baba-cart";
+
 export interface CartItem {
   /**
    * Parent product id — kept for display, grouping, and PDP links only.
@@ -64,6 +67,14 @@ interface CartState {
    * whenever the bag empties (clearCart, or removing the last line).
    */
   orderNote: string;
+  /**
+   * The account whose saved (DB) cart these lines mirror — null for a guest
+   * cart. Persisted, so every tab sees it: localStorage is shared between
+   * tabs but each tab's in-memory store isn't, and Better Auth refetches the
+   * session when a tab regains focus. A second tab noticing the sign-in would
+   * otherwise merge the same guest cart again and double every quantity.
+   */
+  ownerId: string | null;
 
   // Drawer
   openCart: () => void;
@@ -94,25 +105,38 @@ interface CartState {
   setOrderNote: (note: string) => void;
 
   /** Local-only empty (used by checkout / the "Clear cart" button). Also drops
-   *  pending ops — the caller empties the DB side via clearDbCartAction, so
-   *  replaying stale line intents afterwards would resurrect the cart — and
-   *  the order note, which belonged to the emptied cart. */
+   *  pending ops — the DB side is emptied by clearDbCartAction ("Clear cart")
+   *  or by placeOrder's own transaction, so replaying stale line intents
+   *  afterwards would resurrect the cart — and the order note, which belonged
+   *  to the emptied cart. Keeps `ownerId`: the empty bag is still that
+   *  account's. */
   clearCart: () => void;
   /**
    * LOGOUT-only wipe. Clears the in-memory + persisted (localStorage) cart —
    * including pending ops, which belong to the signed-out user and must never
-   * replay into the next account's cart — but deliberately NEVER touches the
-   * database, so the signed-out user's saved cart survives for their next
-   * sign-in / other devices.
+   * replay into the next account's cart, and the ownership claim — but
+   * deliberately NEVER touches the database, so the signed-out user's saved
+   * cart survives for their next sign-in / other devices.
    */
   clearLocalCart: () => void;
 
   /**
-   * Guest → authenticated bridge. Pushes the current local cart to the DB
-   * (server SUMs onto any existing rows), then replaces local state with the
-   * freshly-merged, live-priced DB cart as the single source of truth.
+   * Guest → authenticated bridge for `userId`. Pushes the current local cart
+   * to the DB (server SUMs onto any existing rows), then replaces local state
+   * with the freshly-merged, live-priced DB cart as the single source of
+   * truth. A cart this account already owns (`ownerId`) is never merged again
+   * — it is hydrated instead. Callers re-read storage first
+   * (`useCartStore.persist.rehydrate()`) so a claim written by another tab
+   * counts.
    */
-  mergeAndSyncCart: () => Promise<void>;
+  mergeAndSyncCart: (userId: string) => Promise<void>;
+
+  /**
+   * Already signed in (page load, account switch): adopt `userId`'s DB cart —
+   * no quantity sum, unsynced intent still replays (see adoptDbCart) — and
+   * claim the local cart for that account.
+   */
+  hydrateFromDb: (userId: string) => Promise<void>;
 
   /**
    * Adopt a freshly-fetched DB cart as the source of truth (login hydrate /
@@ -228,6 +252,7 @@ export const useCartStore = create<CartState>()(
         isOpen: false,
         pendingOps: {},
         orderNote: "",
+        ownerId: null,
 
         openCart: () => set({ isOpen: true }),
         closeCart: () => set({ isOpen: false }),
@@ -303,15 +328,26 @@ export const useCartStore = create<CartState>()(
         clearCart: () => set({ items: [], pendingOps: {}, orderNote: "" }),
 
         clearLocalCart: () =>
-          set({ items: [], isOpen: false, pendingOps: {}, orderNote: "" }),
+          set({ items: [], isOpen: false, pendingOps: {}, orderNote: "", ownerId: null }),
 
-        mergeAndSyncCart: async () => {
+        mergeAndSyncCart: async (userId) => {
+          // Already this account's cart (merged by another tab, or before a
+          // reload) — summing it into the DB again would double every line.
+          if (get().ownerId === userId) {
+            await get().hydrateFromDb(userId);
+            return;
+          }
+
           const localLines = get()
             .items.map((i) => ({ variantId: i.variantId, quantity: i.quantity }))
             .filter((l) => l.quantity > 0);
 
           // 1) Merge the guest cart up (server sums onto existing DB rows).
           if (localLines.length > 0) {
+            // Claim first: from here on these lines are this account's, so a
+            // tab that notices the sign-in meanwhile hydrates instead of
+            // merging them a second time.
+            set({ ownerId: userId });
             const merged = await mergeCartAction(localLines);
             if (!merged.success) {
               console.error("mergeAndSyncCart: merge failed —", merged.error);
@@ -337,12 +373,17 @@ export const useCartStore = create<CartState>()(
 
           // 2) Adopt the DB cart: live prices/names/images, server truth.
           //    Goes through adoptDbCart so any pending intent still replays.
+          await get().hydrateFromDb(userId);
+        },
+
+        hydrateFromDb: async (userId) => {
           const dbCart = await getDbCartAction();
-          if (dbCart.success) {
-            get().adoptDbCart(dbCart.data);
-          } else {
-            console.error("mergeAndSyncCart: fetch failed —", dbCart.error);
+          if (!dbCart.success) {
+            console.error("cart hydrate failed —", dbCart.error);
+            return;
           }
+          get().adoptDbCart(dbCart.data);
+          set({ ownerId: userId });
         },
 
         adoptDbCart: (dbItems) => {
@@ -439,7 +480,7 @@ export const useCartStore = create<CartState>()(
       };
     },
     {
-      name: "ali-baba-cart",
+      name: CART_STORAGE_KEY,
       // SSR-safe storage. The default (`createJSONStorage(() => window.localStorage)`)
       // THROWS on the server (no `window`), which makes zustand's persist middleware
       // bail out *before* it attaches the `.persist` API to the store. The checkout
@@ -460,6 +501,7 @@ export const useCartStore = create<CartState>()(
         items: s.items,
         pendingOps: s.pendingOps,
         orderNote: s.orderNote,
+        ownerId: s.ownerId,
       }),
     },
   ),

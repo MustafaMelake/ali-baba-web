@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
+import { useDialogFocus } from "@/lib/use-dialog-focus";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, User, Phone, StickyNote, MapPin, Truck, Store } from "lucide-react";
@@ -36,6 +37,9 @@ export default function OrderDetailModal({
 
   // Portal renders client-side only (no `document` during SSR). The drawer is
   // closed on first paint, so there's nothing to hydrate-mismatch.
+  // Focus moves in on open, Tab stays inside, and returns to the opener on close.
+  const dialogRef = useDialogFocus<HTMLDivElement>(open);
+
   if (typeof document === "undefined") return null;
 
   const isDelivery = order.fulfillment === FulfillmentMethod.DELIVERY;
@@ -43,7 +47,7 @@ export default function OrderDetailModal({
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-[100]" role="dialog" aria-modal="true">
+        <div ref={dialogRef} className="fixed inset-0 z-[100]" role="dialog" aria-modal="true">
           {/* Backdrop */}
           <motion.div
             className="absolute inset-0 bg-stone-950/40 backdrop-blur-[2px]"

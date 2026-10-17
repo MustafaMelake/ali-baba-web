@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition } from "react";
+import { useDialogFocus } from "@/lib/use-dialog-focus";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Loader2, Check, ImagePlus, RefreshCw } from "lucide-react";
@@ -31,6 +32,8 @@ export default function EditCategoryModal({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  // Focus moves in on open, Tab stays inside, and returns to the opener on close.
+  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
 
   const [name, setName] = useState("");
   const [subtitle, setSubtitle] = useState("");
@@ -106,6 +109,7 @@ export default function EditCategoryModal({
 
           {/* Panel */}
           <motion.div
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-label={`Edit ${category.name}`}

@@ -93,6 +93,7 @@ Filters, search, and pagination live in the **URL** (`searchParams`), not client
 ## Motion & portals
 
 - **framer-motion idioms**: a single shared `layoutId` pill animates between active tabs (`layoutId="admin-status-pill"` / `"order-status-pill"`); destructive actions use an inline confirm-in-place control (`AnimatePresence` width/opacity), not a modal.
+- **Every modal dialog and drawer uses `useDialogFocus(open)`** (`src/lib/use-dialog-focus.ts`) on its `role="dialog" aria-modal="true"` element: focus moves in on open (an `autoFocus` field wins), Tab/Shift+Tab stay inside the topmost dialog, and focus returns to the opener on close. Each dialog still owns its Escape handler. (The search palette predates the hook and keeps its own equivalent trap.)
 - **Portals** (`createPortal(…, document.body)`) guard with a render-time check — `if (typeof document === "undefined") return null;` — **not** a `mounted` flag set in `useEffect` (that trips `react-hooks/set-state-in-effect`). Safe because these drawers start closed, so there's nothing to mismatch.
 
 ## Styling

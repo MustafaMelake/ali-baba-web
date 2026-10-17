@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition } from "react";
+import { useDialogFocus } from "@/lib/use-dialog-focus";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, Loader2, Percent, TrendingUp, TrendingDown } from "lucide-react";
@@ -24,6 +25,8 @@ export default function BulkPriceModal({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  // Focus moves in on open, Tab stays inside, and returns to the opener on close.
+  const dialogRef = useDialogFocus<HTMLDivElement>(isOpen);
   const [value, setValue] = useState("");
 
   useEffect(() => {
@@ -85,6 +88,7 @@ export default function BulkPriceModal({
           />
 
           <motion.div
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-label={`Adjust prices for ${categoryTitle}`}

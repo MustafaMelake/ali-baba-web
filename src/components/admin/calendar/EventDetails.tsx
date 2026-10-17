@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useEffectEvent, useState, useTransition } from "react";
+import { useDialogFocus } from "@/lib/use-dialog-focus";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
@@ -49,6 +50,8 @@ export default function EventDetails({
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [isDeleting, startDeleting] = useTransition();
+  // Focus moves in on open, Tab stays inside, and returns to the opener on close.
+  const dialogRef = useDialogFocus<HTMLDivElement>(true);
 
   const meta = EVENT_TYPE_META[event.type];
   const status = prepStatus(event, today);
@@ -100,6 +103,7 @@ export default function EventDetails({
       />
 
       <motion.div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="calendar-event-title"

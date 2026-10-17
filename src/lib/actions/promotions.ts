@@ -121,8 +121,9 @@ function validatePromotion(input: PromotionInput): ValidatedPromotion | { error:
   if (!Number.isFinite(value) || value <= 0) {
     return { error: "Discount value must be a positive number." };
   }
-  if (type === DiscountType.PERCENTAGE && value > 100) {
-    return { error: "A percentage discount can't exceed 100%." };
+  // 100% would make products free — and placeOrder refuses 0 EGP lines.
+  if (type === DiscountType.PERCENTAGE && value >= 100) {
+    return { error: "A percentage discount must be below 100%." };
   }
 
   const startDate = parseBoundary(input.startDate, "start");
@@ -153,6 +154,38 @@ function validatePromotion(input: PromotionInput): ValidatedPromotion | { error:
   };
 }
 
+/**
+ * A fixed-amount discount at or above a targeted price makes that product free
+ * (the engine floors at 0), so it must stay below the cheapest AVAILABLE
+ * variant the promotion reaches — directly, through its product, or through
+ * its category. Returns the admin-facing error, or null when it's safe.
+ * Prices edited after the promotion is saved are caught by placeOrder, which
+ * refuses any 0 EGP line.
+ */
+async function fixedAmountProblem(
+  promotion: Pick<ValidatedPromotion, "type" | "value" | "categoryIds" | "productIds" | "variantIds">,
+): Promise<string | null> {
+  if (promotion.type !== DiscountType.FIXED_AMOUNT) return null;
+
+  const cheapest = await prisma.productVariant.findFirst({
+    where: {
+      isAvailable: true,
+      OR: [
+        { id: { in: promotion.variantIds } },
+        { productId: { in: promotion.productIds } },
+        { product: { categoryId: { in: promotion.categoryIds } } },
+      ],
+    },
+    orderBy: { price: "asc" },
+    select: { price: true, name: true, product: { select: { name: true } } },
+  });
+  if (!cheapest) return null;
+
+  const price = cheapest.price.toNumber();
+  if (promotion.value < price) return null;
+  return `A ${promotion.value} EGP discount would make "${cheapest.product.name} — ${cheapest.name}" (${price} EGP) free. Use less than ${price} EGP.`;
+}
+
 // ── Create ───────────────────────────────────────────────────────────────────
 
 export async function createPromotion(
@@ -165,6 +198,9 @@ export async function createPromotion(
   if ("error" in parsed) return { success: false, error: parsed.error };
 
   try {
+    const tooBig = await fixedAmountProblem(parsed);
+    if (tooBig) return { success: false, error: tooBig };
+
     const created = await prisma.promotion.create({
       data: {
         name: parsed.name,
@@ -209,6 +245,9 @@ export async function updatePromotion(
   if ("error" in parsed) return { success: false, error: parsed.error };
 
   try {
+    const tooBig = await fixedAmountProblem(parsed);
+    if (tooBig) return { success: false, error: tooBig };
+
     await prisma.promotion.update({
       where: { id },
       data: {
@@ -251,6 +290,31 @@ export async function togglePromotionActive(
   if (!id) return { success: false, error: "Missing promotion id." };
 
   try {
+    // Prices may have dropped since the promotion was saved — re-check before
+    // switching a fixed-amount discount back on. Switching off is always safe.
+    if (isActive) {
+      const stored = await prisma.promotion.findUnique({
+        where: { id },
+        select: {
+          type: true,
+          value: true,
+          categories: { select: { id: true } },
+          products: { select: { id: true } },
+          variants: { select: { id: true } },
+        },
+      });
+      if (!stored) return { success: false, error: "That promotion no longer exists." };
+
+      const tooBig = await fixedAmountProblem({
+        type: stored.type,
+        value: stored.value.toNumber(),
+        categoryIds: stored.categories.map((c) => c.id),
+        productIds: stored.products.map((p) => p.id),
+        variantIds: stored.variants.map((v) => v.id),
+      });
+      if (tooBig) return { success: false, error: tooBig };
+    }
+
     await prisma.promotion.update({
       where: { id },
       data: { isActive: Boolean(isActive) },

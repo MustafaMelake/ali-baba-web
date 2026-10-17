@@ -20,6 +20,7 @@ import {
 } from "framer-motion";
 import { useCartStore } from "@/lib/cart-store";
 import { useSession, signOut } from "@/lib/auth-client";
+import { useDialogFocus } from "@/lib/use-dialog-focus";
 import CartSidebar from "@/components/CartSidebar";
 import UserMenu from "@/components/UserMenu";
 import SearchLauncher from "@/components/search/SearchLauncher";
@@ -73,17 +74,26 @@ export default function Navbar() {
     return () => mq.removeEventListener("change", onResize);
   }, []);
 
-  // Lock body scroll while mobile menu is open. Restores the previous value
-  // rather than blanking it, so closing the menu as the search palette opens
-  // can't clobber the palette's own lock.
+  // Lock body scroll while mobile menu is open, and close it on Escape like
+  // every other dialog. Restores the previous overflow rather than blanking
+  // it, so closing the menu as the search palette opens can't clobber the
+  // palette's own lock.
   useEffect(() => {
     if (!mobileOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMobileOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
+      document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
     };
   }, [mobileOpen]);
+
+  // Focus moves in on open, Tab stays inside, and returns to the toggle on close.
+  const mobileMenuRef = useDialogFocus<HTMLDivElement>(mobileOpen);
 
   return (
     <>
@@ -237,6 +247,7 @@ export default function Navbar() {
 
             {/* Panel */}
             <motion.div
+              ref={mobileMenuRef}
               id="mobile-menu"
               key="mob-panel"
               role="dialog"

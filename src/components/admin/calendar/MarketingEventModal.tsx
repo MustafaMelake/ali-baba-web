@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useEffectEvent, useState, useTransition } from "react";
+import { useDialogFocus } from "@/lib/use-dialog-focus";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { CalendarPlus, Check, Loader2, X } from "lucide-react";
@@ -56,6 +57,8 @@ export default function MarketingEventModal({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  // Focus moves in on open, Tab stays inside, and returns to the opener on close.
+  const dialogRef = useDialogFocus<HTMLDivElement>(true);
   const [form, setForm] = useState<ReminderDraft>(editor.draft);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const isEdit = editor.mode === "edit";
@@ -138,6 +141,7 @@ export default function MarketingEventModal({
       />
 
       <motion.div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={isEdit ? "Edit reminder" : "New reminder"}

@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useTransition } from "react";
+import { useDialogFocus } from "@/lib/use-dialog-focus";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { X, Minus, Plus, ArrowRight, ShoppingBag } from "lucide-react";
@@ -151,6 +152,8 @@ export default function CartSidebar() {
   } = useCartStore();
   const isLoggedIn = !!useSession().data?.user;
   const [isClearing, startClearing] = useTransition();
+  // Focus moves in on open, Tab stays inside, and returns to the opener on close.
+  const dialogRef = useDialogFocus<HTMLElement>(isOpen);
 
   const count = totalItems();
   const total = totalPrice();
@@ -214,6 +217,7 @@ export default function CartSidebar() {
           {/* ── Drawer ── */}
           <motion.aside
             key="cart-drawer"
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-label="Shopping cart"

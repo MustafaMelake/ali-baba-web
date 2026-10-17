@@ -18,6 +18,10 @@ The three helpers a surface uses:
 
 When several live promotions apply, **exactly one** applies: the one yielding the **lowest** final price (best for the customer). Promotions **never stack**. There is deliberately **no priority/exclusivity field** — don't add one. `ProductVariant.compareAtPrice` is a purely **visual** manual "was" price (a strikethrough fallback shown only when no live promotion applies); it is **never an input to the discount math**.
 
+### No promotion may make a product free
+
+The engine floors prices at 0, so a big enough promotion silently gives products away. `promotions.ts` refuses a `FIXED_AMOUNT` value at or above the cheapest **available** variant it targets (directly, via its product, or via its category) on create, update **and** re-activation, and caps `PERCENTAGE` below 100. A price edited afterwards is caught by `placeOrder`, which refuses any 0 EGP line rather than bill it.
+
 ### Single `now` per request — mandatory
 
 Capture `const now = new Date()` **once** per request and pass the *same* instant to both `livePromotionWhere(now)` (the DB filter) and `resolvePrice(…, now)` (the in-memory re-check). This is what stops a promotion expiring mid-render/mid-loop from pricing two lines of one order against different instants. Any new consumer must follow it.
@@ -33,7 +37,7 @@ Only `subtotal`, `deliveryFee`, and `totalAmount` persist. Every receipt derives
 
 ## `placeOrder` — the price-integrity boundary
 
-The most consequential write path. The client sends only `{ variantId, quantity }[]` + fulfillment + contact + a resolved `branchId` — **no price ever crosses the wire.** Server-side, inside a two-statement transaction: batched `findMany({ id: { in: … } })` with the three-level live-promotion hierarchy → in-memory loop that **throws (rolls back the whole order)** on any missing/unavailable variant or parent product → `resolvePrice` per line → the discounted `finalPrice` is **snapshotted** onto `OrderItem`. Order preconditions: shared `checkoutSchema` validation (a DELIVERY order **must** carry a non-empty `addressLine`), and a per-phone throttle (**≤ 3 simultaneously-`PENDING` orders per exact `customerPhone`** — Egypt COD fake-order protection). Never thread a client price into the payload "for convenience."
+The most consequential write path. The client sends only `{ variantId, quantity }[]` + fulfillment + contact + a resolved `branchId` — **no price ever crosses the wire.** Server-side, inside one short transaction: batched `findMany({ id: { in: … } })` with the three-level live-promotion hierarchy → in-memory loop that **throws (rolls back the whole order)** on any missing/unavailable variant or parent product, **or any line that resolves to 0 EGP** → `resolvePrice` per line → the discounted `finalPrice` is **snapshotted** onto `OrderItem` → for a signed-in buyer, the ordered lines are deleted from their saved cart **in the same transaction** (the client only empties its local copy). Order preconditions: shared `checkoutSchema` validation (a DELIVERY order **must** carry a non-empty `addressLine`), and a per-phone throttle (**≤ 3 simultaneously-`PENDING` orders per exact `customerPhone`** — Egypt COD fake-order protection). Never thread a client price into the payload "for convenience."
 
 ## Reporting — two formalized rules
 
@@ -46,7 +50,7 @@ A `Branch` is simultaneously a **pickup point**, a **delivery area**, the **per-
 
 ## Cart sync — identity & intent, never money
 
-`CartItem` persists only `{ userId, variantId, quantity }` — no price column; `getDbCartAction` re-resolves price on every read. The store keys everything on `variantId`. A **record-then-confirm `pendingOps` ledger** writes intent to `localStorage` before each logged-in sync leaves and clears it only on exact-match confirmation, so a failed sync replays on the next hydrate. `CartSyncProvider` distinguishes **hydrate** (already-logged-in on mount — plain adopt, never sum) from the **one true merge** (guest → logged-in — server SUMs, clamped). Shared limits from `@/lib/validators`: `CHECKOUT_MAX_QUANTITY = 99` (per line) and `CHECKOUT_MAX_ITEMS = 50` (distinct lines, enforced by the store, the cart actions, `checkoutSchema`, and the DB-cart cap alike).
+`CartItem` persists only `{ userId, variantId, quantity }` — no price column; `getDbCartAction` re-resolves price on every read. The store keys everything on `variantId`. A **record-then-confirm `pendingOps` ledger** writes intent to `localStorage` before each logged-in sync leaves and clears it only on exact-match confirmation, so a failed sync replays on the next hydrate. `CartSyncProvider` distinguishes **hydrate** (already-logged-in on mount — plain adopt, never sum) from the **one true merge** (guest → logged-in — server SUMs, clamped). A cart is merged into an account **at most once, across tabs**: the store persists `ownerId` (the account the local cart mirrors; null for a guest), claims it before merging, and skips the merge — hydrating instead — for a cart the account already owns; the provider re-reads storage before merging and on every other-tab write. (Tabs share localStorage but not memory, and Better Auth refetches the session on tab focus.) Shared limits from `@/lib/validators`: `CHECKOUT_MAX_QUANTITY = 99` (per line) and `CHECKOUT_MAX_ITEMS = 50` (distinct lines, enforced by the store, the cart actions, `checkoutSchema`, and the DB-cart cap alike).
 
 ## Reviews
 

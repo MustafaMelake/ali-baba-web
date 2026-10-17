@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition, type ReactNode } from "react";
+import { useDialogFocus } from "@/lib/use-dialog-focus";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -131,12 +132,15 @@ export default function AdminOrderDetailDrawer({
   }, [open, onClose]);
 
   // Portal renders client-side only; the drawer is closed on first paint.
+  // Focus moves in on open, Tab stays inside, and returns to the opener on close.
+  const dialogRef = useDialogFocus<HTMLDivElement>(open);
+
   if (typeof document === "undefined") return null;
 
   return createPortal(
     <AnimatePresence>
       {open && order && (
-        <div className="fixed inset-0 z-[100]" role="dialog" aria-modal="true">
+        <div ref={dialogRef} className="fixed inset-0 z-[100]" role="dialog" aria-modal="true">
           {/* Backdrop */}
           <motion.div
             className="absolute inset-0 bg-stone-950/40 backdrop-blur-[2px]"

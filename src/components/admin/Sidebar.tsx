@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
+import { useDialogFocus } from "@/lib/use-dialog-focus";
 import {
   LayoutDashboard,
   LineChart,
@@ -160,6 +161,9 @@ export default function Sidebar({ role }: { role: string }) {
     };
   }, [mobileNavOpen, closeMobileNav]);
 
+  // Focus moves in on open, Tab stays inside, and returns to the menu button on close.
+  const drawerRef = useDialogFocus<HTMLElement>(mobileNavOpen);
+
   return (
     <>
       {/* ---------- Desktop rail (in-flow flex column) ---------- */}
@@ -190,6 +194,10 @@ export default function Sidebar({ role }: { role: string }) {
             />
             {/* Panel */}
             <motion.aside
+              ref={drawerRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Admin navigation"
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
