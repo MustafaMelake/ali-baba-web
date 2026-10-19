@@ -1,5 +1,6 @@
+import { Suspense } from "react";
 import Link from "next/link";
-import { Boxes, ImageIcon, Package } from "lucide-react";
+import { Boxes, CircleCheck, ImageIcon, Package, SearchX } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import {
   requireDashboardAccess,
@@ -7,12 +8,18 @@ import {
   type DashboardScope,
 } from "@/lib/session";
 import { LISTABLE_PRODUCT, variantLabel } from "@/lib/catalog";
+import {
+  filterBranchStock,
+  parseStockFilter,
+  parseStockQuery,
+} from "@/lib/branch-stock-filter";
 import { cn, formatEGP } from "@/lib/utils";
 import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
 import Pill from "@/components/admin/Pill";
 import BranchStockToggle from "@/components/admin/BranchStockToggle";
 import BranchProductStockButton from "@/components/admin/BranchProductStockButton";
+import BranchStockFilters from "@/components/admin/BranchStockFilters";
 
 export const metadata = {
   title: "Branch Stock | Admin",
@@ -36,11 +43,14 @@ const HEADER = {
  * item the admin switched off globally is out everywhere, so there is nothing
  * for a branch to toggle. Every control here writes a branch override only —
  * editing or deleting the product itself stays on the ADMIN-only products page.
+ *
+ * Search (`?q=`) and the stock tabs (`?stock=all|in|out`) live in the URL and
+ * are applied server-side by `filterBranchStock` over the loaded set.
  */
 export default async function AdminInventoryPage({
   searchParams,
 }: {
-  searchParams: Promise<{ branch?: string }>;
+  searchParams: Promise<{ branch?: string; q?: string; stock?: string }>;
 }) {
   let scope: DashboardScope;
   try {
@@ -61,6 +71,8 @@ export default async function AdminInventoryPage({
   }
 
   const sp = await searchParams;
+  const query = parseStockQuery(sp.q);
+  const stock = parseStockFilter(sp.stock);
 
   // The branch picker is ADMIN-only; a manager sees exactly one branch.
   const branches = await prisma.branch.findMany({
@@ -108,6 +120,7 @@ export default async function AdminInventoryPage({
         select: {
           id: true,
           name: true,
+          sku: true,
           price: true,
           // This branch's override only — no row means in stock.
           branchAvailability: {
@@ -125,6 +138,7 @@ export default async function AdminInventoryPage({
     const variants = product.variants.map((v) => ({
       id: v.id,
       name: v.name,
+      sku: v.sku,
       price: v.price.toNumber(),
       inStock: v.branchAvailability[0]?.isAvailable !== false,
     }));
@@ -134,7 +148,18 @@ export default async function AdminInventoryPage({
       outCount: variants.filter((v) => !v.inStock).length,
     };
   });
+  // The headline pill always speaks for the whole branch; the tabs and list
+  // follow the search.
   const totalOut = rows.reduce((sum, p) => sum + p.outCount, 0);
+  const { products: visible, counts } = filterBranchStock(rows, { query, stock });
+
+  // Switching branch keeps the manager's search + tab.
+  function branchHref(id: string) {
+    const params = new URLSearchParams({ branch: id });
+    if (query) params.set("q", query);
+    if (stock !== "all") params.set("stock", stock);
+    return `/admin/inventory?${params}`;
+  }
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -152,7 +177,7 @@ export default async function AdminInventoryPage({
           {branches.map((b) => (
             <Link
               key={b.id}
-              href={`/admin/inventory?branch=${encodeURIComponent(b.id)}`}
+              href={branchHref(b.id)}
               aria-current={b.id === branchId ? "page" : undefined}
               className={cn(
                 "rounded-full px-4 py-2 text-sm font-medium transition-colors",
@@ -186,6 +211,13 @@ export default async function AdminInventoryPage({
         )}
       </div>
 
+      {rows.length > 0 && (
+        // useSearchParams() inside — keep it under a Suspense boundary.
+        <Suspense fallback={<div className="h-[6.5rem]" />}>
+          <BranchStockFilters activeStock={stock} query={query} counts={counts} />
+        </Suspense>
+      )}
+
       <div className="overflow-hidden rounded-2xl border border-stone-200/70 bg-white shadow-sm">
         {rows.length === 0 ? (
           <EmptyState
@@ -193,9 +225,29 @@ export default async function AdminInventoryPage({
             title="No live products"
             description="Products the admin publishes appear here."
           />
+        ) : visible.length === 0 ? (
+          query ? (
+            <EmptyState
+              icon={SearchX}
+              title={`No ${stock === "all" ? "" : stock === "in" ? "in-stock " : "sold-out "}items match “${query}”`}
+              description="Try a product name, size, SKU or category."
+            />
+          ) : stock === "out" ? (
+            <EmptyState
+              icon={CircleCheck}
+              title="Nothing is out of stock"
+              description={`Every live item can be ordered from ${branch.name}.`}
+            />
+          ) : (
+            <EmptyState
+              icon={Package}
+              title="Everything is out of stock"
+              description={`No live item can be ordered from ${branch.name} right now.`}
+            />
+          )
         ) : (
           <ul className="divide-y divide-stone-100">
-            {rows.map((product) => {
+            {visible.map((product) => {
               const thumb = product.images[0];
               return (
                 <li key={product.id} className="px-4 py-5 sm:px-6">
@@ -237,7 +289,9 @@ export default async function AdminInventoryPage({
                   </div>
 
                   <ul className="mt-3 space-y-2 sm:pl-14">
-                    {product.variants.map((variant) => (
+                    {/* Only the lines the search + tab selected; the
+                        whole-product button above still covers them all. */}
+                    {product.matches.map((variant) => (
                       <li
                         key={variant.id}
                         className={cn(
@@ -250,6 +304,11 @@ export default async function AdminInventoryPage({
                           <span className="ml-2 text-xs text-stone-400 tabular-nums">
                             {formatEGP(variant.price)}
                           </span>
+                          {variant.sku && (
+                            <span className="ml-2 font-mono text-[11px] text-stone-400">
+                              {variant.sku}
+                            </span>
+                          )}
                         </span>
                         <BranchStockToggle
                           branchId={branchId}
