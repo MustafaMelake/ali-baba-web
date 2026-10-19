@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { unstable_cache } from "next/cache";
+import { FaInstagram } from "react-icons/fa6";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -33,6 +34,16 @@ const getActiveFooterLinks = unstable_cache(
 );
 
 type FooterColumn = { heading: string; links: NavLink[] };
+
+// Developer credit — fixed, not admin-managed (it isn't store navigation).
+const DEVELOPER = {
+  name: "Mustafa Melake",
+  portfolio: "https://mustafamelake-portfolio.vercel.app/",
+  instagram: "https://www.instagram.com/mustafamelake/",
+} as const;
+
+/** External links open in a new tab without handing the opener to the target. */
+const EXTERNAL = { target: "_blank", rel: "noopener noreferrer" } as const;
 
 async function getFooterColumns(): Promise<FooterColumn[]> {
   try {
@@ -99,7 +110,7 @@ export default async function Footer() {
                       <li key={`${group.heading}-${link.href}`}>
                         <Link
                           href={link.href}
-                          {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+                          {...(external ? EXTERNAL : {})}
                           className="font-sans text-sm text-white/50 hover:text-white/90 transition-colors duration-200"
                         >
                           {link.label}
@@ -115,10 +126,33 @@ export default async function Footer() {
         )}
 
         {/* ─── Bottom Bar ──────────────────────────────────── */}
-        <div className="py-7">
+        <div className="py-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="font-sans text-xs text-white/25 tracking-wide">
             © {new Date().getFullYear()} Ali Baba. All rights reserved.
           </p>
+
+          {/* Developer credit — as quiet as the copyright; brightens on hover. */}
+          <div className="flex items-center gap-3 font-sans text-xs text-white/25 tracking-wide">
+            <p>
+              Designed &amp; Developed by{" "}
+              <a
+                href={DEVELOPER.portfolio}
+                {...EXTERNAL}
+                className="font-medium text-white/50 underline decoration-white/15 underline-offset-4 transition-colors duration-200 hover:text-white/90 hover:decoration-white/50"
+              >
+                {DEVELOPER.name}
+              </a>
+            </p>
+            <span aria-hidden="true" className="h-3 w-px bg-white/15" />
+            <a
+              href={DEVELOPER.instagram}
+              {...EXTERNAL}
+              aria-label={`${DEVELOPER.name} on Instagram (opens in a new tab)`}
+              className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition-colors duration-200 hover:bg-white/10 hover:text-white/90"
+            >
+              <FaInstagram className="h-3.5 w-3.5" aria-hidden="true" />
+            </a>
+          </div>
         </div>
       </div>
     </footer>
