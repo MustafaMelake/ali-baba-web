@@ -113,15 +113,15 @@ Answers "what may this identity do?". Three tiers: `USER` (customer), `MANAGER` 
 |---|---|---|---|
 | `requireAdmin()` | `src/lib/session.ts` | **throws** | Every ADMIN Server Action (directly or via `ensureAdmin` wrappers) |
 | `requireAdminPage()` | `src/lib/session.ts` | **redirects** (`/login` or `/admin`) | All 11 ADMIN-only admin pages: users, settings, reviews, promotions, categories, products (+new, +edit), menu, branches, analytics |
-| `requireDashboardAccess()` | `src/lib/session.ts` | **throws**; reads `role` + `branchId` **live from the DB**, never the token | `getDashboardStats`, `getOrders`, `updateOrderStatus` |
-| `resolveBranchScope(scope, requested?)` | `src/lib/session.ts` | throws if a MANAGER requests a foreign branch; returns `branchId \| undefined` (undefined ⇒ ADMIN unrestricted) | All order/dashboard queries |
+| `requireDashboardAccess()` | `src/lib/session.ts` | **throws**; reads `role` + `branchId` **live from the DB**, never the token | `getDashboardStats`, `getOrders`, `updateOrderStatus`, `setBranchStock`, `/admin/inventory` |
+| `resolveBranchScope(scope, requested?)` | `src/lib/session.ts` | throws if a MANAGER requests a foreign branch; returns `branchId \| undefined` (undefined ⇒ ADMIN unrestricted) | All order/dashboard queries; branch-stock reads + writes |
 | Coarse layout gate | `src/app/admin/layout.tsx` | redirect `/login` (anon) or `/` (USER); admits ADMIN ∨ MANAGER | Entire `/admin/*` surface |
 | Role mutation authority | `src/lib/actions/manage-users.ts` → `updateUserRole` | result envelope | `UserRoleEditor` on `/admin/users` |
 | Role-aware nav (cosmetic) | `src/components/admin/Sidebar.tsx` (receives `role` prop) | hides links only — **pages enforce** | — |
 
 ### 2.4 Step-by-Step Data Flow
 1. `/admin/*` request → layout reads `getServerSession()`; anon → `/login`; role ∉ {ADMIN, MANAGER} → `/`.
-2. ADMIN-only pages call `requireAdminPage()`: anon → `/login`; MANAGER → bounced back to `/admin` (their permitted dashboard). The two MANAGER-accessible pages — `/admin` (dashboard) and `/admin/orders` — instead rely on their loaders' `requireDashboardAccess()`.
+2. ADMIN-only pages call `requireAdminPage()`: anon → `/login`; MANAGER → bounced back to `/admin` (their permitted dashboard). The three MANAGER-accessible pages — `/admin` (dashboard), `/admin/orders` and `/admin/inventory` (branch stock) — instead rely on `requireDashboardAccess()` (in their loaders, or in the page body for `/admin/inventory`).
 3. Dashboard/orders loaders call `requireDashboardAccess()` → fresh `prisma.user.findUnique({ select: { role, branchId } })`. A demoted or re-assigned manager loses access on their **next request**, not at the 7-day token refresh. MANAGER with `branchId = null` → hard throw (both consuming pages render an "ask an administrator to assign you a branch" empty state).
 4. `resolveBranchScope` collapses (caller scope × optional requested branch) into a single Prisma filter value. Every downstream query spreads `branchWhere = branchId ? { branchId } : {}` at the **top level** of `where` — the scoping is structural, not per-callsite optional.
 5. Row-level check: `updateOrderStatus` additionally verifies the target order's `branchId === scope.branchId` for managers (unassigned orders are ADMIN-only territory).
@@ -293,8 +293,8 @@ Converts a cart into an immutable, **server-priced** `Order` with per-line snaps
 5. **Branch re-validation:** client-sent `branchId` is only honored if `findFirst({ id, isActive: true })` — stale/forged/inactive ids degrade to `null` (order surfaces to super-admin) rather than failing the order. The row's `deliveryFee` is captured here as the authoritative fee.
 6. **Settings read:** `getStoreSettings()` fresh per order — the preview's numbers are never trusted.
 7. **The transaction (deliberately at most three statements, Neon-friendly):**
-   a. One batched `productVariant.findMany({ id IN deduped ids })` carrying the full three-level live-promotion hierarchy + product availability.
-   b. Pure in-memory loop: missing/unavailable variant (or parent product), or a line that resolves to 0 EGP ⇒ **throw** — the whole order rolls back, partial orders are impossible. Per line: `gatherPromotions` → `resolvePrice(variant.price, …, now)` (one `now` for the whole order) → accumulate subtotal → push snapshot `{ variantId, productName, variantName, unitPrice: finalPrice, quantity }`.
+   a. One batched `productVariant.findMany({ id IN deduped ids })` carrying the full three-level live-promotion hierarchy + product availability + the fulfilling branch's `BranchVariantAvailability` row (`branchId IN [id]`, or `IN []` for a branchless order — so branch stock adds no statement).
+   b. Pure in-memory loop: missing/unavailable variant (or parent product), a line switched off at the fulfilling branch (`isAvailableAtBranch` → "X (Size) is currently out of stock at the Y branch."), or a line that resolves to 0 EGP ⇒ **throw** — the whole order rolls back, partial orders are impossible. Per line: `gatherPromotions` → `resolvePrice(variant.price, …, now)` (one `now` for the whole order) → accumulate subtotal → push snapshot `{ variantId, productName, variantName, unitPrice: finalPrice, quantity }`.
    c. **Money hygiene** *(commit `a3421a5`)*: `subtotal = roundMoney(subtotal)`; `deliveryFee` = DELIVERY ? `roundMoney(branch.fee ?? settings.defaultDeliveryFee)` : 0; `vat = isVatEnabled ? roundMoney(subtotal × vatRate) : 0`; `totalAmount = roundMoney(subtotal + deliveryFee + vat)`. Four rounding points; nothing off-grid reaches the `Decimal` money columns.
    d. Nested `order.create` with `items.create[]`, `status: PENDING`, resolved `branchId`.
    e. Signed-in buyer only: `cartItem.deleteMany({ userId, variantId IN ordered ids })` — the ordered lines leave the saved cart atomically with the order (a line added on another device meanwhile stays).
@@ -324,19 +324,22 @@ Physical locations wearing **four hats simultaneously**: pickup point, delivery 
 
 ### 7.2 Database Schema & Integrity
 - **`Branch`** — `name @unique`, `slug @unique`, `address?`, `phone?`, `isActive @default(true)`, `deliveryFee Decimal @default(35)`.
-- Referenced by: `User.branchId` (**`Restrict`** — staffed branches cannot be deleted), `Order.branchId` (**`SetNull`** — order history survives deletion, rows become "unassigned" = super-admin-only visibility).
+- Referenced by: `User.branchId` (**`Restrict`** — staffed branches cannot be deleted), `Order.branchId` (**`SetNull`** — order history survives deletion, rows become "unassigned" = super-admin-only visibility), `BranchVariantAvailability.branchId` (**`Cascade`** — stock overrides die with the branch).
+- **`BranchVariantAvailability`** — a fifth hat: per-branch stock. `{ branchId, variantId, isAvailable @default(true) }`, `@@unique([branchId, variantId])`, `@@index([variantId])`; `variantId` → `ProductVariant` **`Cascade`** (only never-ordered variants can be hard-deleted anyway). **A missing row means available** — the rule is `product.isAvailable && variant.isAvailable && row?.isAvailable !== false`: the ADMIN's global flags stay the master kill-switch; a branch can only take a variant away locally, never resurrect one. No price; never read by the Discount Engine.
 
 ### 7.3 File Boundaries
 - **Public read:** `src/lib/actions/branches.ts` → `getActiveBranches()` (no auth; `isActive`, name-asc; `{ id, slug, name, deliveryFee }` — fee is display-only, re-read at billing).
 - **Admin CRUD:** `src/lib/actions/manage-branches.ts` (`createBranch`, `updateBranch`, `deleteBranch`; `validateBranchInput`: name ≥ 2, slug slugified to non-empty, fee finite ≥ 0 rounded 2-dp with default 35, zero = free delivery; P2002 `meta.target` sniffing for name-vs-slug messages).
+- **Branch stock:** `src/lib/catalog.ts` (`variantAvailableAtBranch` / `listableProductAtBranch` Prisma `where` helpers, in-memory `isAvailableAtBranch`, shared `branchOutOfStockMessage`); `src/lib/actions/branch-stock.ts` → `setBranchStock` (ADMIN any branch / MANAGER own branch via `requireDashboardAccess` + `resolveBranchScope`; `branchStockSchema`, ≤ 50 variants; two set-based statements — `createMany skipDuplicates` then `updateMany`; `P2003` → "no longer exists"; revalidates `/admin/inventory` only) and the **public** `getBranchStockIssues` (checkout preview; an inactive branch flags nothing, mirroring placeOrder); `src/app/admin/inventory/page.tsx` (`force-dynamic`, active catalog only, ADMIN `?branch=` picker, MANAGER pinned) + `BranchStockToggle` / `BranchProductStockButton` islands. The storefront catalog stays **branch-agnostic** (ISR, no branch context while browsing) — branch stock is enforced at the checkout preview and in `placeOrder`.
 - **UI:** `src/app/admin/branches/page.tsx`, `BranchModal`, `CreateBranchButton`, `BranchEditButton`, `DeleteBranchButton`; checkout's `BranchSelect` + the synthetic `OTHER_AREAS_OPTION` (`id: "__other__"` sentinel → `branchId: null`); homepage `BranchSelector.tsx` (**no longer a `Branch` surface** — now driven by the separate, display-only `Location` model via `getStorefrontLocations`); the per-branch fee sheet inside `updateDeliveryFees` (§8).
 
 ### 7.4 Step-by-Step Data Flow
 1. Checkout mounts → `getActiveBranches()` fills both selectors (pickup list; delivery-area list + "Other Areas"). Arabic sublabels are a client-side cosmetic map keyed by slug (`menouf`, `beba`) — not stored.
 2. Selection → payload `branchId` (or `null`); pickup also carries the human `pickupBranch` name label.
-3. `placeOrder` re-validates (§6.4 step 5): real + active, else null; captures the authoritative fee.
-4. Fee resolution: routed DELIVERY → branch fee; branchless DELIVERY → `StoreSettings.defaultDeliveryFee`; PICKUP → 0.
-5. Delete: pre-count assigned users → refuse with actionable message; `P2003` catch covers the assignment race; success revalidates `/admin/branches`, `/admin`, `/admin/orders`.
+3. Checkout re-asks `getBranchStockIssues(variantIds, branchId)` whenever the branch or the cart lines change, flags each switched-off line (with a one-click Remove) and disables Place Order until it's resolved.
+4. `placeOrder` re-validates (§6.4 step 5): real + active, else null; captures the authoritative fee and enforces branch stock inside the transaction (§6.4 step 7b).
+5. Fee resolution: routed DELIVERY → branch fee; branchless DELIVERY → `StoreSettings.defaultDeliveryFee`; PICKUP → 0.
+6. Delete: pre-count assigned users → refuse with actionable message; `P2003` catch covers the assignment race; success revalidates `/admin/branches`, `/admin`, `/admin/orders`.
 
 ### 7.5 Intersections & Blast Radius
 - **RBAC (§2):** the branch id *is* the manager scope — deleting/deactivating a branch strands its manager (dashboard renders the "no branch" empty state after `SetNull`? No — `User.branchId` is `Restrict`, so the manager must be reassigned first; the guard is structural).

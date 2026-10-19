@@ -302,6 +302,35 @@ export type MarketingEventInput = z.input<typeof marketingEventSchema>;
 /** The normalized reminder the actions write. */
 export type MarketingEventData = z.output<typeof marketingEventSchema>;
 
+// ─── Branch stock ────────────────────────────────────────────────────────────
+
+/**
+ * Ceiling on variants flipped in one branch-stock write — a whole product's
+ * variants at once ("Mark product out of stock"). Keeps the write's
+ * `variantId IN (…)` lists bounded against a forged payload.
+ */
+export const BRANCH_STOCK_MAX_VARIANTS = 50;
+
+/**
+ * One branch-stock toggle, shared by the inventory island and
+ * `setBranchStock`. `branchId` is what the caller ASKS for — the action still
+ * resolves it through `resolveBranchScope`, so a MANAGER naming another branch
+ * is refused there, not trusted here. Omitted → the caller's own branch.
+ */
+export const branchStockSchema = z.object({
+  branchId: z.string().trim().min(1).optional(),
+  variantIds: z
+    .array(z.string().trim().min(1, "Missing variant."))
+    .min(1, "Pick at least one item.")
+    .max(BRANCH_STOCK_MAX_VARIANTS, "Too many items in one change.")
+    .refine((ids) => new Set(ids).size === ids.length, {
+      error: "Each item may appear only once.",
+    }),
+  isAvailable: z.boolean({ error: "Choose in stock or out of stock." }),
+});
+
+export type BranchStockInput = z.infer<typeof branchStockSchema>;
+
 /**
  * Flattens a ZodError into a `{ "path.to.field": "message" }` map. Stable across
  * Zod minor versions (reads `.issues` directly) and handles nested paths like

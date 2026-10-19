@@ -88,6 +88,8 @@ function variantRow(o: {
   productName?: string;
   variantAvailable?: boolean;
   productAvailable?: boolean;
+  /** The fulfilling branch's override row, if any (omitted → no row → in stock). */
+  branchAvailable?: boolean;
   variantPromos?: PromotionLike[];
   productPromos?: PromotionLike[];
   categoryPromos?: PromotionLike[];
@@ -97,6 +99,8 @@ function variantRow(o: {
     name: o.name ?? "Large",
     price: decimalLike(o.price),
     isAvailable: o.variantAvailable ?? true,
+    branchAvailability:
+      o.branchAvailable === undefined ? [] : [{ isAvailable: o.branchAvailable }],
     promotions: o.variantPromos ?? [],
     product: {
       name: o.productName ?? "Chocolate Gateau",
@@ -398,7 +402,7 @@ describe("placeOrder — delivery fee resolution", () => {
     // Only ever resolves a REAL, ACTIVE branch.
     expect(mockPrisma.branch.findFirst).toHaveBeenCalledWith({
       where: { id: "b1", isActive: true },
-      select: { id: true, deliveryFee: true },
+      select: { id: true, name: true, deliveryFee: true },
     });
   });
 
@@ -427,7 +431,7 @@ describe("placeOrder — delivery fee resolution", () => {
     expect(data.branchId).toBeNull(); // surfaces to the Super Admin
     expect(mockPrisma.branch.findFirst).toHaveBeenCalledWith({
       where: { id: "b-stale", isActive: true },
-      select: { id: true, deliveryFee: true },
+      select: { id: true, name: true, deliveryFee: true },
     });
   });
 
@@ -829,5 +833,104 @@ describe("placeOrder — one line per variant", () => {
     );
 
     expect(res.success).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Branch stock — a manager's branch-level "out of stock" under the global flags
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("placeOrder — branch-level stock", () => {
+  const MENOUF = { id: "branch_menouf", name: "Menouf", deliveryFee: decimalLike(35) };
+
+  beforeEach(() => {
+    mockPrisma.branch.findFirst.mockResolvedValue(MENOUF as never);
+  });
+
+  it("refuses a line switched off at the fulfilling branch, naming the item and branch — and writes nothing", async () => {
+    stubVariants([
+      variantRow({ id: "v1", price: 100 }),
+      variantRow({ id: "v2", price: 150, name: "Small", productName: "Kunafa", branchAvailable: false }),
+    ]);
+
+    const res = await placeOrder(
+      payload({
+        branchId: MENOUF.id,
+        items: [
+          { variantId: "v1", quantity: 1 },
+          { variantId: "v2", quantity: 1 },
+        ],
+      }),
+    );
+
+    expect(res).toEqual({
+      success: false,
+      error: "Kunafa (Small) is currently out of stock at the Menouf branch.",
+    });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled(); // the whole order rolls back
+    expect(mockPrisma.cartItem.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("reads the override inside the SAME batched variant query, filtered to the fulfilling branch", async () => {
+    await placeOrder(payload({ branchId: MENOUF.id }));
+
+    expect(mockPrisma.productVariant.findMany).toHaveBeenCalledTimes(1);
+    const args = mockPrisma.productVariant.findMany.mock.calls[0][0] as any;
+    expect(args.include.branchAvailability).toEqual({
+      where: { branchId: { in: [MENOUF.id] } },
+      select: { isAvailable: true },
+    });
+  });
+
+  it("orders normally when the branch row says available, or there is no row at all", async () => {
+    stubVariants([
+      variantRow({ id: "v1", price: 100, branchAvailable: true }),
+      variantRow({ id: "v2", price: 150 }), // no override row → in stock
+    ]);
+
+    const res = await placeOrder(
+      payload({
+        branchId: MENOUF.id,
+        items: [
+          { variantId: "v1", quantity: 1 },
+          { variantId: "v2", quantity: 1 },
+        ],
+      }),
+    );
+
+    expect(res.success).toBe(true);
+    expect(persistedOrder().branchId).toBe(MENOUF.id);
+  });
+
+  it("a branch override can't resurrect a variant the admin switched off globally", async () => {
+    stubVariants([variantRow({ id: "v1", price: 100, variantAvailable: false, branchAvailable: true })]);
+
+    const res = await placeOrder(payload({ branchId: MENOUF.id }));
+
+    expect(res).toEqual({ success: false, error: "Chocolate Gateau is no longer available." });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("a branchless order ('Other Areas') matches no override and is judged on the global flags alone", async () => {
+    mockPrisma.branch.findFirst.mockResolvedValue(null);
+
+    const res = await placeOrder(
+      payload({ fulfillment: FulfillmentMethod.DELIVERY, addressLine: "Somewhere far", branchId: null }),
+    );
+
+    expect(res.success).toBe(true);
+    const args = mockPrisma.productVariant.findMany.mock.calls[0][0] as any;
+    expect(args.include.branchAvailability.where).toEqual({ branchId: { in: [] } });
+  });
+
+  it("an inactive / unknown branch falls back to unassigned — its overrides don't apply", async () => {
+    mockPrisma.branch.findFirst.mockResolvedValue(null); // went inactive mid-checkout
+    // Even if a stale row came back, an unassigned order has no branch to be out at.
+    stubVariants([variantRow({ id: "v1", price: 100, branchAvailable: false })]);
+
+    const res = await placeOrder(payload({ branchId: "branch_closed" }));
+
+    expect(res.success).toBe(true);
+    expect(persistedOrder().branchId).toBeNull();
   });
 });

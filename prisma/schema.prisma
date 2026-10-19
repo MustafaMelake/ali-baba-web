@@ -171,6 +171,9 @@ model Branch {
   /// Orders fulfilled by this branch (see Order.branchId).
   orders Order[]
 
+  /// This branch's stock overrides (see BranchVariantAvailability).
+  variantAvailability BranchVariantAvailability[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -259,6 +262,9 @@ model ProductVariant {
   cartItems  CartItem[]
   orderItems OrderItem[]
 
+  /// Per-branch stock overrides — no row for a branch means "in stock there".
+  branchAvailability BranchVariantAvailability[]
+
   /// Promotions targeting this specific variant (Discount Engine).
   promotions Promotion[]
 
@@ -266,6 +272,39 @@ model ProductVariant {
   updatedAt DateTime @updatedAt
 
   @@index([productId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Branch stock (manager-controlled)
+//
+// A branch-local "out of stock" switch layered UNDER the global flags. The
+// ADMIN's Product.isAvailable / ProductVariant.isAvailable stay the master
+// kill-switch; this row can only take a variant away at ONE branch, never put
+// back one the admin switched off. A variant is orderable at branch X iff
+//
+//   product.isAvailable && variant.isAvailable && row(X)?.isAvailable !== false
+//
+// A missing row means available, so a new branch or a new variant needs no
+// seeding. Holds no price and is never read by the Discount Engine.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BranchVariantAvailability {
+  id          String         @id @default(cuid())
+  branchId    String
+  branch      Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  variantId   String
+  // Cascade: only a never-ordered variant can be hard-deleted (OrderItem's
+  // Restrict guards the rest), and its overrides mean nothing without it.
+  variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  isAvailable Boolean        @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One switch per branch per variant — the upsert key for the toggle; its
+  // branchId-leading index also serves the inventory page's per-branch read.
+  @@unique([branchId, variantId])
+  @@index([variantId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

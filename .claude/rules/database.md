@@ -36,6 +36,7 @@ These `onDelete` policies *are* the data-safety model. **Do not weaken them** �
 | `CartItem → User` / `→ ProductVariant` | Cascade | no orphan cart lines |
 | `WishlistItem → User` / `→ Product` | Cascade | — |
 | `MenuItem → MenuCategory` | Cascade | café items die with their category |
+| `BranchVariantAvailability → Branch` / `→ ProductVariant` | Cascade | per-branch stock overrides die with either (a missing row means "available") |
 
 **Ordered variants are archived, not deleted.** When an edit removes a variant that has shipped, `updateProduct` catches the `P2003` **after** the transaction commits and archives it (`isAvailable: false`, `sku: null` to free the SKU) instead of deleting — reporting `archivedCount` to the UI. This cleanup runs post-commit deliberately: a `P2003` must never roll back an otherwise-valid product update.
 

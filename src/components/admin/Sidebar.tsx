@@ -10,6 +10,7 @@ import {
   LineChart,
   ShoppingBag,
   Package,
+  Boxes,
   Tags,
   BadgePercent,
   CalendarDays,
@@ -42,6 +43,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/admin/analytics", label: "Analytics", icon: LineChart },
   { href: "/admin/orders", label: "Orders", icon: ShoppingBag },
   { href: "/admin/products", label: "Products", icon: Package },
+  { href: "/admin/inventory", label: "Branch Stock", icon: Boxes },
   { href: "/admin/categories", label: "Categories", icon: Tags },
   { href: "/admin/promotions", label: "Promotions", icon: BadgePercent },
   { href: "/admin/calendar", label: "Calendar", icon: CalendarDays },
@@ -82,7 +84,7 @@ function Brand() {
 }
 
 /** Routes a MANAGER may see — everything else is ADMIN-only. */
-const MANAGER_HREFS = new Set(["/admin", "/admin/orders"]);
+const MANAGER_HREFS = new Set(["/admin", "/admin/orders", "/admin/inventory"]);
 
 function NavLinks({
   role,
@@ -92,7 +94,7 @@ function NavLinks({
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  // Managers are scoped to their branch's dashboard + orders; admins see all.
+  // Managers are scoped to their branch's dashboard, orders + stock; admins see all.
   const items =
     role === "ADMIN"
       ? NAV_ITEMS

@@ -15,6 +15,7 @@ import { getStoreSettings } from "@/lib/store-settings";
 import { prismaErrorCode } from "@/lib/action-utils";
 import { checkoutSchema } from "@/lib/validators";
 import { orderTotals } from "@/lib/cart-summary";
+import { branchOutOfStockMessage, isAvailableAtBranch } from "@/lib/catalog";
 
 // التسعير الرسمي بيتقري من قاعدة البيانات وقت الطلب (مش ثوابت في الكود):
 // رسوم التوصيل من الـ Branch المختار (أو defaultDeliveryFee لـ "مناطق أخرى")،
@@ -110,16 +111,19 @@ export async function placeOrder(
     // choice or the delivery auto-route). A stale / invalid / inactive id falls
     // back to null so the order never fails — it just surfaces to the Super Admin.
     // The branch's own deliveryFee is captured here too: it's the authoritative
-    // fee for DELIVERY orders routed to this branch.
-    let branch: { id: string; deliveryFee: number } | null = null;
+    // fee for DELIVERY orders routed to this branch — and its name, for the
+    // branch stock-out message below.
+    let branch: { id: string; name: string; deliveryFee: number } | null = null;
     if (data.branchId) {
       const row = await prisma.branch.findFirst({
         where: { id: data.branchId, isActive: true },
-        select: { id: true, deliveryFee: true },
+        select: { id: true, name: true, deliveryFee: true },
       });
       // deliveryFee is a Decimal column — normalize to a number so the rounding
       // + summation below stay plain JS arithmetic.
-      if (row) branch = { id: row.id, deliveryFee: row.deliveryFee.toNumber() };
+      if (row) {
+        branch = { id: row.id, name: row.name, deliveryFee: row.deliveryFee.toNumber() };
+      }
     }
     const branchId = branch?.id ?? null;
 
@@ -145,6 +149,14 @@ export async function placeOrder(
       const dbVariants = await tx.productVariant.findMany({
         where: { id: { in: variantIds } },
         include: {
+          // The fulfilling branch's stock override, if any — rides along in
+          // the same read, so branch stock adds no statement to the
+          // transaction. A branchless order ("Other Areas") matches nothing
+          // (`in: []`) and is judged on the global flags alone.
+          branchAvailability: {
+            where: { branchId: { in: branchId ? [branchId] : [] } },
+            select: { isAvailable: true },
+          },
           // Promotions that target the variant itself…
           promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
           product: {
@@ -190,6 +202,22 @@ export async function placeOrder(
         ) {
           throw new OrderLineUnavailableError(
             `${dbVariant?.product.name ?? "An item in your cart"} is no longer available.`,
+          );
+        }
+
+        // Globally live, but switched off at the fulfilling branch by its
+        // manager — same rollback, with a message that says WHERE, so the
+        // customer knows another branch (or "Other Areas") may still have it.
+        if (
+          branch &&
+          !isAvailableAtBranch({
+            productAvailable: dbVariant.product.isAvailable,
+            variantAvailable: dbVariant.isAvailable,
+            branchAvailable: dbVariant.branchAvailability[0]?.isAvailable,
+          })
+        ) {
+          throw new OrderLineUnavailableError(
+            branchOutOfStockMessage(dbVariant.product.name, dbVariant.name, branch.name),
           );
         }
 

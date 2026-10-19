@@ -19,6 +19,7 @@ import { useCartStore, type CartItem } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { placeOrder } from "@/lib/actions/orders";
 import { getActiveBranches } from "@/lib/actions/branches";
+import { getBranchStockIssues, type BranchStockIssue } from "@/lib/actions/branch-stock";
 import { getPublicPricingSettings } from "@/lib/actions/store-settings";
 import type { PricingSettings } from "@/lib/store-settings";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
@@ -252,6 +253,8 @@ function OrderSummary({
   mode,
   deliveryFee,
   pricing,
+  stockIssues,
+  onRemoveItem,
   loading,
   onSubmit,
   onRetryPricing,
@@ -259,6 +262,9 @@ function OrderSummary({
 }: {
   items: CheckoutItem[];
   mode: Mode;
+  /** Lines switched off at the selected branch — the order can't go until they're resolved. */
+  stockIssues: BranchStockIssue[];
+  onRemoveItem: (variantId: string) => void;
   /** Resolved fee for the current selection (0 for pickup) — display only; null until pricing loads. */
   deliveryFee: number | null;
   /** The store's live VAT + delivery settings — null when they couldn't be loaded. */
@@ -274,6 +280,7 @@ function OrderSummary({
   // order can't be placed until they load.
   const totals = pricing && deliveryFee !== null ? orderTotals(items, pricing, deliveryFee) : null;
   const total = totals?.total ?? null;
+  const outOfStock = new Set(stockIssues.map((issue) => issue.variantId));
 
   const rows: { label: string; value: number; free?: boolean }[] = [
     { label: "Subtotal", value: totals?.subtotal ?? subtotalOf(items) },
@@ -318,9 +325,22 @@ function OrderSummary({
               <p className="font-sans text-sm font-medium text-stone-900 truncate">
                 {item.name}
               </p>
-              <p className="font-sans text-xs text-stone-400">
-                {item.category}
-              </p>
+              {outOfStock.has(item.variantId) ? (
+                <p className="flex items-center gap-2 font-sans text-xs text-amber-700">
+                  Out of stock at this branch
+                  <button
+                    type="button"
+                    onClick={() => onRemoveItem(item.variantId)}
+                    className="font-semibold underline underline-offset-2 hover:text-amber-900"
+                  >
+                    Remove
+                  </button>
+                </p>
+              ) : (
+                <p className="font-sans text-xs text-stone-400">
+                  {item.category}
+                </p>
+              )}
             </div>
             <span className="shrink-0 font-sans text-sm font-semibold text-stone-900 tabular-nums">
               {formatMoney(roundMoney(item.price * item.quantity))}
@@ -387,11 +407,32 @@ function OrderSummary({
         )}
       </div>
 
+      {/* Branch stock-outs — the exact refusal placeOrder would return. */}
+      {stockIssues.length > 0 && (
+        <div
+          role="alert"
+          className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+        >
+          <p className="flex items-start gap-2 font-medium">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            Some items can&apos;t be ordered from this branch.
+          </p>
+          <ul className="mt-2 space-y-1 pl-6 text-xs leading-relaxed text-amber-800">
+            {stockIssues.map((issue) => (
+              <li key={issue.variantId}>{issue.message}</li>
+            ))}
+          </ul>
+          <p className="mt-2 pl-6 text-xs text-amber-800">
+            Remove them, or choose another branch.
+          </p>
+        </div>
+      )}
+
       {/* Place Order CTA */}
       <button
         type="button"
         onClick={onSubmit}
-        disabled={loading || items.length === 0 || total === null}
+        disabled={loading || items.length === 0 || total === null || stockIssues.length > 0}
         className="mt-7 relative w-full overflow-hidden rounded-full bg-stone-900 py-4 font-sans text-sm font-semibold uppercase tracking-widest text-white shadow-[0_4px_24px_rgba(0,0,0,0.22)] hover:bg-stone-700 active:scale-[0.99] transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-50"
       >
         <AnimatePresence mode="wait" initial={false}>
@@ -471,6 +512,7 @@ function EmptyCart() {
 export default function CheckoutPage() {
   const cartItems = useCartStore((s) => s.items);
   const clearCart = useCartStore((s) => s.clearCart);
+  const removeItem = useCartStore((s) => s.removeItem);
   const refreshPrices = useCartStore((s) => s.refreshPrices);
   const { data: sessionData, isPending: sessionPending } = useSession();
   const isLoggedIn = !!sessionData?.user;
@@ -613,6 +655,54 @@ export default function CheckoutPage() {
     };
   }, [needsGuestReprice, guestRepriceDone, refreshPrices]);
 
+  // Resolve the fulfilling branch DIRECTLY from the user's selection:
+  //   pickup   → the branch they chose.
+  //   delivery → the area-branch they chose, or null for "Other Areas".
+  // A null result leaves the order unassigned → it surfaces to the Super Admin.
+  // Shared by the stock preview below and the payload handleSubmit sends.
+  const pickupSelection =
+    mode === "pickup" ? branches.find((b) => b.id === branchId) : undefined;
+  const resolvedBranchId: string | null =
+    mode === "pickup"
+      ? pickupSelection?.id ?? null
+      : deliveryAreaId === OTHER_AREAS_OPTION.id
+        ? null
+        : deliveryAreaId || null;
+
+  // ── Branch stock preview ───────────────────────────────────────────────────
+  // A branch manager can switch items off at their branch, so the same cart
+  // may be orderable from one branch and not another. Re-check whenever the
+  // branch or the set of lines changes, and show placeOrder's own refusal
+  // message before the customer submits. Results are tagged with the
+  // branch + lines they answer, so a stale reply is simply never shown — no
+  // reset needed when the selection moves. On a failed check nothing is
+  // flagged: placeOrder still enforces stock authoritatively.
+  const stockLines = cartItems.map((i) => i.variantId).join(",");
+  const stockKey = resolvedBranchId && stockLines ? `${resolvedBranchId}|${stockLines}` : null;
+  const [stockCheck, setStockCheck] = useState<{
+    key: string;
+    issues: BranchStockIssue[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!resolvedBranchId || !stockLines) return;
+
+    let alive = true;
+    const key = `${resolvedBranchId}|${stockLines}`;
+    getBranchStockIssues(stockLines.split(","), resolvedBranchId)
+      .then((res) => {
+        if (alive && res.success) setStockCheck({ key, issues: res.issues });
+      })
+      .catch(() => {
+        // Leave the preview unflagged — submission re-validates everything.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [resolvedBranchId, stockLines]);
+
+  const stockIssues = stockKey && stockCheck?.key === stockKey ? stockCheck.issues : [];
+
   function retryPricing() {
     startRetryPricing(async () => {
       try {
@@ -628,25 +718,13 @@ export default function CheckoutPage() {
   }
 
   function handleSubmit() {
-    // No live pricing → no honest total to confirm against.
-    if (isPending || placed || !pricing) return;
+    // No live pricing → no honest total to confirm against. A known branch
+    // stock-out would only bounce off placeOrder, so it blocks here too.
+    if (isPending || placed || !pricing || stockIssues.length > 0) return;
 
     const addressLine = [address.trim(), apartment.trim()]
       .filter(Boolean)
       .join(", ");
-
-    // Resolve the fulfilling branch DIRECTLY from the user's selection:
-    //   pickup   → the branch they chose.
-    //   delivery → the area-branch they chose, or null for "Other Areas".
-    // A null result leaves the order unassigned → it surfaces to the Super Admin.
-    const pickupSelection =
-      mode === "pickup" ? branches.find((b) => b.id === branchId) : undefined;
-    const resolvedBranchId: string | null =
-      mode === "pickup"
-        ? pickupSelection?.id ?? null
-        : deliveryAreaId === OTHER_AREAS_OPTION.id
-          ? null
-          : deliveryAreaId || null;
 
     // Send only variantId + quantity — every price is re-resolved server-side.
     const payload = {
@@ -989,6 +1067,8 @@ export default function CheckoutPage() {
                   mode={mode}
                   deliveryFee={previewDeliveryFee}
                   pricing={pricing}
+                  stockIssues={stockIssues}
+                  onRemoveItem={(variantId) => removeItem(variantId, isLoggedIn)}
                   loading={isPending}
                   onSubmit={handleSubmit}
                   onRetryPricing={retryPricing}
@@ -1006,6 +1086,8 @@ export default function CheckoutPage() {
                 mode={mode}
                 deliveryFee={previewDeliveryFee}
                 pricing={pricing}
+                stockIssues={stockIssues}
+                onRemoveItem={(variantId) => removeItem(variantId, isLoggedIn)}
                 loading={isPending}
                 onSubmit={handleSubmit}
                 onRetryPricing={retryPricing}
