@@ -23,6 +23,7 @@ import {
 import { OrderStatus } from "@/generated/prisma/enums";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatDate, formatDateTime } from "@/lib/utils";
+import { phoneSearchDigits } from "@/lib/validators";
 import { storeDayKey, storeDayParts, storeMidnight } from "@/lib/timezone";
 import type { AdminOrderView } from "@/components/admin/order-types";
 import type { TabValue } from "@/components/admin/AdminOrderFilters";
@@ -272,11 +273,15 @@ export async function getOrders(
         ).map((row) => row.id)
       : [];
 
+  // Phones are stored canonical ("+201001234567"); match on their national
+  // digits so "0100 123", "+20100…" and Arabic-Indic digits all find them.
+  const phoneDigits = phoneSearchDigits(q);
+
   const searchWhere: Prisma.OrderWhereInput = q
     ? {
         OR: [
           { customerName: { contains: q, mode: "insensitive" } },
-          { customerPhone: { contains: q } },
+          { customerPhone: { contains: phoneDigits ?? q } },
           ...(numericOrderIds.length ? [{ id: { in: numericOrderIds } }] : []),
         ],
       }

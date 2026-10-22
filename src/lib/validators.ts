@@ -217,6 +217,56 @@ export const checkoutItemSchema = z.object({
  * in `superRefine` with the issue attached to `addressLine` — the form
  * surfaces it inline on that exact input (path → `addressLine`).
  */
+// ─── Phone numbers ───────────────────────────────────────────────────────────
+
+/** Egyptian mobile operators' national prefixes: 010, 011, 012, 015. */
+const EGYPT_MOBILE_NATIONAL = /^1[0125]\d{8}$/;
+
+export const PHONE_ERROR = "Enter an Egyptian mobile number, e.g. 010 1234 5678.";
+
+/**
+ * THE phone normalizer — every stored customer phone is canonical E.164
+ * ("+201001234567"), so the per-phone checkout throttle, admin search and the
+ * wa.me links see one customer as one phone however it was typed.
+ *
+ * Accepts the national form (01…), the country-code forms (201…, +201…,
+ * 00201…), separators (spaces, dashes, dots, parentheses) and Arabic-Indic /
+ * Eastern Arabic-Indic digits. Egyptian MOBILES only — the store calls back on
+ * WhatsApp. Returns null for anything else.
+ *
+ * Mirrored in SQL by the 20261023000000_normalize_order_phone migration — keep
+ * the two in step.
+ */
+export function normalizeEgyptMobile(raw: string): string | null {
+  const ascii = (raw ?? "")
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/[\s\-.()]/g, "");
+
+  let national: string;
+  if (/^\+20\d+$/.test(ascii)) national = ascii.slice(3);
+  else if (/^0020\d+$/.test(ascii)) national = ascii.slice(4);
+  else if (/^20\d+$/.test(ascii)) national = ascii.slice(2);
+  else if (/^0\d+$/.test(ascii)) national = ascii.slice(1);
+  else return null;
+
+  return EGYPT_MOBILE_NATIONAL.test(national) ? `+20${national}` : null;
+}
+
+/**
+ * The digits an admin's search box should match against canonical phones:
+ * "0100 123", "+20100123", "٠١٠٠" all reduce to "100123…". Null when the query
+ * carries too few digits to be a phone fragment.
+ */
+export function phoneSearchDigits(query: string): string | null {
+  const digits = (query ?? "")
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/\D/g, "")
+    .replace(/^(?:0020|20|0)/, "");
+  return digits.length >= 3 ? digits : null;
+}
+
 export const checkoutSchema = z
   .object({
     items: z
@@ -242,11 +292,20 @@ export const checkoutSchema = z
       .trim()
       .min(1, "Name is required")
       .max(120, "Name is too long"),
+    // Normalized to canonical E.164 — the throttle and admin views key on it.
     customerPhone: z
       .string()
       .trim()
       .min(1, "Phone number is required")
-      .max(30, "Phone number is too long"),
+      .max(30, "Phone number is too long")
+      .transform((value, ctx) => {
+        const phone = normalizeEgyptMobile(value);
+        if (!phone) {
+          ctx.addIssue({ code: "custom", message: PHONE_ERROR });
+          return z.NEVER;
+        }
+        return phone;
+      }),
     orderNotes: optionalText(ORDER_NOTES_MAX_LENGTH),
   })
   .superRefine((data, ctx) => {

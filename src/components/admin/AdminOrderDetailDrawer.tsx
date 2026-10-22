@@ -20,7 +20,7 @@ import {
 import { toast } from "sonner";
 import { OrderStatus, FulfillmentMethod } from "@/generated/prisma/enums";
 import { updateOrderStatus } from "@/lib/actions/orders";
-import { formatEGP, formatMoney, prettyLabel } from "@/lib/utils";
+import { formatEGP, formatMoney, formatPhoneLocal, prettyLabel, whatsappHref } from "@/lib/utils";
 import { vatLabel } from "@/lib/cart-summary";
 import StatusPill from "@/components/orders/StatusPill";
 import type { AdminOrderView } from "./order-types";
@@ -203,12 +203,25 @@ export default function AdminOrderDetailDrawer({
                   {order.customerName}
                 </InfoRow>
                 <InfoRow icon={<Phone className="h-4 w-4" />} label="Phone">
-                  <a
-                    href={`tel:${order.customerPhone}`}
-                    className="transition-colors hover:text-primary"
-                  >
-                    {order.customerPhone}
-                  </a>
+                  <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <a
+                      href={`tel:${order.customerPhone}`}
+                      className="tabular-nums transition-colors hover:text-primary"
+                      dir="ltr"
+                    >
+                      {formatPhoneLocal(order.customerPhone)}
+                    </a>
+                    {whatsappHref(order.customerPhone) && (
+                      <a
+                        href={whatsappHref(order.customerPhone)!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-semibold text-emerald-700 transition-colors hover:text-emerald-800"
+                      >
+                        WhatsApp
+                      </a>
+                    )}
+                  </span>
                 </InfoRow>
                 {order.userEmail && (
                   <InfoRow icon={<Mail className="h-4 w-4" />} label="Account">

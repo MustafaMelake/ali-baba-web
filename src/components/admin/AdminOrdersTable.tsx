@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Truck, Store, ChevronRight } from "lucide-react";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
 import StatusPill from "@/components/orders/StatusPill";
-import { formatEGP } from "@/lib/utils";
+import { formatEGP, formatPhoneLocal } from "@/lib/utils";
 import AdminOrderDetailDrawer from "./AdminOrderDetailDrawer";
 import type { AdminOrderView } from "./order-types";
 
@@ -54,7 +54,7 @@ export default function AdminOrdersTable({
                         {order.customerName}
                       </div>
                       <div className="text-xs text-stone-400">
-                        {order.userEmail ?? order.customerPhone}
+                        {order.userEmail ?? formatPhoneLocal(order.customerPhone)}
                       </div>
                     </td>
                     <td className="px-6 py-4">

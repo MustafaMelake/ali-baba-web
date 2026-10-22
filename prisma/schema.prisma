@@ -409,6 +409,9 @@ model Order {
   branch   Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
 
   customerName  String
+  /// Canonical E.164 Egyptian mobile ("+201001234567") — normalized by
+  /// checkoutSchema (normalizeEgyptMobile). Legacy rows the normalization
+  /// migration couldn't parse keep their original text.
   customerPhone String
   orderNotes    String?
 
@@ -419,6 +422,8 @@ model Order {
   @@index([status])
   @@index([createdAt])
   @@index([branchId])
+  // Backs placeOrder's per-phone PENDING throttle (one indexed COUNT).
+  @@index([customerPhone, status])
 }
 
 model OrderItem {

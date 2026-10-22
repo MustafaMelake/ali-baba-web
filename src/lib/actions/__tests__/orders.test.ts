@@ -235,10 +235,29 @@ describe("placeOrder — per-phone pending throttle [H-1]", () => {
     expect(mockPrisma.order.create).not.toHaveBeenCalled();
   });
 
+  it("counts '+2010…' and '010…' as ONE phone (canonical E.164 key)", async () => {
+    await placeOrder(payload({ customerPhone: "0100 123 4567" }));
+    await placeOrder(payload({ customerPhone: "+20 100 123 4567" }));
+    await placeOrder(payload({ customerPhone: "٠١٠٠١٢٣٤٥٦٧" }));
+    const keys = mockPrisma.order.count.mock.calls.map(
+      ([args]) => (args as { where: { customerPhone: string } }).where.customerPhone,
+    );
+    expect(keys).toEqual(["+201001234567", "+201001234567", "+201001234567"]);
+  });
+
+  it("refuses a non-mobile number before any database work", async () => {
+    const res = await placeOrder(payload({ customerPhone: "02 2345 6789" }));
+    expect(res).toEqual({
+      success: false,
+      error: "Enter an Egyptian mobile number, e.g. 010 1234 5678.",
+    });
+    expect(mockPrisma.order.count).not.toHaveBeenCalled();
+  });
+
   it("counts ONLY this phone's PENDING orders (confirmed/cancelled never block)", async () => {
     await placeOrder(payload({ customerPhone: "01555555555" }));
     expect(mockPrisma.order.count).toHaveBeenCalledWith({
-      where: { customerPhone: "01555555555", status: OrderStatus.PENDING },
+      where: { customerPhone: "+201555555555", status: OrderStatus.PENDING },
     });
   });
 });
@@ -517,7 +536,7 @@ describe("placeOrder — identity, snapshot & revalidation", () => {
 
     expect(data.status).toBe(OrderStatus.PENDING);
     expect(data.customerName).toBe("Mostafa Ali");
-    expect(data.customerPhone).toBe("01000000000");
+    expect(data.customerPhone).toBe("+201000000000");
     expect(data.items.create).toEqual([
       { variantId: "v1", productName: "Om Ali", variantName: "Medium", unitPrice: 100, quantity: 3 },
     ]);

@@ -905,10 +905,28 @@ export default function CheckoutPage() {
                   id="phone"
                   type="tel"
                   autoComplete="tel"
-                  placeholder="+20 100 000 0000"
+                  inputMode="tel"
+                  placeholder="010 1234 5678"
+                  aria-invalid={!!errors.customerPhone}
+                  aria-describedby={errors.customerPhone ? "phone-error" : undefined}
+                  className={
+                    errors.customerPhone ? "border-red-400 focus:border-red-500" : undefined
+                  }
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    clearError("customerPhone");
+                  }}
                 />
+                {errors.customerPhone && (
+                  <p
+                    id="phone-error"
+                    role="alert"
+                    className="mt-2 font-sans text-xs text-red-500"
+                  >
+                    {errors.customerPhone}
+                  </p>
+                )}
               </div>
             </section>
 

@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, User, Phone, StickyNote, MapPin, Truck, Store } from "lucide-react";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
-import { formatEGP, formatMoney, prettyLabel } from "@/lib/utils";
+import { formatEGP, formatMoney, formatPhoneLocal, prettyLabel } from "@/lib/utils";
 import { vatLabel } from "@/lib/cart-summary";
 import StatusPill from "./StatusPill";
 import type { OrderView } from "./types";
@@ -103,9 +103,10 @@ export default function OrderDetailModal({
                 <InfoRow icon={<Phone className="h-4 w-4" />} label="Phone">
                   <a
                     href={`tel:${order.customerPhone}`}
-                    className="transition-colors hover:text-primary"
+                    className="tabular-nums transition-colors hover:text-primary"
+                    dir="ltr"
                   >
-                    {order.customerPhone}
+                    {formatPhoneLocal(order.customerPhone)}
                   </a>
                 </InfoRow>
                 {order.orderNotes && (

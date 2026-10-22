@@ -46,6 +46,26 @@ export function formatEGP(amount: number) {
   return `EGP ${formatMoney(amount)}`
 }
 
+/**
+ * A canonical Egyptian mobile ("+201001234567") as staff dial it locally:
+ * "010 0123 4567". Anything else — a legacy row the phone migration couldn't
+ * normalize — is returned unchanged.
+ */
+export function formatPhoneLocal(phone: string): string {
+  const m = /^\+20(1\d)(\d{4})(\d{4})$/.exec(phone);
+  return m ? `0${m[1]} ${m[2]} ${m[3]}` : phone;
+}
+
+/**
+ * A WhatsApp chat link for a canonical Egyptian mobile, optionally with a
+ * prefilled message. Null for a non-canonical value (no reliable number).
+ */
+export function whatsappHref(phone: string, text?: string): string | null {
+  if (!/^\+201\d{9}$/.test(phone)) return null;
+  const base = `https://wa.me/${phone.slice(1)}`;
+  return text ? `${base}?text=${encodeURIComponent(text)}` : base;
+}
+
 /** Compact, locale-stable date — e.g. "20 Jun 2026". */
 export function formatDate(date: Date) {
   return new Intl.DateTimeFormat("en-GB", {
