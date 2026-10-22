@@ -14,6 +14,9 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { ensureAdminSession, prismaErrorCode } from "@/lib/action-utils";
 import { UserRole } from "@/generated/prisma/enums";
+import { randomInt } from "node:crypto";
+import { auth } from "@/lib/auth";
+import { whatsappHref } from "@/lib/utils";
 
 export type UpdateUserRoleInput = {
   userId: string;
@@ -83,5 +86,108 @@ export async function updateUserRole(
     }
     console.error("updateUserRole failed:", err);
     return { success: false, error: "Could not update the user. Please try again." };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Password reset — the WhatsApp "forgot password" flow's admin half.
+//
+// There is no email provider: a customer messages the store on WhatsApp
+// (/forgot-password), staff verify them there, and an ADMIN resets the
+// password here. The server mints a strong temporary password, stores it ONLY
+// through Better Auth's own hashing path (never a hand-rolled hash), revokes
+// every session the user has, and flags `mustChangePassword` so their next
+// sign-in is held on /account/change-password until they pick a new one.
+//
+// The temporary password is returned to the admin exactly once and is never
+// logged, persisted in plain text, or put in a URL (the WhatsApp link only
+// opens the chat — the admin pastes the password from the copy button).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ResetUserPasswordResult =
+  | {
+      success: true;
+      /** Shown to the admin ONCE — send it on WhatsApp, then it's gone. */
+      tempPassword: string;
+      /** wa.me chat with the customer's last order phone, or null when unknown. */
+      whatsappHref: string | null;
+    }
+  | { success: false; error: string };
+
+/** No look-alikes (0/O, 1/l/I) — it will be read off a phone screen and retyped. */
+const TEMP_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+
+/** 16 CSPRNG characters as "xxxx-xxxx-xxxx-xxxx" (~92 bits of entropy). */
+function generateTempPassword(): string {
+  const groups: string[] = [];
+  for (let g = 0; g < 4; g++) {
+    let group = "";
+    for (let i = 0; i < 4; i++) {
+      group += TEMP_PASSWORD_ALPHABET[randomInt(TEMP_PASSWORD_ALPHABET.length)];
+    }
+    groups.push(group);
+  }
+  return groups.join("-");
+}
+
+export async function resetUserPassword(userId: unknown): Promise<ResetUserPasswordResult> {
+  // Session-returning gate: the self-guard below needs the caller's id.
+  const gate = await ensureAdminSession();
+  if ("error" in gate) return { success: false, error: gate.error };
+
+  const id = typeof userId === "string" ? userId.trim() : "";
+  if (!id) return { success: false, error: "Missing user id." };
+  if (gate.session.user.id === id) {
+    return {
+      success: false,
+      error: "You can't reset your own password here — sign out and use your account's change-password page.",
+    };
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        // Only an email+password ("credential") account has a password to reset.
+        accounts: { where: { providerId: "credential" }, select: { id: true } },
+        // The customer's phone, if they've ordered — for the WhatsApp hand-back.
+        orders: { orderBy: { createdAt: "desc" }, take: 1, select: { customerPhone: true } },
+      },
+    });
+    if (!user) return { success: false, error: "That user no longer exists." };
+    if (user.accounts.length === 0) {
+      return { success: false, error: "This account doesn't sign in with a password, so there's nothing to reset." };
+    }
+
+    const tempPassword = generateTempPassword();
+
+    // Order matters: flag FIRST, so a failure part-way leaves the user forced
+    // to change their password — never signed in on a temporary one unflagged.
+    await prisma.user.update({
+      where: { id },
+      data: { mustChangePassword: true },
+      select: { id: true },
+    });
+    const ctx = await auth.$context;
+    await ctx.internalAdapter.updatePassword(id, await ctx.password.hash(tempPassword));
+    // Every device signed in as this user is signed out.
+    await ctx.internalAdapter.deleteUserSessions(id);
+
+    revalidatePath("/admin/users");
+
+    const phone = user.orders[0]?.customerPhone;
+    return {
+      success: true,
+      tempPassword,
+      whatsappHref: phone ? whatsappHref(phone) : null,
+    };
+  } catch (err) {
+    if (prismaErrorCode(err) === "P2025") {
+      return { success: false, error: "That user no longer exists." };
+    }
+    // `err` never carries the temporary password — safe to log.
+    console.error("resetUserPassword failed:", err);
+    return { success: false, error: "Could not reset the password. Please try again." };
   }
 }

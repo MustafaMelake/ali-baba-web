@@ -76,6 +76,11 @@ model User {
   emailVerified Boolean  @default(false)
   image         String?
   role          UserRole @default(USER)
+  /// Set by an ADMIN password reset (the temporary password is sent on
+  /// WhatsApp); cleared only by changeTemporaryPassword. While true, the user is
+  /// held on /account/change-password. Declared to Better Auth as an
+  /// `input: false` additional field so it rides on every session.
+  mustChangePassword Boolean @default(false)
 
   // Branch assignment.
   // OPTIONAL at the schema level by necessity: USER/ADMIN have no branch.

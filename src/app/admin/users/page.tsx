@@ -5,6 +5,7 @@ import { formatDate } from "@/lib/utils";
 import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
 import UserRoleEditor from "@/components/admin/UserRoleEditor";
+import ResetPasswordButton from "@/components/admin/ResetPasswordButton";
 
 export const metadata = {
   title: "Users | Admin",
@@ -73,6 +74,9 @@ export default async function AdminUsersPage() {
                   <th className="px-6 py-3.5 font-semibold">Email</th>
                   <th className="px-6 py-3.5 font-semibold">Joined</th>
                   <th className="px-6 py-3.5 font-semibold">Role &amp; Branch</th>
+                  <th className="px-6 py-3.5 font-semibold">
+                    <span className="sr-only">Account actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -107,6 +111,12 @@ export default async function AdminUsersPage() {
                         branches={branches}
                         isSelf={session.user.id === user.id}
                       />
+                    </td>
+                    <td className="px-6 py-4 text-end">
+                      {/* Never on the admin's own row — the action refuses it too. */}
+                      {session.user.id !== user.id && (
+                        <ResetPasswordButton userId={user.id} userName={user.name} />
+                      )}
                     </td>
                   </tr>
                 ))}
