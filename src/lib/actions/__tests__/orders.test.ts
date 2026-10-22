@@ -263,6 +263,42 @@ describe("placeOrder — per-phone pending throttle [H-1]", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 2b. [D-9] Error whitelist — only placeOrder's own messages reach the customer
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("placeOrder — error whitelist [D-9]", () => {
+  const GENERIC = "Could not place your order. Please try again.";
+
+  it("never leaks a Prisma error's text — generic message + console.error", async () => {
+    const internal = Object.assign(
+      new Error('Unique constraint failed on the fields: (`orderNumber`) — invalid `prisma.order.create()` invocation'),
+      { code: "P2002" },
+    );
+    mockPrisma.order.create.mockRejectedValue(internal);
+
+    const res = await placeOrder(payload());
+
+    expect(res).toEqual({ success: false, error: GENERIC });
+    expect(console.error).toHaveBeenCalledWith("placeOrder failed:", internal);
+  });
+
+  it("never leaks a driver error raised before the transaction (the throttle COUNT)", async () => {
+    mockPrisma.order.count.mockRejectedValue(new Error("connect ETIMEDOUT 10.0.0.12:5432"));
+    const res = await placeOrder(payload());
+    expect(res).toEqual({ success: false, error: GENERIC });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("passes the whitelisted, customer-written messages through verbatim", async () => {
+    stubVariants([variantRow({ id: "v1", price: 100, productAvailable: false, productName: "Konafa" })]);
+    expect(await placeOrder(payload())).toEqual({
+      success: false,
+      error: "Konafa is no longer available.",
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 3. Transaction integrity — no partial orders
 // ─────────────────────────────────────────────────────────────────────────────
 
