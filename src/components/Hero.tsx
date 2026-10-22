@@ -121,10 +121,13 @@ export default function Hero({ promo, slides = [] }: HeroProps) {
 
       {/* ─── Cinematic Hero Image ────────────────────────────── */}
       <div className="px-4 sm:px-6 md:px-10 lg:px-14">
+        {/* Transform-only entrance: the image is the LCP element, and an
+            `opacity: 0` start would hold its paint back until the fade ran
+            (~0.9s delay + 1.2s). It now paints on arrival and only slides. */}
         <motion.div
           className="relative overflow-hidden rounded-[1.75rem] md:rounded-[2.5rem]"
-          initial={{ opacity: 0, y: 48 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={{ y: 48 }}
+          animate={{ y: 0 }}
           transition={{ duration: 1.2, ease: EASE, delay: 0.9 }}
         >
           {/* Inner scale — creates a "curtain lifts to reveal" effect */}
@@ -138,7 +141,7 @@ export default function Hero({ promo, slides = [] }: HeroProps) {
               src="/hero.jpeg"
               alt="Ali Baba artisan pastry — hand-crafted confections since 1998"
               fill
-              priority
+              preload
               className="object-cover object-center"
               sizes="(max-width: 640px) 92vw, (max-width: 1024px) 94vw, 96vw"
             />
