@@ -189,12 +189,20 @@ export default function LoginClient() {
 
             {/* Password */}
             <div className="group">
-              <label
-                htmlFor="password"
-                className="block text-[10px] font-sans font-semibold uppercase tracking-[0.25em] text-stone-400 mb-3"
-              >
-                Password
-              </label>
+              <div className="mb-3 flex items-baseline justify-between gap-4">
+                <label
+                  htmlFor="password"
+                  className="block text-[10px] font-sans font-semibold uppercase tracking-[0.25em] text-stone-400"
+                >
+                  Password
+                </label>
+                <Link
+                  href="/forgot-password"
+                  className="font-sans text-xs text-stone-400 underline-offset-4 transition-colors hover:text-primary hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <input
                 id="password"
                 type="password"
