@@ -37,6 +37,7 @@ These `onDelete` policies *are* the data-safety model. **Do not weaken them** �
 | `WishlistItem → User` / `→ Product` | Cascade | — |
 | `MenuItem → MenuCategory` | Cascade | café items die with their category |
 | `BranchVariantAvailability → Branch` / `→ ProductVariant` | Cascade | per-branch stock overrides die with either (a missing row means "available") |
+| `HeroSlide → Product` | **SetNull** | a banner never blocks a product delete (Restrict would also misreport as `deleteProduct`'s "appears in existing orders" P2003) nor silently drops the slide and orphans its bucket images (Cascade bypasses `deleteUploadedFiles`); a slide left with no destination is hidden by `liveHeroSlideWhere` and flagged in `/admin/hero` |
 
 **Ordered variants are archived, not deleted.** When an edit removes a variant that has shipped, `updateProduct` catches the `P2003` **after** the transaction commits and archives it (`isAvailable: false`, `sku: null` to free the SKU) instead of deleting — reporting `archivedCount` to the UI. This cleanup runs post-commit deliberately: a `P2003` must never roll back an otherwise-valid product update.
 

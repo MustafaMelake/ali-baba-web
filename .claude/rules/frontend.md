@@ -60,7 +60,7 @@ page by moving it between them without a reason that outlives the diff:**
 
 | Surface | Mode | Why |
 |---|---|---|
-| `/category/[slug]`, `/product/[slug]`, `/collections`, `/cart` (shell only — the cart renders client-side) | `export const revalidate = 60` (ISR) | No per-request input, no per-user data → cacheable. This is the perf win the wishlist store exists to protect. |
+| `/` (homepage — hero slides, slider, locations, FAQs), `/category/[slug]`, `/product/[slug]`, `/collections`, `/cart` (shell only — the cart renders client-side) | `export const revalidate = 60` (ISR) | No per-request input, no per-user data → cacheable. This is the perf win the wishlist store exists to protect. |
 | `/shop` | **No export** — dynamic by nature | It `await`s `searchParams` for the server-side category filter, which is request-time data. A `revalidate` here would be **inert**, not wrong; don't add one to "make it consistent." |
 | `/my-orders`, `/wishlist`, `/admin/**` | `export const dynamic = "force-dynamic"` | Genuinely per-user/per-role server-rendered data with no client-hydration path. |
 
@@ -100,3 +100,5 @@ Filters, search, and pagination live in the **URL** (`searchParams`), not client
 ## Styling
 
 Tailwind v4, token-driven. Serif headings, `stone-*` neutral palette, a single turquoise `primary` accent, `rounded-full` pills. Arabic content (café menu item names) is RTL-scoped per element (`dir="rtl" lang="ar"`) inside the otherwise-LTR shell. The `(shop)` layout owns the single `<main>` and the navbar-clearance padding — **pages must not re-add `pt-16/20`** (documented double-offset hazard).
+
+**Logical properties only in NEW UI — storefront and admin.** The site becomes Arabic + English, so every new component uses direction-agnostic utilities: `start`/`end` (not `left`/`right`), `ps`/`pe`, `ms`/`me`, `text-start`/`text-end`, `rounded-s`/`rounded-e`, `border-s`/`border-e`, and `rtl:` variants for what has no logical form (a horizontal gradient direction, a directional icon flip via `rtl:-scale-x-100`). A carousel/scroller takes a `direction` prop and maps arrow keys to reading direction. Keep UI strings out of the markup where practical (a copy table, as `HERO_COPY` in `src/lib/hero-slides.ts`) — no i18n framework yet, so don't build one. Then RTL is a `dir` flip, not a rewrite; `HeroCarousel` is the reference (verified under `dir="rtl"`). **Existing components are not retrofitted yet** — that's tracked debt (DOMAIN_MAP §18.2), not license to keep writing `ml-`/`pr-`/`left-` in new code.
