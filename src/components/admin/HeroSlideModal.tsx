@@ -258,7 +258,7 @@ export default function HeroSlideModal({
     price: null,
   };
   const pricePlaceholder =
-    destination === "product" && showPrice ? `${HERO_COPY.priceFrom} EGP ···` : undefined;
+    destination === "product" && showPrice ? `${HERO_COPY.priceFrom} ··· ${HERO_COPY.currency}` : undefined;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

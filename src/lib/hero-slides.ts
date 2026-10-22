@@ -50,6 +50,8 @@ export const HERO_COPY = {
   pause: "Pause slideshow",
   play: "Play slideshow",
   priceFrom: "From",
+  /** The storefront currency mark, rendered after the figure ("192 ج.م"). */
+  currency: "ج.م",
 } as const;
 
 // ── Liveness ─────────────────────────────────────────────────────────────────

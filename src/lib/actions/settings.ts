@@ -19,7 +19,7 @@ import { prisma } from "@/lib/prisma";
 // the consolidated envelope gate.
 import { requireAdmin } from "@/lib/session";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
-import { isSafeHref, SAFE_HREF_ERROR } from "@/lib/validators";
+import { safeHrefError } from "@/lib/validators";
 
 export type FooterLinkRow = {
   id: string;
@@ -53,7 +53,8 @@ function validateLink(
   if (url.length > 2048) return { error: "URL is too long." };
   // The shared href whitelist — stops a pasted "javascript:" href (and an
   // off-site "//host" posing as an internal path) from reaching the footer.
-  if (!isSafeHref(url)) return { error: SAFE_HREF_ERROR };
+  const hrefError = safeHrefError(url);
+  if (hrefError) return { error: hrefError };
 
   const group = data.group?.trim() ?? "";
   if (group.length < 1) return { error: "Column (group) is required." };

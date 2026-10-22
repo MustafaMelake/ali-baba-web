@@ -14,6 +14,9 @@ import {
   heroSlideSchema,
   isHostedImageUrl,
   isSafeHref,
+  PROTOCOL_RELATIVE_ERROR,
+  SAFE_HREF_ERROR,
+  safeHrefError,
   parseDeliveryFee,
   productInputSchema,
 } from "@/lib/validators";
@@ -227,5 +230,31 @@ describe("heroSlideReorderSchema", () => {
     expect(heroSlideReorderSchema.safeParse([]).success).toBe(false);
     const tooMany = Array.from({ length: HERO_MAX_SLIDES + 1 }, (_, i) => `s${i}`);
     expect(heroSlideReorderSchema.safeParse(tooMany).success).toBe(false);
+  });
+});
+
+describe("safeHrefError — why a link was refused", () => {
+  it("gives the protocol-relative case its own message", () => {
+    expect(safeHrefError("//evil.com")).toBe(PROTOCOL_RELATIVE_ERROR);
+    expect(safeHrefError("/" + String.fromCharCode(92) + "evil.com")).toBe(PROTOCOL_RELATIVE_ERROR);
+  });
+
+  it("uses the generic message for other refusals and null when safe", () => {
+    expect(safeHrefError("javascript:alert(1)")).toBe(SAFE_HREF_ERROR);
+    expect(safeHrefError("/collections")).toBeNull();
+    expect(safeHrefError("https://instagram.com/alibaba")).toBeNull();
+  });
+
+  it("surfaces the protocol-relative message through heroSlideSchema", () => {
+    const parsed = heroSlideSchema.safeParse({
+      ctaLabel: "Order now",
+      showPrice: false,
+      imageDesktop: "https://abc.ufs.sh/f/d",
+      imageAlt: "Banner",
+      productId: null,
+      linkUrl: "//evil.com",
+      isActive: false,
+    });
+    expect(parsed.error?.issues[0]?.message).toBe(PROTOCOL_RELATIVE_ERROR);
   });
 });

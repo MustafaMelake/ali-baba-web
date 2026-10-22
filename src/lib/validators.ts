@@ -67,9 +67,21 @@ export const SAFE_HREF_ERROR = 'Link must start with "/", "#", or "http(s)://".'
  * yet browsers resolve them off-site, so they'd pass an "internal" check.
  */
 export function isSafeHref(url: string): boolean {
-  if (url.startsWith("/")) return !/^\/[/\\]/.test(url);
-  if (url.startsWith("#")) return true;
-  return /^https?:\/\/[^\s/\\]/i.test(url);
+  return safeHrefError(url) === null;
+}
+
+export const PROTOCOL_RELATIVE_ERROR =
+  "Links starting with // aren't allowed — use /page or https://…";
+
+/**
+ * The same whitelist as `isSafeHref`, returning WHY a link was refused — the
+ * protocol-relative case gets its own message, because "must start with /"
+ * reads as nonsense to an admin whose link already does. Null when safe.
+ */
+export function safeHrefError(url: string): string | null {
+  if (/^\/[/\\]/.test(url)) return PROTOCOL_RELATIVE_ERROR;
+  if (url.startsWith("/") || url.startsWith("#")) return null;
+  return /^https?:\/\/[^\s/\\]/i.test(url) ? null : SAFE_HREF_ERROR;
 }
 
 // A single variant on the edit form. `id` present → an existing row to update;
@@ -412,7 +424,10 @@ export const heroSlideSchema = z
       .string()
       .trim()
       .max(2048, "Link is too long.")
-      .refine((url) => url === "" || isSafeHref(url), SAFE_HREF_ERROR)
+      .superRefine((url, ctx) => {
+        const error = url === "" ? null : safeHrefError(url);
+        if (error) ctx.addIssue({ code: "custom", message: error });
+      })
       .nullish()
       .transform((value) => value || null),
     isActive: z.boolean(),

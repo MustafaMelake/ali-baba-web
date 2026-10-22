@@ -8,7 +8,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 import { HERO_AUTOPLAY_MS, HERO_COPY, type HeroSlideView } from "@/lib/hero-slides";
 import { useSeasonalIntro } from "@/lib/seasonal-intro-store";
-import { cn, formatEGP } from "@/lib/utils";
+import { cn, formatMoney } from "@/lib/utils";
 
 // Cinematic cubic-bezier — matches the Hero's entrance curve.
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
@@ -164,10 +164,15 @@ function SlideOverlay({
         {slide.price && (
           <p className="mt-5 inline-flex items-baseline gap-2 rounded-full bg-white/95 px-4 py-1.5 text-sm text-stone-900 shadow-sm @2xl:mt-6">
             {slide.price.isFrom && <span className="text-stone-500">{HERO_COPY.priceFrom}</span>}
-            <span className="font-semibold tabular-nums">{formatEGP(slide.price.amount)}</span>
+            {/* Storefront money: the bare figure + the mark as its own element,
+                like every other storefront price (formatEGP is the admin format). */}
+            <span className="font-semibold tabular-nums">
+              {formatMoney(slide.price.amount)}{" "}
+              <span className="text-xs font-normal text-stone-500">{HERO_COPY.currency}</span>
+            </span>
             {slide.price.compareAt !== null && slide.price.compareAt > slide.price.amount && (
               <s className="text-xs text-stone-400 tabular-nums">
-                {formatEGP(slide.price.compareAt)}
+                {formatMoney(slide.price.compareAt)} {HERO_COPY.currency}
               </s>
             )}
           </p>
