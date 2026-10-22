@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isHostedImageUrl,
+  isSafeHref,
   parseDeliveryFee,
   productInputSchema,
 } from "@/lib/validators";
@@ -64,6 +65,37 @@ describe("isHostedImageUrl", () => {
     "",
   ])("rejects %s", (url) => {
     expect(isHostedImageUrl(url)).toBe(false);
+  });
+});
+
+// isSafeHref is the href whitelist shared by footer links and hero slides — a
+// stored-XSS control, so the rejections matter more than the acceptances.
+describe("isSafeHref", () => {
+  it.each([
+    "/",
+    "/category/oriental-sweets",
+    "/shop?category=cakes#top",
+    "#faq",
+    "https://instagram.com/alibaba",
+    "HTTP://example.com",
+  ])("accepts %s", (url) => {
+    expect(isSafeHref(url)).toBe(true);
+  });
+
+  it.each([
+    "javascript:alert(1)",
+    "JavaScript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox",
+    "//evil.com", // protocol-relative: off-site despite the leading "/"
+    "/\\evil.com", // browsers treat "/\" like "//"
+    "https://", // no host
+    "https:///evil.com",
+    "mailto:hello@alibaba.eg",
+    "category/cakes", // relative path
+    "",
+  ])("rejects %s", (url) => {
+    expect(isSafeHref(url)).toBe(false);
   });
 });
 

@@ -19,6 +19,7 @@ import { prisma } from "@/lib/prisma";
 // the consolidated envelope gate.
 import { requireAdmin } from "@/lib/session";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
+import { isSafeHref, SAFE_HREF_ERROR } from "@/lib/validators";
 
 export type FooterLinkRow = {
   id: string;
@@ -50,13 +51,9 @@ function validateLink(
   const url = data.url?.trim() ?? "";
   if (url.length < 1) return { error: "URL is required." };
   if (url.length > 2048) return { error: "URL is too long." };
-  // Accept internal paths ("/…", "#…") and absolute http(s) URLs only — this
-  // stops an admin from pasting a "javascript:" href the footer would render.
-  const isInternal = url.startsWith("/") || url.startsWith("#");
-  const isHttp = /^https?:\/\//i.test(url);
-  if (!isInternal && !isHttp) {
-    return { error: 'URL must start with "/", "#", or "http(s)://".' };
-  }
+  // The shared href whitelist — stops a pasted "javascript:" href (and an
+  // off-site "//host" posing as an internal path) from reaching the footer.
+  if (!isSafeHref(url)) return { error: SAFE_HREF_ERROR };
 
   const group = data.group?.trim() ?? "";
   if (group.length < 1) return { error: "Column (group) is required." };

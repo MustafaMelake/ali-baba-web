@@ -54,6 +54,24 @@ export function isHostedImageUrl(url: string): boolean {
 
 const hostedImageUrl = z.string().trim().refine(isHostedImageUrl, HOSTED_IMAGE_ERROR);
 
+// ─── Admin-entered links ─────────────────────────────────────────────────────
+
+export const SAFE_HREF_ERROR = 'Link must start with "/", "#", or "http(s)://".';
+
+/**
+ * The one href whitelist for every admin-entered link the storefront renders
+ * (footer links, hero slides) — a *security* control against stored XSS via a
+ * pasted "javascript:"/"data:" href. Accepts an internal path ("/…"), an
+ * in-page anchor ("#…"), or an absolute http(s) URL with a host. Rejects the
+ * protocol-relative "//host" and its "/\host" spelling: both start with "/"
+ * yet browsers resolve them off-site, so they'd pass an "internal" check.
+ */
+export function isSafeHref(url: string): boolean {
+  if (url.startsWith("/")) return !/^\/[/\\]/.test(url);
+  if (url.startsWith("#")) return true;
+  return /^https?:\/\/[^\s/\\]/i.test(url);
+}
+
 // A single variant on the edit form. `id` present → an existing row to update;
 // absent → a brand-new variant to create.
 export const variantInputSchema = z
