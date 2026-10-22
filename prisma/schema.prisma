@@ -559,6 +559,11 @@ model StoreSettings {
   /// ("Other Areas" at checkout, or a branch that went inactive mid-order).
   defaultDeliveryFee Decimal @default(35) @db.Decimal(12, 2)
 
+  /// The store's WhatsApp number — canonical E.164 Egyptian mobile
+  /// ("+201001234567", normalizeEgyptMobile). Powers the /forgot-password
+  /// hand-off; null = not configured (the page shows a neutral message).
+  whatsappNumber String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

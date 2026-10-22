@@ -24,7 +24,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockDeep<PrismaClient>() }));
 vi.mock("@/lib/session", () => ({ getServerSession: vi.fn(), requireAdmin: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { updateDeliveryFees, updateVatSettings } from "@/lib/actions/store-settings";
+import { updateDeliveryFees, updateStoreWhatsapp, updateVatSettings } from "@/lib/actions/store-settings";
 import { requireAdmin } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 
@@ -167,5 +167,42 @@ describe("updateDeliveryFees", () => {
       error: "One of those branches no longer exists. Refresh and try again.",
     });
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateStoreWhatsapp", () => {
+  it("normalizes to canonical E.164 and upserts the singleton row", async () => {
+    const res = await updateStoreWhatsapp({ whatsappNumber: "0100 123 4567" });
+    expect(res).toEqual({ success: true });
+    expect(mockPrisma.storeSettings.upsert).toHaveBeenCalledWith({
+      where: { id: "store" },
+      update: { whatsappNumber: "+201001234567" },
+      create: { id: "store", whatsappNumber: "+201001234567" },
+      select: { id: true },
+    });
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/forgot-password");
+  });
+
+  it("clears the number on a blank save", async () => {
+    await updateStoreWhatsapp({ whatsappNumber: "  " });
+    expect(mockPrisma.storeSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { whatsappNumber: null } }),
+    );
+  });
+
+  it("refuses a non-mobile number without writing", async () => {
+    const res = await updateStoreWhatsapp({ whatsappNumber: "02 2345 6789" });
+    expect(res).toEqual({
+      success: false,
+      error: "Enter an Egyptian mobile number, e.g. 010 1234 5678.",
+    });
+    expect(mockPrisma.storeSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("is ADMIN-only", async () => {
+    mockedRequireAdmin.mockRejectedValue(new Error("not admin"));
+    const res = await updateStoreWhatsapp({ whatsappNumber: "01001234567" });
+    expect(res.success).toBe(false);
+    expect(mockPrisma.storeSettings.upsert).not.toHaveBeenCalled();
   });
 });

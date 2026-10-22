@@ -16,7 +16,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
-import { parseDeliveryFee } from "@/lib/validators";
+import { parseDeliveryFee, storeWhatsappSchema } from "@/lib/validators";
 import {
   getStoreSettings,
   STORE_SETTINGS_ID,
@@ -148,5 +148,40 @@ export async function updateDeliveryFees(input: {
     }
     console.error("updateDeliveryFees failed:", err);
     return { success: false, error: "Could not save delivery fees. Please try again." };
+  }
+}
+
+// ── Update the store's WhatsApp number ───────────────────────────────────────
+
+/**
+ * Save (or clear) the store's WhatsApp number — the /forgot-password hand-off
+ * and the number staff share with customers. Normalized by the same
+ * `normalizeEgyptMobile` checkout uses, so it is always a dialable canonical
+ * mobile; a blank value clears it. Upserts the singleton row (never a second).
+ */
+export async function updateStoreWhatsapp(input: unknown): Promise<SettingsActionResult> {
+  const denied = await ensureAdmin();
+  if (denied) return { success: false, error: denied.error };
+
+  const parsed = storeWhatsappSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid phone number." };
+  }
+  const { whatsappNumber } = parsed.data;
+
+  try {
+    await prisma.storeSettings.upsert({
+      where: { id: STORE_SETTINGS_ID },
+      update: { whatsappNumber },
+      create: { id: STORE_SETTINGS_ID, whatsappNumber },
+      select: { id: true },
+    });
+
+    revalidatePath("/admin/settings");
+    revalidatePath("/forgot-password"); // the WhatsApp hand-off reads it
+    return { success: true };
+  } catch (err) {
+    console.error("updateStoreWhatsapp failed:", err);
+    return { success: false, error: "Could not save the WhatsApp number. Please try again." };
   }
 }

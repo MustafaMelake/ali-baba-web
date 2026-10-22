@@ -268,6 +268,26 @@ export function phoneSearchDigits(query: string): string | null {
 }
 
 /**
+ * The store's WhatsApp number (Admin → Settings). Same normalizer as checkout,
+ * so it is always a dialable canonical mobile; blank clears it (→ null).
+ */
+export const storeWhatsappSchema = z.object({
+  whatsappNumber: z
+    .string()
+    .trim()
+    .max(30, "Phone number is too long")
+    .transform((value, ctx) => {
+      if (value === "") return null;
+      const phone = normalizeEgyptMobile(value);
+      if (!phone) {
+        ctx.addIssue({ code: "custom", message: PHONE_ERROR });
+        return z.NEVER;
+      }
+      return phone;
+    }),
+});
+
+/**
  * A PICKUP order needs a real, active branch to be collected from. Shared so
  * the checkout's blocked-state note is word-for-word placeOrder's refusal.
  */

@@ -41,6 +41,25 @@ export const DEFAULT_PRICING_SETTINGS: Readonly<PricingSettings> = Object.freeze
   defaultDeliveryFee: 35,
 });
 
+/** The store's customer-contact settings (not pricing — read separately). */
+export type StoreContact = {
+  /** Canonical E.164 WhatsApp number, or null when not configured. */
+  whatsappNumber: string | null;
+};
+
+/**
+ * Read the store's contact settings. Same singleton row and the same
+ * never-writes rule as `getStoreSettings`, but kept apart so the pricing
+ * reader — and every billing path behind it — is untouched by contact fields.
+ */
+export async function getStoreContact(): Promise<StoreContact> {
+  const row = await prisma.storeSettings.findUnique({
+    where: { id: STORE_SETTINGS_ID },
+    select: { whatsappNumber: true },
+  });
+  return { whatsappNumber: row?.whatsappNumber ?? null };
+}
+
 /**
  * Read the global pricing settings. Pure read — a primary-key lookup, no row
  * lock, no write compute (Neon-friendly). Falls back to the in-memory schema
