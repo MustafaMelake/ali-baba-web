@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { ensureAdmin, prismaErrorCode, slugify } from "@/lib/action-utils";
 import { deleteUploadedFiles } from "@/lib/uploadthing-server";
+import { HOSTED_IMAGE_ERROR, isHostedImageUrl } from "@/lib/validators";
 
 /** The transactional client type, derived straight from `prisma.$transaction`. */
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -75,6 +76,9 @@ export async function createCategory(
 
   const subtitle = input.subtitle?.trim() || null;
   const image = input.image?.trim() || null;
+  if (image && !isHostedImageUrl(image)) {
+    return { success: false, error: HOSTED_IMAGE_ERROR };
+  }
   const isFeatured = Boolean(input.isFeatured);
   const sliderOrder = sanitizeSliderOrder(input.sliderOrder);
 
@@ -141,6 +145,9 @@ export async function updateCategory(
 
   const subtitle = input.subtitle?.trim() || null;
   const image = input.image?.trim() || null;
+  if (image && !isHostedImageUrl(image)) {
+    return { success: false, error: HOSTED_IMAGE_ERROR };
+  }
   const isFeatured = Boolean(input.isFeatured);
   const sliderOrder = sanitizeSliderOrder(input.sliderOrder);
 

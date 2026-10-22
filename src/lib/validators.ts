@@ -15,6 +15,45 @@ const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const optionalText = (max: number) =>
   z.string().trim().max(max).optional().or(z.literal(""));
 
+// ─── Stored image URLs ───────────────────────────────────────────────────────
+
+/**
+ * The remote hosts `next/image` will render — MUST mirror `images.remotePatterns`
+ * in next.config.ts (the legacy `utfs.io` host + one `*.ufs.sh` label). An image
+ * URL on any other host makes `<Image>` throw at render, which takes down the
+ * whole ISR page showing it (the homepage, for a location card), not just the card.
+ */
+const UPLOADTHING_HOST = /^(?:utfs\.io|[^.]+\.ufs\.sh)$/;
+
+export const HOSTED_IMAGE_ERROR = "Upload the image here — pasted links can't be displayed.";
+
+/**
+ * The one rule for every image URL an admin action persists (product gallery,
+ * category card, location card, hero slide): an UploadThing URL over https, or
+ * a /public path. Every admin form uploads through UploadThing, so a legitimate
+ * payload always passes; this is the server's refusal of a forged one.
+ */
+export function isHostedImageUrl(url: string): boolean {
+  if (url.startsWith("/")) {
+    // A /public path — but not "//host" or "/\host" (browsers resolve both
+    // off-site), and no query/fragment (Next 16 refuses a local image with a
+    // search string unless `images.localPatterns` allows it).
+    return /^\/(?![/\\])[^?#\s]+$/.test(url);
+  }
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.port === "" &&
+      UPLOADTHING_HOST.test(parsed.hostname)
+    );
+  } catch {
+    return false; // neither a /public path nor an absolute URL
+  }
+}
+
+const hostedImageUrl = z.string().trim().refine(isHostedImageUrl, HOSTED_IMAGE_ERROR);
+
 // A single variant on the edit form. `id` present → an existing row to update;
 // absent → a brand-new variant to create.
 export const variantInputSchema = z
@@ -61,7 +100,7 @@ export const productInputSchema = z.object({
     .regex(slugRegex, "Use lowercase letters, numbers and hyphens only"),
   description: optionalText(2000),
   categoryId: z.string().min(1, "Select a category"),
-  images: z.array(z.string()).default([]),
+  images: z.array(hostedImageUrl).default([]),
   variants: z.array(variantInputSchema).min(1, "Add at least one variant"),
 });
 
@@ -82,7 +121,7 @@ export const productUpdateSchema = z.object({
     .regex(slugRegex, "Use lowercase letters, numbers and hyphens only"),
   description: optionalText(2000),
   categoryId: z.string().min(1, "Select a category"),
-  images: z.array(z.string()).default([]),
+  images: z.array(hostedImageUrl).default([]),
   isAvailable: z.boolean(),
   isFeatured: z.boolean(),
   variants: z.array(variantInputSchema).min(1, "Add at least one variant"),

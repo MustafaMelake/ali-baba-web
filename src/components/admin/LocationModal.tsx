@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { createLocation, updateLocation } from "@/lib/actions/locations";
 import { UploadDropzone } from "@/lib/uploadthing";
 import { cn } from "@/lib/utils";
+import { isHostedImageUrl } from "@/lib/validators";
 
 const inputClasses =
   "w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm text-stone-900 outline-none transition-colors placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20";
@@ -124,7 +125,7 @@ export default function LocationModal({
     within(trimmed.locality, LOCALITY_MAX) &&
     trimmed.imageUrl.length >= 2 &&
     trimmed.imageUrl.length <= IMAGE_URL_MAX &&
-    /^(https?:\/\/|\/)/.test(trimmed.imageUrl) &&
+    isHostedImageUrl(trimmed.imageUrl) &&
     TYPE_OPTIONS.some((o) => o.value === trimmed.type);
 
   function handleSubmit(e: React.FormEvent) {

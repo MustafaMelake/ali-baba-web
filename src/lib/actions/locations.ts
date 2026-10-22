@@ -31,6 +31,7 @@ import { prisma } from "@/lib/prisma";
 // mutations use the consolidated envelope gate.
 import { requireAdmin } from "@/lib/session";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
+import { HOSTED_IMAGE_ERROR, isHostedImageUrl } from "@/lib/validators";
 
 /** The editable fields shared by create + update (everything but order/isActive). */
 export type LocationInput = {
@@ -92,9 +93,9 @@ function validateLocation(
   const imageUrl = data.imageUrl?.trim() ?? "";
   if (imageUrl.length < 2) return { error: "Image URL is required." };
   if (imageUrl.length > 2048) return { error: "Image URL is too long (max 2048 characters)." };
-  if (!/^(https?:\/\/|\/)/.test(imageUrl)) {
-    return { error: "Image URL must be an absolute URL or a /public path." };
-  }
+  // next/image only renders UploadThing hosts — a foreign URL here would crash
+  // the homepage's BranchSelector, not just this card.
+  if (!isHostedImageUrl(imageUrl)) return { error: HOSTED_IMAGE_ERROR };
 
   const locality = data.locality?.trim() ?? "";
   if (locality.length < 2) return { error: "Locality must be at least 2 characters." };
