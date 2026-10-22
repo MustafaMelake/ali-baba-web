@@ -567,6 +567,9 @@ export default function CheckoutPage() {
   const notes = useCartStore((s) => s.orderNote);
   const setNotes = useCartStore((s) => s.setOrderNote);
   const [branches, setBranches] = useState<BranchOption[]>([]);
+  // The pickup refusal only shows once the branch list has actually answered —
+  // not as a flash while it loads.
+  const [branchesLoaded, setBranchesLoaded] = useState(false);
   const [branchId, setBranchId] = useState(""); // pickup: chosen branch id
   const [deliveryAreaId, setDeliveryAreaId] = useState(""); // delivery: branch id, or OTHER_AREAS_OPTION.id
   // Global pricing knobs (VAT + default delivery fee) — null until fetched so
@@ -615,10 +618,12 @@ export default function CheckoutPage() {
         setBranches(rows);
         setBranchId((cur) => cur || rows[0]?.id || "");
         setDeliveryAreaId((cur) => cur || rows[0]?.id || OTHER_AREAS_OPTION.id);
+        setBranchesLoaded(true);
       })
       .catch(() => {
-        // Selector stays empty (pickup still works without a stored branch);
-        // delivery falls back to the "Other Areas" option.
+        // Selector stays empty — pickup is blocked (no branch to collect
+        // from); delivery falls back to the "Other Areas" option.
+        if (alive) setBranchesLoaded(true);
       });
 
     getPublicPricingSettings()
@@ -685,7 +690,7 @@ export default function CheckoutPage() {
     mode === "pickup" ? branches.find((b) => b.id === branchId) : undefined;
   // Pickup needs a real branch to collect from — with none active (or none
   // chosen) the order is blocked here, and placeOrder refuses it regardless.
-  const pickupBlocked = mode === "pickup" && !pickupSelection;
+  const pickupBlocked = mode === "pickup" && branchesLoaded && !pickupSelection;
   const resolvedBranchId: string | null =
     mode === "pickup"
       ? pickupSelection?.id ?? null
@@ -744,7 +749,9 @@ export default function CheckoutPage() {
   function handleSubmit() {
     // No live pricing → no honest total to confirm against. A known branch
     // stock-out would only bounce off placeOrder, so it blocks here too.
-    if (isPending || placed || !pricing || stockIssues.length > 0 || pickupBlocked) return;
+    if (isPending || placed || !pricing || stockIssues.length > 0) return;
+    // Pickup with no branch resolved (none active, or the list still loading).
+    if (mode === "pickup" && !pickupSelection) return;
 
     const addressLine = [address.trim(), apartment.trim()]
       .filter(Boolean)
@@ -1110,7 +1117,7 @@ export default function CheckoutPage() {
                   deliveryFee={previewDeliveryFee}
                   pricing={pricing}
                   stockIssues={stockIssues}
-                blockedReason={pickupBlocked ? PICKUP_UNAVAILABLE_ERROR : null}
+                  blockedReason={pickupBlocked ? PICKUP_UNAVAILABLE_ERROR : null}
                   onRemoveItem={(variantId) => removeItem(variantId, isLoggedIn)}
                   loading={isPending}
                   onSubmit={handleSubmit}
