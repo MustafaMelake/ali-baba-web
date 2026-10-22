@@ -23,7 +23,12 @@ import { getBranchStockIssues, type BranchStockIssue } from "@/lib/actions/branc
 import { getPublicPricingSettings } from "@/lib/actions/store-settings";
 import type { PricingSettings } from "@/lib/store-settings";
 import { FulfillmentMethod } from "@/generated/prisma/enums";
-import { checkoutSchema, fieldErrors, ORDER_NOTES_MAX_LENGTH } from "@/lib/validators";
+import {
+  checkoutSchema,
+  fieldErrors,
+  ORDER_NOTES_MAX_LENGTH,
+  PICKUP_UNAVAILABLE_ERROR,
+} from "@/lib/validators";
 import { roundMoney } from "@/lib/discounts";
 import { orderTotals, subtotalOf, vatLabel } from "@/lib/cart-summary";
 import { cn, formatMoney } from "@/lib/utils";
@@ -254,6 +259,7 @@ function OrderSummary({
   deliveryFee,
   pricing,
   stockIssues,
+  blockedReason,
   onRemoveItem,
   loading,
   onSubmit,
@@ -264,6 +270,8 @@ function OrderSummary({
   mode: Mode;
   /** Lines switched off at the selected branch — the order can't go until they're resolved. */
   stockIssues: BranchStockIssue[];
+  /** Why the order can't be placed at all right now (e.g. pickup with no branch) — null when it can. */
+  blockedReason: string | null;
   onRemoveItem: (variantId: string) => void;
   /** Resolved fee for the current selection (0 for pickup) — display only; null until pricing loads. */
   deliveryFee: number | null;
@@ -407,6 +415,17 @@ function OrderSummary({
         )}
       </div>
 
+      {/* Nothing to fulfil from — the exact refusal placeOrder would return. */}
+      {blockedReason && (
+        <p
+          role="alert"
+          className="mt-6 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          {blockedReason}
+        </p>
+      )}
+
       {/* Branch stock-outs — the exact refusal placeOrder would return. */}
       {stockIssues.length > 0 && (
         <div
@@ -432,7 +451,9 @@ function OrderSummary({
       <button
         type="button"
         onClick={onSubmit}
-        disabled={loading || items.length === 0 || total === null || stockIssues.length > 0}
+        disabled={
+          loading || items.length === 0 || total === null || stockIssues.length > 0 || !!blockedReason
+        }
         className="mt-7 relative w-full overflow-hidden rounded-full bg-stone-900 py-4 font-sans text-sm font-semibold uppercase tracking-widest text-white shadow-[0_4px_24px_rgba(0,0,0,0.22)] hover:bg-stone-700 active:scale-[0.99] transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-50"
       >
         <AnimatePresence mode="wait" initial={false}>
@@ -662,6 +683,9 @@ export default function CheckoutPage() {
   // Shared by the stock preview below and the payload handleSubmit sends.
   const pickupSelection =
     mode === "pickup" ? branches.find((b) => b.id === branchId) : undefined;
+  // Pickup needs a real branch to collect from — with none active (or none
+  // chosen) the order is blocked here, and placeOrder refuses it regardless.
+  const pickupBlocked = mode === "pickup" && !pickupSelection;
   const resolvedBranchId: string | null =
     mode === "pickup"
       ? pickupSelection?.id ?? null
@@ -720,7 +744,7 @@ export default function CheckoutPage() {
   function handleSubmit() {
     // No live pricing → no honest total to confirm against. A known branch
     // stock-out would only bounce off placeOrder, so it blocks here too.
-    if (isPending || placed || !pricing || stockIssues.length > 0) return;
+    if (isPending || placed || !pricing || stockIssues.length > 0 || pickupBlocked) return;
 
     const addressLine = [address.trim(), apartment.trim()]
       .filter(Boolean)
@@ -1086,6 +1110,7 @@ export default function CheckoutPage() {
                   deliveryFee={previewDeliveryFee}
                   pricing={pricing}
                   stockIssues={stockIssues}
+                blockedReason={pickupBlocked ? PICKUP_UNAVAILABLE_ERROR : null}
                   onRemoveItem={(variantId) => removeItem(variantId, isLoggedIn)}
                   loading={isPending}
                   onSubmit={handleSubmit}
@@ -1105,6 +1130,7 @@ export default function CheckoutPage() {
                 deliveryFee={previewDeliveryFee}
                 pricing={pricing}
                 stockIssues={stockIssues}
+                blockedReason={pickupBlocked ? PICKUP_UNAVAILABLE_ERROR : null}
                 onRemoveItem={(variantId) => removeItem(variantId, isLoggedIn)}
                 loading={isPending}
                 onSubmit={handleSubmit}

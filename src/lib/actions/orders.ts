@@ -13,7 +13,7 @@ import {
 } from "@/lib/discounts";
 import { getStoreSettings } from "@/lib/store-settings";
 import { prismaErrorCode } from "@/lib/action-utils";
-import { checkoutSchema } from "@/lib/validators";
+import { checkoutSchema, PICKUP_UNAVAILABLE_ERROR } from "@/lib/validators";
 import { orderTotals } from "@/lib/cart-summary";
 import { branchOutOfStockMessage, isAvailableAtBranch } from "@/lib/catalog";
 
@@ -126,6 +126,14 @@ export async function placeOrder(
       }
     }
     const branchId = branch?.id ?? null;
+
+    // A pickup has to be collected SOMEWHERE. Delivery may fall back to
+    // "unassigned" (the Super Admin routes it), but a pickup with no real,
+    // active branch — none exist, or the chosen one was retired mid-checkout —
+    // is refused before any pricing work rather than stranded unassigned.
+    if (data.fulfillment === FulfillmentMethod.PICKUP && !branch) {
+      return { success: false, error: PICKUP_UNAVAILABLE_ERROR };
+    }
 
     // Global pricing knobs (VAT + the "Other Areas" delivery fee), read fresh
     // from the DB per order — the client's preview numbers are never trusted.

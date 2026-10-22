@@ -125,16 +125,20 @@ function stubSettings(s: { vatRate?: number; isVatEnabled?: boolean; defaultDeli
   } as never);
 }
 
-/** A valid PICKUP payload; override per test. */
+/** A valid PICKUP payload (collected at the default active branch); override per test. */
 function payload(overrides: Partial<CheckoutPayload> = {}): CheckoutPayload {
   return {
     items: [{ variantId: "v1", quantity: 1 }],
     fulfillment: FulfillmentMethod.PICKUP,
+    branchId: PICKUP_BRANCH.id,
     customerName: "Mostafa Ali",
     customerPhone: "01000000000",
     ...overrides,
   };
 }
+
+/** The active branch the default PICKUP payload is collected from. */
+const PICKUP_BRANCH = { id: "b-pickup", name: "Menouf", deliveryFee: decimalLike(0) };
 
 /** The `data` object handed to `order.create` (what actually gets persisted). */
 function persistedOrder(): any {
@@ -152,7 +156,9 @@ beforeEach(() => {
 
   mockedSession.mockResolvedValue(null); // guest by default
   mockPrisma.order.count.mockResolvedValue(0); // no pending backlog
-  mockPrisma.branch.findFirst.mockResolvedValue(null); // no branch unless a test sets one
+  // Only the default pickup branch resolves; any other id is unknown/inactive.
+  mockPrisma.branch.findFirst.mockImplementation((async (args: { where?: { id?: string } }) =>
+    args?.where?.id === PICKUP_BRANCH.id ? PICKUP_BRANCH : null) as never);
   stubSettings({}); // VAT 14% on, default delivery 35
   stubVariants([variantRow({ id: "v1", price: 100 })]);
   mockPrisma.order.create.mockResolvedValue({ id: "order_1", orderNumber: 1001 } as never);
@@ -983,9 +989,37 @@ describe("placeOrder — branch-level stock", () => {
     // Even if a stale row came back, an unassigned order has no branch to be out at.
     stubVariants([variantRow({ id: "v1", price: 100, branchAvailable: false })]);
 
-    const res = await placeOrder(payload({ branchId: "branch_closed" }));
+    // DELIVERY: the unassigned fallback is a delivery behaviour (the Super
+    // Admin routes it) — a pickup in the same state is refused, below.
+    const res = await placeOrder(
+      payload({ fulfillment: FulfillmentMethod.DELIVERY, addressLine: "Menouf", branchId: "branch_closed" }),
+    );
 
     expect(res.success).toBe(true);
     expect(persistedOrder().branchId).toBeNull();
+  });
+});
+
+describe("placeOrder — PICKUP needs a real, active branch", () => {
+  const REFUSAL =
+    "Pickup isn't available from that branch right now — please choose another branch or delivery.";
+
+  it("refuses a pickup when no branch is active (none chosen) — before any pricing work", async () => {
+    const res = await placeOrder(payload({ branchId: null }));
+    expect(res).toEqual({ success: false, error: REFUSAL });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a pickup at a branch retired mid-checkout", async () => {
+    const res = await placeOrder(payload({ branchId: "branch_closed" }));
+    expect(res).toEqual({ success: false, error: REFUSAL });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("places a pickup at an active branch, stamped with that branch", async () => {
+    const res = await placeOrder(payload());
+    expect(res.success).toBe(true);
+    expect(persistedOrder().branchId).toBe("b-pickup");
   });
 });

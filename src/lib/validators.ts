@@ -267,6 +267,13 @@ export function phoneSearchDigits(query: string): string | null {
   return digits.length >= 3 ? digits : null;
 }
 
+/**
+ * A PICKUP order needs a real, active branch to be collected from. Shared so
+ * the checkout's blocked-state note is word-for-word placeOrder's refusal.
+ */
+export const PICKUP_UNAVAILABLE_ERROR =
+  "Pickup isn't available from that branch right now — please choose another branch or delivery.";
+
 export const checkoutSchema = z
   .object({
     items: z
