@@ -42,7 +42,7 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
       >
         <div>
           <p className="text-xs font-sans font-semibold uppercase tracking-[0.2em] text-primary mb-3">
-            The Collection
+            Shop by Category
           </p>
           <h2 className="font-serif text-4xl md:text-6xl font-medium tracking-tight leading-[1.05] text-stone-900">
             Crafted for every <br className="hidden md:block" />
@@ -50,14 +50,14 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
           </h2>
         </div>
 
-        {/* Opposite the title — the /collections directory previews every
+        {/* Opposite the title — the /new-arrivals page previews every
             category (featured or not), not just the slider's curated set. */}
         <Link
-          href="/collections"
-          aria-label="View all collections — browse every product category"
+          href="/new-arrivals"
+          aria-label="Browse all categories"
           className="hidden md:flex items-center gap-2 text-sm font-sans font-medium text-stone-500 hover:text-primary transition-colors duration-200 group"
         >
-          View all collections
+          Browse all categories
           <ArrowUpRight
             className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
             aria-hidden="true"
@@ -174,11 +174,11 @@ export default function CategorySlider({ categories }: CategorySliderProps) {
         transition={{ duration: 0.5, delay: 0.3 }}
       >
         <Link
-          href="/collections"
-          aria-label="View all collections — browse every product category"
+          href="/new-arrivals"
+          aria-label="Browse all categories"
           className="inline-flex items-center gap-2 text-sm font-sans font-medium text-stone-500 hover:text-primary transition-colors duration-200 group"
         >
-          View all collections
+          Browse all categories
           <ArrowUpRight
             className="w-4 h-4 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
             aria-hidden="true"

@@ -160,7 +160,7 @@ export async function updateProduct(
 
   revalidatePath("/admin/products");
   revalidatePath("/shop");
-  revalidatePath("/collections");
+  revalidatePath("/new-arrivals");
   revalidatePath("/"); // featured products surface on the homepage
   revalidatePath(`/product/${data.slug}`);
   // If the slug changed, the old detail URL needs refreshing too.
@@ -204,7 +204,7 @@ export async function deleteProduct(id: string): Promise<DeleteProductResult> {
 
     revalidatePath("/admin/products");
     revalidatePath("/shop");
-    revalidatePath("/collections");
+    revalidatePath("/new-arrivals");
     revalidatePath("/"); // featured products surface on the homepage
 
     return { success: true };
@@ -274,7 +274,7 @@ export async function createProduct(
     // Storefront + admin surfaces that list products.
     revalidatePath("/admin/products");
     revalidatePath("/shop");
-    revalidatePath("/collections");
+    revalidatePath("/new-arrivals");
     revalidatePath("/");
 
     return { success: true, productId: product.id };

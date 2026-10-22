@@ -12,7 +12,7 @@ export interface PromoSealProps {
    * rendered with a generic "Flash Sale" treatment instead of a figure.
    */
   percentOff: number | null;
-  /** Link target — a single-category deep link or /collections. */
+  /** Link target — a single-category deep link or /new-arrivals. */
   href: string;
   /** Pre-formatted Cairo-local end date ("18 July"), or null to omit urgency. */
   endsOn: string | null;

@@ -33,7 +33,7 @@ function EmptyCart({ onClose }: { onClose: () => void }) {
         Your cart is empty.
       </p>
       <p className="font-sans text-sm text-stone-400 leading-relaxed max-w-[200px]">
-        Explore our collection and add something exquisite.
+        Explore our creations and add something exquisite.
       </p>
 
       <Link

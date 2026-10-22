@@ -514,7 +514,7 @@ function EmptyCart() {
           Your Cart is Empty
         </h1>
         <p className="font-sans text-base text-stone-500 leading-relaxed mb-8">
-          Looks like you haven&apos;t added anything yet. Explore our collection
+          Looks like you haven&apos;t added anything yet. Explore our creations
           and find something you&apos;ll love.
         </p>
         <Link
@@ -1076,7 +1076,7 @@ export default function CheckoutPage() {
                         30 – 45 minutes
                       </span>
                       . You&apos;ll receive an SMS notification when it&apos;s
-                      ready for collection.
+                      ready for pickup.
                     </p>
                   </motion.div>
                 )}

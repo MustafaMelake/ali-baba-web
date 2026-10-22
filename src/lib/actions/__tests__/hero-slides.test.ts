@@ -164,7 +164,7 @@ describe("createHeroSlide", () => {
   });
 
   it("refuses an invalid payload before touching the database", async () => {
-    const res = await createHeroSlide(input({ linkUrl: "/collections" })); // two destinations
+    const res = await createHeroSlide(input({ linkUrl: "/new-arrivals" })); // two destinations
     expect(res).toEqual({
       success: false,
       error: "Choose exactly one destination — a product or a link.",

@@ -22,7 +22,7 @@ export const metadata: Metadata = {
   // SEO Optimization
   title: "Ali Baba | Authentic Luxury Sweets & Pastry",
   description:
-    "Experience the art of authentic sweets. Ali Baba offers a premium collection of oriental delicacies and modern pastries crafted for the connoisseur.",
+    "Experience the art of authentic sweets. Ali Baba offers premium oriental delicacies and modern pastries crafted for the connoisseur.",
   keywords: [
     "Luxury Sweets",
     "Oriental Pastry",
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Ali Baba | Luxury Sweets",
     description:
-      "Discover our premium 2026 signature collection of oriental and modern sweets.",
+      "Discover our premium 2026 signature range of oriental and modern sweets.",
     type: "website",
   },
 };

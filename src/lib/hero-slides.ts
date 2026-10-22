@@ -16,7 +16,7 @@ import { LISTABLE_PRODUCT } from "@/lib/catalog";
 // read). Both take the SAME `now` the caller captured once per request.
 //
 // A product slide's price is display-only and is resolved exactly like a
-// catalog card's (`toCard` on /collections): the starting variant through
+// catalog card's (`toCard` on /new-arrivals): the starting variant through
 // `gatherPromotions` + `resolvePrice`, falling back to the variant's manual
 // Compare-At strikethrough. Nothing is ever stored on the slide.
 //

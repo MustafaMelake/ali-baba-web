@@ -47,7 +47,7 @@ export default async function WishlistPage() {
             icon={Heart}
             title="Your wishlist is empty"
             description="Tap the heart on any piece you love and it will be waiting for you right here."
-            action={{ href: "/shop", label: "Explore the Collection" }}
+            action={{ href: "/shop", label: "Explore the Shop" }}
           />
         ) : (
           <div className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-3 lg:grid-cols-4">

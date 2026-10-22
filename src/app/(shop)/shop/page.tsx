@@ -24,7 +24,7 @@ export default async function ShopPage({
   // One instant drives every promotion filter + evaluation this request.
   const now = new Date();
 
-  // Active category slug from the URL (?category=slug). Absent ⇒ "All Collection".
+  // Active category slug from the URL (?category=slug). Absent ⇒ "All Products".
   const { category: categoryParam } = await searchParams;
 
   // Run all queries concurrently.

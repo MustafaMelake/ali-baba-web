@@ -168,13 +168,13 @@ describe("heroSlideSchema", () => {
     const parsed = heroSlideSchema.safeParse({
       ...productSlide,
       productId: null,
-      linkUrl: "/collections",
+      linkUrl: "/new-arrivals",
     });
     expect(parsed.success).toBe(true);
   });
 
   it.each([
-    ["both destinations", { productId: "prod_1", linkUrl: "/collections" }],
+    ["both destinations", { productId: "prod_1", linkUrl: "/new-arrivals" }],
     ["no destination", { productId: "", linkUrl: "" }],
   ])("refuses %s", (_label, destination) => {
     const parsed = heroSlideSchema.safeParse({ ...productSlide, ...destination });
@@ -241,7 +241,7 @@ describe("safeHrefError — why a link was refused", () => {
 
   it("uses the generic message for other refusals and null when safe", () => {
     expect(safeHrefError("javascript:alert(1)")).toBe(SAFE_HREF_ERROR);
-    expect(safeHrefError("/collections")).toBeNull();
+    expect(safeHrefError("/new-arrivals")).toBeNull();
     expect(safeHrefError("https://instagram.com/alibaba")).toBeNull();
   });
 

@@ -298,7 +298,7 @@ export default function EditProductForm({
             checked={isFeatured}
             onChange={setIsFeatured}
             label="Featured"
-            description="Highlighted on the homepage and collections."
+            description="Shows a “Featured” badge on the product page."
           />
         </div>
       </section>

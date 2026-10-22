@@ -499,7 +499,7 @@ export default function HeroSlideModal({
                         id="hero-link"
                         value={linkUrl}
                         onChange={(e) => setLinkUrl(e.target.value)}
-                        placeholder="/collections or https://…"
+                        placeholder="/new-arrivals or https://…"
                         className={inputClasses}
                         dir="ltr"
                       />

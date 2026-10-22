@@ -36,7 +36,7 @@ export async function generateMetadata({
 
   const description =
     category.subtitle ??
-    `Explore our ${category.name} collection — handcrafted in the Ali Baba kitchen.`;
+    `Explore our ${category.name} — handcrafted in the Ali Baba kitchen.`;
 
   return {
     title: `${category.name} | Ali Baba`,
@@ -106,7 +106,7 @@ export default async function CategoryPage({
       title={category.name}
       description={
         category.subtitle ??
-        `Discover our ${category.name} collection — each piece handcrafted with care.`
+        `Discover our ${category.name} — each piece handcrafted with care.`
       }
       products={products}
       now={now}

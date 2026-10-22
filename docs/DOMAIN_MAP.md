@@ -154,11 +154,11 @@ The sellable universe. Cardinal rule (schema comment, enforced everywhere): **pr
 - **Validation (shared client/server):** `src/lib/validators.ts` — `variantInputSchema` (name 1–80, `price` positive, `compareAtPrice` nullish with cross-field refine `compareAtPrice > price`, sku ≤ 64), `productInputSchema` / `productUpdateSchema` (name 2–120, slug regex `^[a-z0-9]+(?:-[a-z0-9]+)*$`, description ≤ 2000, `variants.min(1)`).
 - **Admin actions:** `src/app/admin/products/actions.ts` (`createProduct`, `updateProduct`, `deleteProduct`); `src/lib/actions/categories.ts` (`createCategory`, `updateCategory`, `deleteCategory` + transactional `ensureUniqueSlug`).
 - **Admin UI:** `src/app/admin/products/{page,new/page,[id]/edit/page}.tsx`, `NewProductForm`, `EditProductForm`, `ProductRowActions`, `src/app/admin/categories/page.tsx`, `NewCategoryModal`, `EditCategoryModal`, `CategoryEditButton`, `CreateCategoryButton`, `DeleteCategoryButton`, `MultiSelect`.
-- **Storefront:** `src/app/(shop)/shop/page.tsx` + `ShopClient.tsx`; `src/app/(shop)/category/[slug]/page.tsx` + `CategoryPageTemplate.tsx`; `src/app/(shop)/collections/page.tsx` (ISR 60 — "Latest Arrivals" + per-category previews); `src/app/(shop)/product/[slug]/page.tsx`; islands `ProductCard.tsx`, `products/ProductPurchasePanel.tsx`, `products/VariantSelector.tsx`, `ProductGallery.tsx`.
+- **Storefront:** `src/app/(shop)/shop/page.tsx` + `ShopClient.tsx`; `src/app/(shop)/category/[slug]/page.tsx` + `CategoryPageTemplate.tsx`; `src/app/(shop)/new-arrivals/page.tsx` (ISR 60 — "Latest Arrivals" + per-category previews); `src/app/(shop)/product/[slug]/page.tsx`; islands `ProductCard.tsx`, `products/ProductPurchasePanel.tsx`, `products/VariantSelector.tsx`, `ProductGallery.tsx`.
 - **Search palette:** `src/lib/actions/search.ts` (`searchCatalog`, `getSearchSuggestions` — public reads, no gate, no revalidation); `src/components/search/SearchLauncher.tsx` (Navbar icon + ⌘K on Apple / Ctrl+K elsewhere via `src/lib/keyboard.ts` + 60 s suggestions cache), `SearchModal.tsx` (portal dialog: debounce, stale-answer guard, combobox keyboard model, focus trap), `SearchResults.tsx` (rows, pills, highlighting, empty/error states); shared query rules (`normalizeSearchQuery`, `searchTokens`, `searchQuerySchema`) in `src/lib/validators.ts`.
 
 ### 3.4 Step-by-Step Data Flow
-**Create:** zod re-parse → single nested `product.create` with `variants.create[]` → P2002 sniffed via `meta.target` to distinguish "SKU taken" vs "slug taken" → revalidates `/admin/products`, `/shop`, `/collections`, `/`.
+**Create:** zod re-parse → single nested `product.create` with `variants.create[]` → P2002 sniffed via `meta.target` to distinguish "SKU taken" vs "slug taken" → revalidates `/admin/products`, `/shop`, `/new-arrivals`, `/`.
 
 **Update (the delicate variant reconcile):**
 1. Fetch existing variant ids; compute `keptIds` = incoming ids **∩ existing** (an incoming id not owned by this product is treated as *new* — ownership can't be spoofed to hijack another product's variant).
@@ -166,7 +166,7 @@ The sellable universe. Cardinal rule (schema comment, enforced everywhere): **pr
 3. Slug-owner pre-check (`findUnique(slug)`, excluding self) for a clean message before the transaction.
 4. Transaction: `product.update` + per-variant `update` (kept) / `create` (new); `compareAtPrice ?? null` so *clearing* the field genuinely wipes a legacy discount.
 5. **Post-commit, best-effort** removal loop (deliberately outside the transaction so it can never roll back a valid update): `variant.delete` → on `P2003` (ordered variant) → **archive** instead: `{ isAvailable: false, sku: null }` (frees the unique SKU for reuse), `archivedCount` reported to the UI.
-6. Revalidation fan-out: `/admin/products`, `/shop`, `/collections`, `/`, `/product/[newSlug]`, and `/product/[oldSlug]` when the slug changed.
+6. Revalidation fan-out: `/admin/products`, `/shop`, `/new-arrivals`, `/`, `/product/[newSlug]`, and `/product/[oldSlug]` when the slug changed.
 
 **Delete:** `product.delete` → `P2003` → friendly "appears in existing orders — mark Out of Stock instead".
 
@@ -199,7 +199,7 @@ Time-windowed discounts (`PERCENTAGE` | `FIXED_AMOUNT`) targeting any mix of who
 ### 4.3 File Boundaries
 - **Math core:** `src/lib/discounts.ts` — `PROMOTION_SELECT_FIELDS` (uniform select), `livePromotionWhere(now)` (`isActive && startDate ≤ now ≤ endDate`, spreadable into relation includes), `isPromotionLive` (strict + NaN-safe re-check), `applyPromotion` (pct: `base × (1 − v/100)`; fixed: `base − v`; floored at 0; `roundMoney`d), `gatherPromotions` (merge + de-dupe by id across the three levels), `resolvePrice` (iterate live promos, **lowest final price wins**, strict `<` so first-found retains ties), `roundMoney` (`Math.round((n + Number.EPSILON) × 100) / 100` — the platform-wide 2-dp authority).
 - **Admin:** `src/lib/actions/promotions.ts` (create/update/toggle/delete; validation: name ≥ 2, type ∈ enum, value > 0, pct ≤ 100, parseable dates, `endDate ≥ startDate`, ≥ 1 target after id-cleaning); `src/app/admin/promotions/page.tsx`, `PromotionModal`, `PromotionEditButton`, `PromotionActiveToggle`, `DeletePromotionButton`, `CreatePromotionButton`, `MultiSelect`.
-- **Consumers (the full set):** `shop/page.tsx`, `category/[slug]/page.tsx`, `collections/page.tsx`, `product/[slug]/page.tsx`, `(shop)/page.tsx` (badge only), `lib/actions/cart.ts` (×2 paths), `lib/actions/orders.ts` (billing), `lib/actions/wishlist.ts`, `lib/actions/search.ts` (palette hits + suggestions).
+- **Consumers (the full set):** `shop/page.tsx`, `category/[slug]/page.tsx`, `new-arrivals/page.tsx`, `product/[slug]/page.tsx`, `(shop)/page.tsx` (badge only), `lib/actions/cart.ts` (×2 paths), `lib/actions/orders.ts` (billing), `lib/actions/wishlist.ts`, `lib/actions/search.ts` (palette hits + suggestions).
 
 ### 4.4 Step-by-Step Data Flow
 1. **Authoring:** admin CRUD → `connect` (create) / `set` (update — the multi-select sends the *full desired* target list, not a delta) → every mutation calls `revalidatePromotionSurfaces()` = `revalidatePath("/admin/promotions")` + **`revalidatePath("/", "layout")`** (nukes the whole storefront route tree so ISR pages re-render with new pricing on next request).
@@ -208,7 +208,7 @@ Time-windowed discounts (`PERCENTAGE` | `FIXED_AMOUNT`) targeting any mix of who
 4. **Billing:** `placeOrder` runs the *same* pipeline inside its transaction (§6.4 step 6) — the promo evaluated at bill time is stamped into `OrderItem.unitPrice` forever.
 
 ### 4.5 Intersections & Blast Radius
-**Widest blast radius in the platform.** A change to `resolvePrice`/`livePromotionWhere`/`roundMoney` simultaneously alters: shop cards, category cards, `/collections` cards, PDP, homepage badges, search-palette results, logged-in cart hydration, guest re-pricing, wishlist cards, and **the amount customers are billed**. The single-`now`-per-request discipline is what prevents a promotion expiring mid-request from pricing two lines of one order inconsistently — any new consumer must follow it. Removing the `revalidatePath("/", "layout")` on mutations would leave ISR'd prices stale for up to 60s after an admin edit.
+**Widest blast radius in the platform.** A change to `resolvePrice`/`livePromotionWhere`/`roundMoney` simultaneously alters: shop cards, category cards, `/new-arrivals` cards, PDP, homepage badges, search-palette results, logged-in cart hydration, guest re-pricing, wishlist cards, and **the amount customers are billed**. The single-`now`-per-request discipline is what prevents a promotion expiring mid-request from pricing two lines of one order inconsistently — any new consumer must follow it. Removing the `revalidatePath("/", "layout")` on mutations would leave ISR'd prices stale for up to 60s after an admin edit.
 
 ### 4.6 Technical Debt & Vestigial Code
 - **Overlap policy — FORMALIZED (no longer implicit):** "Cheapest Wins" is the officially adopted business rule for overlapping promotions — exactly ONE promotion ever applies (the one yielding the lowest price), promotions never stack, and there is deliberately no priority/exclusivity field. It is codified in the block comment above `resolvePrice` in `src/lib/discounts.ts`. `ProductVariant.compareAtPrice` is a purely **visual marketing** "was" price — never an input to the discount math, only a strikethrough fallback when no live promotion applies.
@@ -572,7 +572,7 @@ The Prisma/Neon substrate plus the platform's shared coding idioms.
 | `/admin/hero` | `force-dynamic` | live (badges compare each window against `now`) | hero-slide actions → `revalidatePath("/admin/hero")` |
 | `/product/[slug]` | ISR 60 | 60 s | product actions (both slugs on rename); review approve/delete; promotions (layout) |
 | `/category/[slug]` | ISR 60 | 60 s | `updateCategory` (own slug); promotions (layout) |
-| `/collections` | ISR 60 | 60 s | product create/update/delete; category create/update/delete; promotions (layout) |
+| `/new-arrivals` | ISR 60 | 60 s | product create/update/delete; category create/update/delete; promotions (layout) |
 | `/cart` | ISR 60 (shell only — lines render client-side) | 60 s | pricing-settings updates; branch create/update/delete |
 | `/shop` | per-request dynamic (reads `searchParams`) | none | n/a (revalidatePath calls exist but are inert-in-effect) |
 | `/menu` | ISR 3600 | 1 h | all menu actions → `revalidatePath("/menu")` |

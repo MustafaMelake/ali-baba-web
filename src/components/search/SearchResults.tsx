@@ -40,16 +40,16 @@ export function resultSections(results: SearchResults | null): SearchSectionMode
   if (!results) return [];
   const sections: SearchSectionModel[] = [
     { key: "products", label: "Products", layout: "rows", options: results.products.map(productOption) },
-    { key: "collections", label: "Collections", layout: "rows", options: results.categories.map(categoryOption) },
+    { key: "categories", label: "Categories", layout: "rows", options: results.categories.map(categoryOption) },
   ];
   return sections.filter((section) => section.options.length > 0);
 }
 
-/** The idle palette: collection pills to jump straight in, then the newest arrivals. */
+/** The idle palette: category pills to jump straight in, then the newest arrivals. */
 export function suggestionSections(suggestions: SearchSuggestions | null): SearchSectionModel[] {
   if (!suggestions) return [];
   const sections: SearchSectionModel[] = [
-    { key: "browse", label: "Browse collections", layout: "pills", options: suggestions.categories.map(categoryOption) },
+    { key: "browse", label: "Browse categories", layout: "pills", options: suggestions.categories.map(categoryOption) },
     { key: "latest", label: "Latest arrivals", layout: "rows", options: suggestions.products.map(productOption) },
   ];
   return sections.filter((section) => section.options.length > 0);
@@ -346,14 +346,14 @@ export function SearchEmptyState({
         <span dir="auto" className="text-stone-600">
           {query}
         </span>
-        &rdquo;. Try another word, or browse every collection.
+        &rdquo;. Try another word, or browse every category.
       </p>
       <Link
-        href="/collections"
+        href="/new-arrivals"
         onClick={onNavigate}
         className="group mt-7 inline-flex items-center gap-2 rounded-full border border-stone-200 px-5 py-2.5 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-700 transition-colors hover:border-primary hover:text-primary"
       >
-        Browse all collections
+        Browse all categories
         <ArrowRight
           className="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5"
           aria-hidden="true"

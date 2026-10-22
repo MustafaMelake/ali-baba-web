@@ -6,7 +6,7 @@ run through the highest-blast-radius modules in the platform (`src/lib/discounts
 
 ## The Discount Engine (`src/lib/discounts.ts`) — one pure resolver, every surface
 
-The engine is a **pure, dependency-free module** (no Prisma, no React) shared by every price surface: shop cards, category cards, `/collections` cards, PDP, homepage badge, homepage hero slides (display-only starting price), search-palette results, logged-in cart hydration, guest re-pricing (also the `/cart` page's live read), wishlist cards — **and `placeOrder`'s billing**. That shared usage is *the* mechanism guaranteeing the shown price equals the billed price. **Never re-implement discount math inside a component** — cards and the PDP call the same functions; the math only ever lives in `discounts.ts`.
+The engine is a **pure, dependency-free module** (no Prisma, no React) shared by every price surface: shop cards, category cards, `/new-arrivals` cards, PDP, homepage badge, homepage hero slides (display-only starting price), search-palette results, logged-in cart hydration, guest re-pricing (also the `/cart` page's live read), wishlist cards — **and `placeOrder`'s billing**. That shared usage is *the* mechanism guaranteeing the shown price equals the billed price. **Never re-implement discount math inside a component** — cards and the PDP call the same functions; the math only ever lives in `discounts.ts`.
 
 The three helpers a surface uses:
 

@@ -95,7 +95,7 @@ export async function createCategory(
     });
 
     revalidatePath("/"); // homepage CategorySlider
-    revalidatePath("/collections");
+    revalidatePath("/new-arrivals");
     revalidatePath("/admin/categories");
 
     return { success: true, id };
@@ -172,7 +172,7 @@ export async function updateCategory(
     }
 
     revalidatePath("/"); // homepage CategorySlider
-    revalidatePath("/collections");
+    revalidatePath("/new-arrivals");
     revalidatePath("/admin/categories");
     revalidatePath(`/category/${slug}`);
 
@@ -235,7 +235,7 @@ export async function deleteCategory(id: string): Promise<DeleteCategoryResult> 
     if (existing?.image) await deleteUploadedFiles([existing.image]);
 
     revalidatePath("/"); // homepage CategorySlider
-    revalidatePath("/collections");
+    revalidatePath("/new-arrivals");
     revalidatePath("/admin/categories");
 
     return { success: true };

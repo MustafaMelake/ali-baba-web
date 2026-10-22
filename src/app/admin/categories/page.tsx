@@ -98,7 +98,7 @@ export default async function AdminCategoriesPage() {
       <PageHeader
         eyebrow="Catalog"
         title="Categories"
-        description="Curate the homepage slider and manage every product collection. Toggle a category's “Feature in slider” switch to surface it on the storefront."
+        description="Curate the homepage slider and manage every product category. Toggle a category's “Feature in slider” switch to surface it on the storefront."
         action={<CreateCategoryButton />}
       />
 

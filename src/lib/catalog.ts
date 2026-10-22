@@ -2,7 +2,7 @@ import type { Prisma } from "@/generated/prisma/client";
 
 /**
  * A product is listable only if it AND at least one of its variants is
- * available. Every catalog surface (shop, category, collections, search) pairs
+ * available. Every catalog surface (shop, category, new arrivals, search) pairs
  * this with `variants: { where: { isAvailable: true } }`, so a card's starting
  * variant — the price it shows and the variant quick-add charges — can never be
  * an archived one that `placeOrder` would reject.

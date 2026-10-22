@@ -330,7 +330,7 @@ function SearchDialog({
               autoFocus
               type="text"
               role="combobox"
-              aria-label="Search products and collections"
+              aria-label="Search products and categories"
               aria-expanded={options.length > 0}
               aria-controls={listboxId}
               aria-autocomplete="list"
@@ -339,7 +339,7 @@ function SearchDialog({
               onChange={(e) => handleQueryChange(e.target.value)}
               onKeyDown={handleInputKeyDown}
               maxLength={SEARCH_MAX_QUERY_LENGTH}
-              placeholder="Search creations & collections…"
+              placeholder="Search creations & categories…"
               dir="auto"
               enterKeyHint="search"
               autoComplete="off"
@@ -457,11 +457,11 @@ function SearchDialog({
             </div>
 
             <Link
-              href="/collections"
+              href="/new-arrivals"
               onClick={handleLinkClick}
               className="group ml-auto inline-flex items-center gap-1.5 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-500 transition-colors hover:text-primary"
             >
-              All collections
+              All categories
               <ArrowRight
                 className="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5"
                 aria-hidden="true"

@@ -52,7 +52,7 @@ function EmptyBag() {
       </p>
       <div className="mt-10 flex flex-col items-center gap-3 sm:flex-row">
         <Link
-          href="/collections"
+          href="/new-arrivals"
           className="group inline-flex items-center gap-2.5 rounded-full bg-stone-900 px-8 py-4 text-xs font-semibold uppercase tracking-widest text-white transition-colors hover:bg-stone-700"
         >
           Continue Shopping
@@ -159,7 +159,7 @@ export default function CartView({
             Items <span className="text-lg tabular-nums text-stone-400">({units})</span>
           </h2>
           <Link
-            href="/collections"
+            href="/new-arrivals"
             className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500 transition-colors hover:text-primary"
           >
             Keep browsing

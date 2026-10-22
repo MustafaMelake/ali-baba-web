@@ -268,7 +268,7 @@ export async function searchCatalog(query: string): Promise<SearchCatalogResult>
 }
 
 /**
- * What the palette shows before anything is typed: collections to jump
+ * What the palette shows before anything is typed: categories to jump
  * straight into (featured first, in slider order) and the newest arrivals.
  */
 export async function getSearchSuggestions(): Promise<SearchSuggestionsResult> {

@@ -94,7 +94,7 @@ export default function CategoryPageTemplate({
             </nav>
 
             <p className="mb-5 font-sans text-[11px] font-semibold uppercase tracking-[0.35em] text-primary">
-              The Collection
+              Category
             </p>
 
             <h1 className="font-serif font-medium leading-[1.03] tracking-tight text-stone-900 text-[clamp(2.5rem,6.5vw,5rem)]">
@@ -123,14 +123,14 @@ export default function CategoryPageTemplate({
                 Nothing here just yet
               </p>
               <p className="mt-3 max-w-md font-sans text-sm text-stone-400">
-                We&apos;re still perfecting this collection. Explore the rest of
+                We&apos;re still perfecting this category. Explore the rest of
                 the maison in the meantime.
               </p>
               <Link
                 href="/shop"
                 className="mt-8 inline-flex items-center gap-2 rounded-full bg-stone-900 px-7 py-3 font-sans text-xs font-semibold uppercase tracking-[0.18em] text-white transition-colors hover:bg-primary"
               >
-                Browse all collections
+                Browse all products
               </Link>
             </div>
           ) : (

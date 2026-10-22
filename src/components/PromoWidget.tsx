@@ -47,7 +47,7 @@ export default async function PromoWidget() {
       value: true,
       endDate: true,
       // Deep-link target: a promotion aimed at exactly one category sends the
-      // seal straight to that collection; anything broader lands on /collections.
+      // seal straight to that category; anything broader lands on /new-arrivals.
       categories: { select: { slug: true } },
     },
   });
@@ -76,7 +76,7 @@ export default async function PromoWidget() {
   const href =
     featured.categories.length === 1
       ? `/category/${featured.categories[0].slug}`
-      : "/collections";
+      : "/new-arrivals";
 
   const endsOn =
     featured.endDate.getTime() - now.getTime() <= ENDS_SOON_WINDOW_MS

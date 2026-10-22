@@ -7,7 +7,7 @@ import ProductCard, { type ShopProduct } from "@/components/ProductCard";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
-const ALL = "All Collection";
+const ALL = "All Products";
 
 /** A shop category as the filter bar needs it: display name + URL slug. */
 export interface ShopCategory {
@@ -16,7 +16,7 @@ export interface ShopCategory {
 }
 
 export interface ShopClientProps {
-  /** Categories fetched from the DB (without the synthetic "All Collection"). */
+  /** Categories fetched from the DB (without the synthetic "All Products"). */
   categories: ShopCategory[];
   /** Already filtered server-side to the active category — rendered as-is. */
   products: ShopProduct[];
@@ -29,18 +29,18 @@ export default function ShopClient({ categories, products }: ShopClientProps) {
   // exposes a pending flag we use to dim the grid mid-transition.
   const [isPending, startTransition] = useTransition();
 
-  // The active filter is the URL's ?category=slug (null ⇒ "All Collection").
+  // The active filter is the URL's ?category=slug (null ⇒ "All Products").
   const activeSlug = searchParams.get("category");
   const activeName =
     categories.find((c) => c.slug === activeSlug)?.name ?? ALL;
 
-  // "All Collection" is the first, synthetic filter (slug=null); the rest are data.
+  // "All Products" is the first, synthetic filter (slug=null); the rest are data.
   const filters: { name: string; slug: string | null }[] = [
     { name: ALL, slug: null },
     ...categories,
   ];
 
-  // Push the new filter into the URL (slug, or none for "All Collection") as a
+  // Push the new filter into the URL (slug, or none for "All Products") as a
   // transition: scroll:false keeps the sticky bar in place — no jump to top.
   function selectCategory(slug: string | null) {
     const params = new URLSearchParams(searchParams.toString());
@@ -74,7 +74,7 @@ export default function ShopClient({ categories, products }: ShopClientProps) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.9, ease: EASE, delay: 0.08 }}
         >
-          The Signature <em className="not-italic text-primary">Collection</em>
+          Our Signature <em className="not-italic text-primary">Creations</em>
         </motion.h1>
 
         <motion.p
@@ -173,7 +173,7 @@ export default function ShopClient({ categories, products }: ShopClientProps) {
               Nothing here yet.
             </p>
             <p className="font-sans text-sm text-stone-400">
-              This collection is being perfected. Please check back soon.
+              These creations are being perfected. Please check back soon.
             </p>
           </div>
         )}

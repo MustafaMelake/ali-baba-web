@@ -153,7 +153,7 @@ describe("heroDestinationIssue — a separate warning, never the primary badge",
   it("accepts a listable product or a link", () => {
     expect(heroDestinationIssue(row())).toBeNull();
     expect(
-      heroDestinationIssue(row({ productId: null, product: null, linkUrl: "/collections" })),
+      heroDestinationIssue(row({ productId: null, product: null, linkUrl: "/new-arrivals" })),
     ).toBeNull();
   });
 
@@ -251,10 +251,10 @@ describe("toHeroSlideView — display-only starting price (the catalog card chai
     expect(toHeroSlideView(row({ showPrice: false }), NOW)!.price).toBeNull();
 
     const link = toHeroSlideView(
-      row({ productId: null, product: null, linkUrl: "/collections", showPrice: true }),
+      row({ productId: null, product: null, linkUrl: "/new-arrivals", showPrice: true }),
       NOW,
     )!;
-    expect(link.href).toBe("/collections");
+    expect(link.href).toBe("/new-arrivals");
     expect(link.price).toBeNull();
   });
 

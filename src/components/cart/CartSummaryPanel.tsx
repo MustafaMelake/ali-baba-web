@@ -190,7 +190,7 @@ export default function CartSummaryPanel({
             </Link>
           )}
           <Link
-            href="/collections"
+            href="/new-arrivals"
             className="mt-4 block text-center text-xs font-semibold uppercase tracking-[0.18em] text-stone-500 transition-colors hover:text-primary"
           >
             Continue Shopping
