@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { ShoppingBag, Inbox } from "lucide-react";
-import { getServerSession } from "@/lib/session";
+import { getServerSession, requirePasswordCurrent } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { formatDate, formatDateTime, prettyLabel } from "@/lib/utils";
 import { OrderStatus } from "@/generated/prisma/enums";
@@ -31,6 +31,7 @@ export default async function MyOrdersPage({
 }) {
   const session = await getServerSession();
   if (!session) redirect("/login");
+  requirePasswordCurrent(session);
 
   const activeStatus = parseStatus((await searchParams).status);
 

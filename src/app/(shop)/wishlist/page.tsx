@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Heart, ArrowUpRight } from "lucide-react";
-import { getServerSession } from "@/lib/session";
+import { getServerSession, requirePasswordCurrent } from "@/lib/session";
 import { getWishlistItems } from "@/lib/actions/wishlist";
 import { formatMoney } from "@/lib/utils";
 import { percentOff } from "@/lib/discounts";
@@ -19,6 +19,7 @@ export const metadata = {
 export default async function WishlistPage() {
   const session = await getServerSession();
   if (!session) redirect("/login");
+  requirePasswordCurrent(session);
 
   const result = await getWishlistItems();
   const items = result.success ? result.data : [];

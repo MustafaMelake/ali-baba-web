@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Cormorant_Garamond, Geist } from "next/font/google"; // استخدمنا خط فاخر للـ Serif
 import { Toaster } from "sonner";
 import CartSyncProvider from "@/components/providers/CartSyncProvider";
+import PasswordChangeGate from "@/components/providers/PasswordChangeGate";
 import "./globals.css";
 
 // خط فاخر للـ Headlines
@@ -50,6 +51,8 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background text-foreground font-sans">
         <CartSyncProvider>{children}</CartSyncProvider>
+        {/* Holds a user with an admin-reset password on /account/change-password. */}
+        <PasswordChangeGate />
         <Toaster richColors position="top-center" />
       </body>
     </html>

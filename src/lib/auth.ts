@@ -26,6 +26,15 @@ export const auth = betterAuth({
         input: false,
         defaultValue: "USER",
       },
+      // Set by an ADMIN password reset, cleared only by changeTemporaryPassword.
+      // Riding on the session lets every guard (server pages, admin actions,
+      // the client PasswordChangeGate) hold the user on the change-password
+      // page. `input: false` — no client can set or clear it.
+      mustChangePassword: {
+        type: "boolean",
+        input: false,
+        defaultValue: false,
+      },
     },
   },
   session: {

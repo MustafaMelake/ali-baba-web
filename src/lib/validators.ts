@@ -457,6 +457,37 @@ export type MarketingEventInput = z.input<typeof marketingEventSchema>;
 /** The normalized reminder the actions write. */
 export type MarketingEventData = z.output<typeof marketingEventSchema>;
 
+// ─── Account ─────────────────────────────────────────────────────────────────
+
+/** Mirrors Better Auth's `minPasswordLength` (src/lib/auth.ts) and its default max. */
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 128;
+
+/** Changing your own password — including out of an admin-issued temporary one. */
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Enter your current password."),
+    newPassword: z
+      .string()
+      .min(PASSWORD_MIN_LENGTH, `Use at least ${PASSWORD_MIN_LENGTH} characters.`)
+      .max(PASSWORD_MAX_LENGTH, "That password is too long."),
+    confirmPassword: z.string(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.newPassword !== data.confirmPassword) {
+      ctx.addIssue({ code: "custom", path: ["confirmPassword"], message: "The passwords don't match." });
+    }
+    if (data.newPassword && data.newPassword === data.currentPassword) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["newPassword"],
+        message: "Choose a password different from the current one.",
+      });
+    }
+  });
+
+export type ChangePasswordInput = z.input<typeof changePasswordSchema>;
+
 // ─── Hero slides ─────────────────────────────────────────────────────────────
 
 /**

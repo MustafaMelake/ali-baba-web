@@ -29,7 +29,27 @@ export async function requireAdmin() {
   if (!session || session.user.role !== "ADMIN") {
     throw new Error("Unauthorized: admin access required.");
   }
+  if (session.user.mustChangePassword) throw new Error(PASSWORD_CHANGE_REQUIRED);
   return session;
+}
+
+/** Where a user with `mustChangePassword` is held until they pick a new one. */
+export const CHANGE_PASSWORD_PATH = "/account/change-password";
+
+const PASSWORD_CHANGE_REQUIRED =
+  "Unauthorized: change your temporary password first.";
+
+/**
+ * In-page guard for every signed-in server-rendered surface (/my-orders,
+ * /wishlist, the admin layout): a user whose password an admin reset is sent
+ * to CHANGE_PASSWORD_PATH until they set their own. Cached storefront pages
+ * can't read the session server-side, so the client PasswordChangeGate covers
+ * those; this is the authoritative half.
+ */
+export function requirePasswordCurrent(
+  session: { user: { mustChangePassword?: boolean | null } } | null,
+): void {
+  if (session?.user.mustChangePassword) redirect(CHANGE_PASSWORD_PATH);
 }
 
 /**
@@ -40,6 +60,7 @@ export async function requireAdmin() {
 export async function requireAdminPage() {
   const session = await getServerSession();
   if (!session) redirect("/login");
+  requirePasswordCurrent(session);
   if (session.user.role !== "ADMIN") redirect("/admin");
   return session;
 }
@@ -73,9 +94,11 @@ export async function requireDashboardAccess(): Promise<DashboardScope> {
 
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { role: true, branchId: true },
+    select: { role: true, branchId: true, mustChangePassword: true },
   });
   if (!user) throw new Error("Unauthorized: account not found.");
+  // Read live, like role: a reset takes effect on the very next request.
+  if (user.mustChangePassword) throw new Error(PASSWORD_CHANGE_REQUIRED);
 
   if (user.role === "ADMIN") {
     return { userId: session.user.id, role: "ADMIN" };

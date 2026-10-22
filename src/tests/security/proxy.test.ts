@@ -6,7 +6,7 @@
 // implementation does differently from a naive reading — tested as they REALLY
 // are, not as assumed:
 //
-//   • The proxy's matcher covers ONLY /my-orders + /wishlist. It does NOT gate
+//   • The proxy's matcher covers ONLY /my-orders, /wishlist + /account. It does NOT gate
 //     /admin — admin routes are gated IN-PAGE by requireAdminPage(). Testing
 //     "the proxy intercepts /admin" would assert false security, so requirement
 //     #1's admin case is tested against the REAL gate (requireAdminPage).
@@ -112,6 +112,8 @@ describe("proxy — matcher scope (admin is not proxy-gated)", () => {
       "/my-orders/:path*",
       "/wishlist",
       "/wishlist/:path*",
+      "/account",
+      "/account/:path*",
     ]);
   });
 
@@ -183,7 +185,7 @@ describe("session guards — logged-out rejection (token presence, not path)", (
     const scope = await requireDashboardAccess();
     expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
       where: { id: "m1" },
-      select: { role: true, branchId: true },
+      select: { role: true, branchId: true, mustChangePassword: true },
     });
     expect(scope).toEqual({ userId: "m1", role: "MANAGER", branchId: "b1" });
   });
@@ -229,5 +231,55 @@ describe("sanitizeRedirect — backslash open-redirect (hardened)", () => {
 
   it("collapses the backslash path to '/' — bypass blocked", () => {
     expect(sanitizeRedirect(BACKSLASH_EXPLOIT)).toBe("/");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 3. Forced password change — a user whose password an ADMIN reset is held on
+//    /account/change-password by every server-side guard
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("mustChangePassword gate", () => {
+  beforeEach(() => {
+    mockReset(mockPrisma);
+    mockedRedirect.mockClear();
+  });
+
+  it("requirePasswordCurrent redirects a flagged user to the change-password page", async () => {
+    const { requirePasswordCurrent } = await import("@/lib/session");
+    expect(() => requirePasswordCurrent({ user: { mustChangePassword: true } })).toThrow(
+      "NEXT_REDIRECT:/account/change-password",
+    );
+  });
+
+  it("requirePasswordCurrent lets an unflagged user — and a guest — through", async () => {
+    const { requirePasswordCurrent } = await import("@/lib/session");
+    expect(() => requirePasswordCurrent({ user: { mustChangePassword: false } })).not.toThrow();
+    expect(() => requirePasswordCurrent(null)).not.toThrow();
+    expect(mockedRedirect).not.toHaveBeenCalled();
+  });
+
+  it("requireAdminPage holds a flagged ADMIN on the change-password page", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "a1", role: "ADMIN", mustChangePassword: true } });
+    await expect(requireAdminPage()).rejects.toThrow("NEXT_REDIRECT:/account/change-password");
+  });
+
+  it("requireAdmin refuses a flagged ADMIN — every admin action toasts instead of running", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "a1", role: "ADMIN", mustChangePassword: true } });
+    await expect(requireAdmin()).rejects.toThrow("change your temporary password first");
+  });
+
+  it("requireDashboardAccess reads the flag LIVE from the database", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "m1", role: "MANAGER" } });
+    mockPrisma.user.findUnique.mockResolvedValue({
+      role: "MANAGER",
+      branchId: "b1",
+      mustChangePassword: true,
+    } as never);
+    await expect(requireDashboardAccess()).rejects.toThrow("change your temporary password first");
+  });
+
+  it("the edge proxy covers /account (the in-page check stays authoritative)", () => {
+    expect(config.matcher).toEqual(expect.arrayContaining(["/account", "/account/:path*"]));
   });
 });

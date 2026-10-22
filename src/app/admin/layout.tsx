@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getServerSession } from "@/lib/session";
+import { getServerSession, requirePasswordCurrent } from "@/lib/session";
 import Sidebar from "@/components/admin/Sidebar";
 import TopHeader from "@/components/admin/TopHeader";
 
@@ -38,6 +38,7 @@ export default async function AdminLayout({
   const session = await getServerSession();
 
   if (!session) redirect("/login");
+  requirePasswordCurrent(session);
   if (session.user.role !== "ADMIN" && session.user.role !== "MANAGER") {
     redirect("/");
   }
