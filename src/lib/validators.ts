@@ -359,6 +359,97 @@ export type MarketingEventInput = z.input<typeof marketingEventSchema>;
 /** The normalized reminder the actions write. */
 export type MarketingEventData = z.output<typeof marketingEventSchema>;
 
+// ─── Hero slides ─────────────────────────────────────────────────────────────
+
+/**
+ * Soft cap on stored slides (admin list + the bound on one reorder
+ * transaction). The storefront separately shows at most HERO_MAX_LIVE_SLIDES.
+ */
+export const HERO_MAX_SLIDES = 12;
+
+/**
+ * One homepage hero slide, shared by the admin modal (instant feedback) and the
+ * hero-slides actions (the authoritative re-parse). Overlay copy is all
+ * optional — a designed image may carry its own text. Exactly ONE destination:
+ * a product (CTA → its page, optional display-only price) or a whitelisted
+ * link. `showPrice` only means something on a product slide; the renderer
+ * ignores it otherwise. Dates are Cairo calendar days, resolved to instants by
+ * storeDateStart / storeDateEnd in the action, exactly like promotions.
+ */
+export const heroSlideSchema = z
+  .object({
+    eyebrow: optionalNote(40, "Eyebrow"),
+    title: optionalNote(90, "Headline"),
+    subtitle: optionalNote(200, "Subtitle"),
+    ctaLabel: z
+      .string()
+      .trim()
+      .min(2, "Button label must be at least 2 characters.")
+      .max(30, "Button label is too long (max 30 characters)."),
+    showPrice: z.boolean(),
+    imageDesktop: z
+      .string({ error: "Upload a desktop image." })
+      .trim()
+      .min(1, "Upload a desktop image.")
+      .refine(isHostedImageUrl, HOSTED_IMAGE_ERROR),
+    imageMobile: z
+      .string()
+      .trim()
+      .refine((url) => url === "" || isHostedImageUrl(url), HOSTED_IMAGE_ERROR)
+      .nullish()
+      .transform((value) => value || null),
+    imageAlt: z
+      .string()
+      .trim()
+      .min(2, "Describe the image (including any text written on it).")
+      .max(300, "Image description is too long (max 300 characters)."),
+    productId: z
+      .string()
+      .trim()
+      .nullish()
+      .transform((value) => value || null),
+    linkUrl: z
+      .string()
+      .trim()
+      .max(2048, "Link is too long.")
+      .refine((url) => url === "" || isSafeHref(url), SAFE_HREF_ERROR)
+      .nullish()
+      .transform((value) => value || null),
+    isActive: z.boolean(),
+    startsOn: calendarDate.nullish().or(z.literal("")).transform((value) => value || null),
+    endsOn: calendarDate.nullish().or(z.literal("")).transform((value) => value || null),
+  })
+  .superRefine((data, ctx) => {
+    if (Boolean(data.productId) === Boolean(data.linkUrl)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["productId"],
+        message: "Choose exactly one destination — a product or a link.",
+      });
+    }
+    if (data.startsOn && data.endsOn && data.endsOn < data.startsOn) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["endsOn"],
+        message: "End date can't be before the start date.",
+      });
+    }
+  });
+
+/** What the hero modal sends (blank optionals may still be "" / undefined). */
+export type HeroSlideInput = z.input<typeof heroSlideSchema>;
+/** The normalized slide the actions write (dates still Cairo day keys). */
+export type HeroSlideData = z.output<typeof heroSlideSchema>;
+
+/** A full reordering of the hero slides — every id once, bounded by the cap. */
+export const heroSlideReorderSchema = z
+  .array(z.string().trim().min(1, "Missing slide."))
+  .min(1, "Nothing to reorder.")
+  .max(HERO_MAX_SLIDES, "Too many slides in one reorder.")
+  .refine((ids) => new Set(ids).size === ids.length, {
+    error: "Each slide may appear only once.",
+  });
+
 // ─── Branch stock ────────────────────────────────────────────────────────────
 
 /**

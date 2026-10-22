@@ -4,9 +4,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
+import HeroCarousel from "@/components/HeroCarousel";
+import type { HeroSlideView } from "@/lib/hero-slides";
 
 // Cinematic cubic-bezier — fast start, silky deceleration
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+
+/** The brand statement — the page's one <h1>, in both hero variants. */
+const BRAND_HEADLINE = "Mastering the art of oriental pastry.";
 
 interface HeroProps {
   /**
@@ -15,9 +20,27 @@ interface HeroProps {
    * may render nothing when no promotion is live.
    */
   promo?: React.ReactNode;
+  /**
+   * Live admin-managed slides (already filtered + priced on the server). When
+   * there is at least one, the banner carousel IS the hero; with none, the
+   * classic hero below renders exactly as before.
+   */
+  slides?: HeroSlideView[];
 }
 
-export default function Hero({ promo }: HeroProps) {
+export default function Hero({ promo, slides = [] }: HeroProps) {
+  if (slides.length > 0) {
+    return (
+      // Banner variant: the brand <h1> stays in the DOM (SEO + screen readers)
+      // but visually hidden — slide titles are <h2>. No PromoSeal over the
+      // carousel; a promotion can get its own slide.
+      <div className="w-full bg-white px-4 pt-4 pb-12 sm:px-6 md:px-10 md:pt-6 md:pb-16 lg:px-14">
+        <h1 className="sr-only">{BRAND_HEADLINE}</h1>
+        <HeroCarousel slides={slides} />
+      </div>
+    );
+  }
+
   return (
     <div className="w-full bg-white">
       {/* ─── Upper Typography Block ──────────────────────────── */}

@@ -127,3 +127,46 @@ describe("promotion window regression — a same-day promotion is live all day",
     expect(isLive(start, end, cairoHour(14))).toBe(true);
   });
 });
+
+// Egypt's DST transitions (reinstated 2023): clocks jump 00:00 → 01:00 on the
+// last Friday of April, and fall back 24:00 → 23:00 on the last Thursday of
+// October. On the spring-forward day Cairo midnight does not exist, so the day
+// must begin at the instant the clocks jump; both transition days must still
+// tile seamlessly with their neighbours (23h and 25h long, no gap, no overlap).
+describe("store day edges across Egypt's DST transitions", () => {
+  const hours = (day: string) =>
+    (storeDateEnd(day)!.getTime() + 1 - storeDateStart(day)!.getTime()) / 3_600_000;
+
+  it.each([
+    ["2026-04-24", "2026-04-23T22:00:00.000Z", 23], // spring forward (Fri)
+    ["2026-10-29", "2026-10-28T21:00:00.000Z", 25], // fall back (Thu)
+    ["2024-04-26", "2024-04-25T22:00:00.000Z", 23],
+    ["2024-10-31", "2024-10-30T21:00:00.000Z", 25],
+  ])("%s starts at %s and lasts %ih", (day, startIso, length) => {
+    expect(storeDateStart(day)!.toISOString()).toBe(startIso);
+    expect(hours(day)).toBe(length);
+    expect(storeDayKey(storeDateStart(day)!)).toBe(day);
+    expect(storeDayKey(storeDateEnd(day)!)).toBe(day);
+  });
+
+  it.each([
+    ["2026-04-23", "2026-04-24", "2026-04-25"],
+    ["2026-10-28", "2026-10-29", "2026-10-30"],
+  ])("tiles %s → %s → %s with no gap or overlap", (before, day, after) => {
+    expect(storeDateStart(day)!.getTime()).toBe(storeDateEnd(before)!.getTime() + 1);
+    expect(storeDateStart(after)!.getTime()).toBe(storeDateEnd(day)!.getTime() + 1);
+  });
+
+  it("is independent of the machine's own timezone", () => {
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = "UTC";
+      expect(storeDateStart("2026-04-24")!.toISOString()).toBe("2026-04-23T22:00:00.000Z");
+      process.env.TZ = "America/New_York";
+      expect(storeDateEnd("2026-10-29")!.toISOString()).toBe("2026-10-29T21:59:59.999Z");
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
+  });
+});

@@ -9,6 +9,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  HERO_MAX_SLIDES,
+  heroSlideReorderSchema,
+  heroSlideSchema,
   isHostedImageUrl,
   isSafeHref,
   parseDeliveryFee,
@@ -121,5 +124,108 @@ describe("productInputSchema images", () => {
       images: ["https://abc.ufs.sh/f/1", "https://evil.example/x.jpg"],
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+// heroSlideSchema is the one contract for a hero slide — the admin modal's
+// instant feedback and the actions' authoritative re-parse.
+describe("heroSlideSchema", () => {
+  const productSlide = {
+    eyebrow: "",
+    title: "",
+    subtitle: "",
+    ctaLabel: "Order now",
+    showPrice: true,
+    imageDesktop: "https://abc.ufs.sh/f/desktop",
+    imageMobile: "",
+    imageAlt: "A tray of pistachio kunafa",
+    productId: "prod_1",
+    linkUrl: null,
+    isActive: false,
+    startsOn: "",
+    endsOn: "",
+  };
+
+  it("accepts an image-only product slide and collapses blank optionals to null", () => {
+    const parsed = heroSlideSchema.safeParse(productSlide);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toMatchObject({
+      eyebrow: null,
+      title: null,
+      subtitle: null,
+      imageMobile: null,
+      linkUrl: null,
+      startsOn: null,
+      endsOn: null,
+      isActive: false,
+    });
+  });
+
+  it("accepts a link slide", () => {
+    const parsed = heroSlideSchema.safeParse({
+      ...productSlide,
+      productId: null,
+      linkUrl: "/collections",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it.each([
+    ["both destinations", { productId: "prod_1", linkUrl: "/collections" }],
+    ["no destination", { productId: "", linkUrl: "" }],
+  ])("refuses %s", (_label, destination) => {
+    const parsed = heroSlideSchema.safeParse({ ...productSlide, ...destination });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.path).toEqual(["productId"]);
+  });
+
+  it.each(["javascript:alert(1)", "//evil.com"])("refuses the link %s", (linkUrl) => {
+    const parsed = heroSlideSchema.safeParse({ ...productSlide, productId: null, linkUrl });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("refuses a foreign-host or missing desktop image", () => {
+    expect(
+      heroSlideSchema.safeParse({ ...productSlide, imageDesktop: "https://evil.example/x.jpg" }).success,
+    ).toBe(false);
+    expect(heroSlideSchema.safeParse({ ...productSlide, imageDesktop: "" }).success).toBe(false);
+    expect(
+      heroSlideSchema.safeParse({ ...productSlide, imageMobile: "https://evil.example/m.jpg" }).success,
+    ).toBe(false);
+  });
+
+  it("requires alt text and a button label", () => {
+    expect(heroSlideSchema.safeParse({ ...productSlide, imageAlt: " " }).success).toBe(false);
+    expect(heroSlideSchema.safeParse({ ...productSlide, ctaLabel: "" }).success).toBe(false);
+  });
+
+  it("accepts a same-day window and refuses an end before the start", () => {
+    expect(
+      heroSlideSchema.safeParse({ ...productSlide, startsOn: "2026-10-22", endsOn: "2026-10-22" }).success,
+    ).toBe(true);
+    const backwards = heroSlideSchema.safeParse({
+      ...productSlide,
+      startsOn: "2026-10-22",
+      endsOn: "2026-10-21",
+    });
+    expect(backwards.success).toBe(false);
+    expect(backwards.error?.issues[0]?.path).toEqual(["endsOn"]);
+  });
+
+  it("refuses a malformed date", () => {
+    expect(heroSlideSchema.safeParse({ ...productSlide, startsOn: "22/10/2026" }).success).toBe(false);
+  });
+});
+
+describe("heroSlideReorderSchema", () => {
+  it("accepts a full id list", () => {
+    expect(heroSlideReorderSchema.safeParse(["a", "b", "c"]).success).toBe(true);
+  });
+
+  it("refuses duplicates, an empty list, and more than the cap", () => {
+    expect(heroSlideReorderSchema.safeParse(["a", "a"]).success).toBe(false);
+    expect(heroSlideReorderSchema.safeParse([]).success).toBe(false);
+    const tooMany = Array.from({ length: HERO_MAX_SLIDES + 1 }, (_, i) => `s${i}`);
+    expect(heroSlideReorderSchema.safeParse(tooMany).success).toBe(false);
   });
 });

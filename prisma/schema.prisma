@@ -238,6 +238,9 @@ model Product {
   /// Promotions targeting this specific product (Discount Engine).
   promotions Promotion[]
 
+  /// Homepage hero slides advertising this product (SetNull on delete).
+  heroSlides HeroSlide[]
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   wishlistItems WishlistItem[]
@@ -650,6 +653,68 @@ model FooterLink {
 
   // Matches the storefront read: where isActive, ordered by `order` ascending.
   @@index([isActive, order])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Homepage hero slides (admin-managed)
+//
+// Editorial banners rendered inside the homepage Hero's image frame, used to
+// push newly released products. Each slide has exactly ONE destination — a
+// `productId` (CTA → /product/[slug], with a display-only starting price) OR a
+// `linkUrl` (same href whitelist as FooterLink) — enforced by the shared
+// `heroSlideSchema`, not the DB (this codebase has no CHECK constraints).
+//
+// Liveness = isActive && startsAt ≤ now ≤ endsAt (null = open-ended) && a valid
+// destination (a LISTABLE_PRODUCT, or a linkUrl) — see `liveHeroSlideWhere`.
+// No price is stored here: a product slide's price is resolved at render time
+// through the Discount Engine, like every other price surface.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model HeroSlide {
+  id           String    @id @default(cuid())
+  /// Copy overlaid on the image — all optional: an image-led slide may carry
+  /// no text at all (the CTA and `imageAlt` still describe it).
+  /// Small kicker above the title, e.g. "New arrival".
+  eyebrow      String?
+  title        String?
+  subtitle     String?
+  ctaLabel     String    @default("Order now")
+  /// Product slides only: show the Discount-Engine starting price ("From EGP X"
+  /// + strikethrough). Display-only — never stored, always resolved at render.
+  showPrice    Boolean   @default(true)
+  /// Desktop/tablet crop — an UploadThing URL or a /public path.
+  imageDesktop String
+  /// Optional art-directed phone crop; falls back to `imageDesktop`.
+  imageMobile  String?
+  /// Required alt text — the image is the product being launched, not decoration.
+  imageAlt     String
+
+  /// Product destination. SetNull (not Restrict/Cascade): deleting a product
+  /// must neither be blocked by a banner (deleteProduct maps every P2003 to the
+  /// "appears in existing orders" message) nor silently drop the slide and
+  /// orphan its bucket images. A slide left with no destination is hidden from
+  /// the storefront and flagged in /admin/hero.
+  productId    String?
+  product      Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  /// Link destination — "/…", "#…" or http(s):// only (isSafeHref).
+  linkUrl      String?
+
+  /// Ascending display position (lower = earlier).
+  order        Int       @default(0)
+  /// Hidden from the storefront when false, without deleting the row. Defaults
+  /// OFF: a new slide is a draft until the admin publishes it.
+  isActive     Boolean   @default(false)
+  /// Cairo day edges (storeDateStart / storeDateEnd); null = open-ended.
+  startsAt     DateTime?
+  endsAt       DateTime?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Matches the storefront read: where isActive, ordered by `order` ascending.
+  @@index([isActive, order])
+  // FK index — Postgres doesn't create one; the SetNull on product delete scans it.
+  @@index([productId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

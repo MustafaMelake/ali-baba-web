@@ -8,16 +8,24 @@ import SeasonalOverlay from "@/components/SeasonalOverlay";
 import { prisma } from "@/lib/prisma";
 import { getStorefrontLocations } from "@/lib/actions/locations";
 import { advertisedPercent, livePromotionWhere } from "@/lib/discounts";
+import {
+  HERO_MAX_LIVE_SLIDES,
+  heroSlideStorefrontSelect,
+  isHeroSlideLive,
+  liveHeroSlideWhere,
+  toHeroSlideView,
+  type HeroSlideView,
+} from "@/lib/hero-slides";
 import { DiscountType } from "@/generated/prisma/enums";
 
 // Shared ISR cache (60s), matching the PDP and category pages: this page reads
 // no per-user state, and every ADMIN action that can change it already busts
-// the cache directly — category mutations call revalidatePath("/") and
-// promotion mutations bust the whole storefront tree via
-// revalidatePath("/", "layout") — so changes still appear on the next request,
-// not after the window. The 60s window only bounds pure time-based promotion
-// liveness (a promo whose start/end date passes with no admin action can lag
-// up to a minute, exactly as it does on the PDP). The previous `revalidate = 0`
+// the cache directly — category, product and hero-slide mutations call
+// revalidatePath("/") and promotion mutations bust the whole storefront tree
+// via revalidatePath("/", "layout") — so changes still appear on the next
+// request, not after the window. The 60s window only bounds pure time-based
+// liveness (a promo or hero slide whose start/end date passes with no admin
+// action can lag up to a minute, exactly as it does on the PDP). The previous `revalidate = 0`
 // paid a Neon round-trip per visit on the hottest route for no correctness win.
 export const revalidate = 60;
 
@@ -50,9 +58,7 @@ function discountLabelFor(
  * <CategorySlider /> expects. Each row also pulls its currently-live category
  * promotions so the slider can surface a premium discount badge.
  */
-async function getSliderCategories() {
-  const now = new Date();
-
+async function getSliderCategories(now: Date) {
   const categories = await prisma.category.findMany({
     where: { isFeatured: true },
     // Secondary `createdAt: "desc"` tie-break so categories sharing a
@@ -87,11 +93,45 @@ async function getSliderCategories() {
   }));
 }
 
+/**
+ * The live admin-managed hero slides, priced for display. Liveness is filtered
+ * in the query and re-checked in memory against the SAME `now` (the pure rules
+ * in `@/lib/hero-slides`); a product slide's starting price goes through the
+ * Discount Engine exactly like a catalog card's — display-only, never billed.
+ *
+ * Decoration must never take down the hottest route: a failed read (e.g. a
+ * not-yet-migrated environment) logs and falls back to the classic hero.
+ */
+async function getHeroSlides(now: Date): Promise<HeroSlideView[]> {
+  try {
+    const rows = await prisma.heroSlide.findMany({
+      where: liveHeroSlideWhere(now),
+      // `createdAt` tie-break keeps slides sharing an `order` deterministic.
+      orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+      take: HERO_MAX_LIVE_SLIDES,
+      select: heroSlideStorefrontSelect(now),
+    });
+    return rows
+      .filter((row) => isHeroSlideLive(row, now))
+      .map((row) => toHeroSlideView(row, now))
+      .filter((view): view is HeroSlideView => view !== null);
+  } catch (err) {
+    console.error("getHeroSlides failed — rendering the classic hero:", err);
+    return [];
+  }
+}
+
 export default async function ShopHomePage() {
-  // Parallel reads — the featured-category slider and the "Our Locations"
-  // showcase are independent, so fetch them together rather than in a waterfall.
-  const [sliderCategories, locations] = await Promise.all([
-    getSliderCategories(),
+  // One instant per request: every promotion/slide liveness check on the page
+  // prices against the same `now`.
+  const now = new Date();
+
+  // Parallel reads — the hero slides, the featured-category slider and the
+  // "Our Locations" showcase are independent, so fetch them together rather
+  // than in a waterfall.
+  const [heroSlides, sliderCategories, locations] = await Promise.all([
+    getHeroSlides(now),
+    getSliderCategories(now),
     getStorefrontLocations(),
   ]);
 
@@ -105,10 +145,15 @@ export default async function ShopHomePage() {
           cached HTML stays identical for every visitor. */}
       <SeasonalOverlay />
 
-      {/* Strongest live promotion — a self-contained Server Component handed
-          to the client Hero as a slot, where it renders as the top-left seal;
-          renders nothing when no promotion is live. */}
-      <Hero promo={<PromoWidget />} />
+      {/* Live slides → the banner carousel IS the hero. None → the classic
+          hero, with the strongest live promotion as its top-left seal (a
+          self-contained Server Component handed in as a slot; renders nothing
+          when no promotion is live). The seal is skipped — not just hidden —
+          over the carousel, so its query doesn't run for nothing. */}
+      <Hero
+        slides={heroSlides}
+        promo={heroSlides.length === 0 ? <PromoWidget /> : undefined}
+      />
 
       <CategorySlider categories={sliderCategories} />
 

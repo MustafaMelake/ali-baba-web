@@ -41,6 +41,15 @@ export const ourFileRouter = {
     .onUploadComplete(({ metadata, file }) => {
       return { uploadedBy: metadata.userId, ufsUrl: file.ufsUrl };
     }),
+
+  // One homepage hero banner crop (desktop 2400×1020 or mobile 1080×1350) per
+  // upload. 8MB, not 4MB: designed banners with baked-in text are often PNGs
+  // at that size — next/image re-encodes them for delivery anyway.
+  heroImage: f({ image: { maxFileSize: "8MB", maxFileCount: 1 } })
+    .middleware(({ req }) => requireAdminUploader(req))
+    .onUploadComplete(({ metadata, file }) => {
+      return { uploadedBy: metadata.userId, ufsUrl: file.ufsUrl };
+    }),
 } satisfies FileRouter;
 
 export type OurFileRouter = typeof ourFileRouter;
