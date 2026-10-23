@@ -11,6 +11,7 @@ import {
   resolvePrice,
 } from "@/lib/discounts";
 import { prismaErrorCode } from "@/lib/action-utils";
+import { pageSlice, STOREFRONT_PAGE_SIZE } from "@/lib/pagination";
 
 export type ToggleWishlistResult =
   | { success: true; added: boolean }
@@ -31,7 +32,7 @@ export type WishlistProduct = {
 };
 
 export type GetWishlistResult =
-  | { success: true; data: WishlistProduct[] }
+  | { success: true; data: WishlistProduct[]; /** saved items across ALL pages */ total: number }
   | { success: false; error: string };
 
 /**
@@ -83,41 +84,49 @@ export async function toggleWishlist(
  * جلب منتجات المفضلة للمستخدم الحالي — already mapped to a flat, card-ready shape
  * (starting price = lowest available variant; category name included for display).
  */
-export async function getWishlistItems(): Promise<GetWishlistResult> {
+export async function getWishlistItems(page: unknown = 1): Promise<GetWishlistResult> {
   const session = await getServerSession();
   if (!session) return { success: false, error: "Unauthorized" };
+  // A server action input — never trust the shape; a bad page reads as page 1.
+  const pageNumber = typeof page === "number" && Number.isInteger(page) && page >= 1 ? page : 1;
+  const where = { userId: session.user.id };
 
   // One instant drives every promotion filter + evaluation this request.
   const now = new Date();
 
   try {
-    const items = await prisma.wishlistItem.findMany({
-      where: { userId: session.user.id },
-      orderBy: { createdAt: "desc" },
-      include: {
-        product: {
-          include: {
-            category: {
-              select: {
-                name: true,
-                promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+    const [total, items] = await Promise.all([
+      prisma.wishlistItem.count({ where }),
+      prisma.wishlistItem.findMany({
+        where,
+        // `id` tie-break keeps a stable page order for items saved together.
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        ...pageSlice(pageNumber, STOREFRONT_PAGE_SIZE),
+        include: {
+          product: {
+            include: {
+              category: {
+                select: {
+                  name: true,
+                  promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+                },
               },
-            },
-            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-            variants: {
-              where: { isAvailable: true },
-              orderBy: { price: "asc" }, // [0] = starting price
-              select: {
-                id: true,
-                price: true,
-                compareAtPrice: true, // manual "was" price → card fallback
-                promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+              promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+              variants: {
+                where: { isAvailable: true },
+                orderBy: { price: "asc" }, // [0] = starting price
+                select: {
+                  id: true,
+                  price: true,
+                  compareAtPrice: true, // manual "was" price → card fallback
+                  promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+                },
               },
             },
           },
         },
-      },
-    });
+      }),
+    ]);
 
     const data: WishlistProduct[] = items.map(({ product }) => {
       const card = {
@@ -157,7 +166,7 @@ export async function getWishlistItems(): Promise<GetWishlistResult> {
       };
     });
 
-    return { success: true, data };
+    return { success: true, data, total };
   } catch (err) {
     console.error("getWishlistItems failed:", err);
     return { success: false, error: "Could not load your wishlist." };

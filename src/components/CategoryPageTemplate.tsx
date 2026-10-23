@@ -46,6 +46,8 @@ export interface CategoryPageTemplateProps {
   products: CategoryProduct[];
   /** The instant the query filtered promotions against — prices use the same one. */
   now: Date;
+  /** The page control for a multi-page listing (a <Pagination />), rendered under the grid. */
+  pagination?: React.ReactNode;
 }
 
 /**
@@ -63,6 +65,7 @@ export default function CategoryPageTemplate({
   description,
   products,
   now,
+  pagination,
 }: CategoryPageTemplateProps) {
   return (
     // Navbar/Footer (and the fixed-navbar clearance) come from the (shop)
@@ -164,6 +167,7 @@ export default function CategoryPageTemplate({
               })}
             </div>
           )}
+          {pagination}
         </section>
     </div>
   );

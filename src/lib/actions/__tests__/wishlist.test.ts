@@ -74,6 +74,7 @@ beforeEach(() => {
   mockReset(mockPrisma);
   mockedSession.mockReset();
   mockedSession.mockResolvedValue({ user: { id: "user_1" } } as never);
+  mockPrisma.wishlistItem.count.mockResolvedValue(1 as never);
 });
 
 afterAll(() => {
@@ -90,6 +91,7 @@ describe("getWishlistItems — pricing a saved product", () => {
 
     expect(result).toEqual({
       success: true,
+      total: 1,
       data: [expect.objectContaining({ id: "prod_1", price: 240, compareAtPrice: 300 })],
     });
   });
@@ -103,6 +105,7 @@ describe("getWishlistItems — pricing a saved product", () => {
 
     expect(result).toEqual({
       success: true,
+      total: 1,
       data: [expect.objectContaining({ id: "prod_1", price: null, compareAtPrice: null })],
     });
   });
@@ -116,7 +119,35 @@ describe("getWishlistItems — pricing a saved product", () => {
 
     expect(result).toEqual({
       success: true,
+      total: 1,
       data: [expect.objectContaining({ id: "prod_1", price: null, compareAtPrice: null })],
     });
+  });
+});
+
+describe("getWishlistItems — pagination", () => {
+  it("reads one page (newest first, id tie-break) and reports the full total", async () => {
+    mockPrisma.wishlistItem.count.mockResolvedValue(30 as never);
+    mockPrisma.wishlistItem.findMany.mockResolvedValue([] as never);
+
+    const result = await getWishlistItems(2);
+
+    expect(result).toEqual({ success: true, data: [], total: 30 });
+    expect(mockPrisma.wishlistItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user_1" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: 24,
+        take: 24,
+      }),
+    );
+  });
+
+  it.each([0, -1, 1.5, "2", null])("treats a malformed page (%s) as page 1", async (bad) => {
+    mockPrisma.wishlistItem.findMany.mockResolvedValue([] as never);
+    await getWishlistItems(bad);
+    expect(mockPrisma.wishlistItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 0, take: 24 }),
+    );
   });
 });

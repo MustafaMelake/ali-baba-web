@@ -7,6 +7,15 @@ import {
   resolvePrice,
 } from "@/lib/discounts";
 import { LISTABLE_PRODUCT } from "@/lib/catalog";
+import { notFound } from "next/navigation";
+import Pagination from "@/components/Pagination";
+import {
+  isPageOutOfRange,
+  pageInfo,
+  pageSlice,
+  parsePageParam,
+  STOREFRONT_PAGE_SIZE,
+} from "@/lib/pagination";
 import ShopClient from "./ShopClient";
 
 // No per-user data here anymore (wishlist hearts hydrate client-side from the
@@ -19,28 +28,35 @@ export default async function ShopPage({
   searchParams,
 }: {
   // Next 15 streams searchParams as a Promise — the active filter is the slug.
-  searchParams: Promise<{ category?: string }>;
+  searchParams: Promise<{ category?: string; page?: string | string[] }>;
 }) {
   // One instant drives every promotion filter + evaluation this request.
   const now = new Date();
 
   // Active category slug from the URL (?category=slug). Absent ⇒ "All Products".
-  const { category: categoryParam } = await searchParams;
+  const { category: categoryParam, page: pageParam } = await searchParams;
+  // ?page= — /shop is already dynamic (it reads searchParams), so query-string
+  // pagination costs nothing here. A bad page → 404, never a silent clamp.
+  const page = parsePageParam(pageParam);
+  if (page === null) notFound();
+
+  // Server-side category filtering: narrow by slug when one is present, so
+  // the grid only ever ships the products it renders (LCP scales with the
+  // page size, not the whole catalog).
+  const productWhere = {
+    ...LISTABLE_PRODUCT,
+    ...(categoryParam ? { category: { slug: categoryParam } } : {}),
+  };
 
   // Run all queries concurrently.
-  const [categories, products] = await Promise.all([
+  const [categories, total, products] = await Promise.all([
     prisma.category.findMany({
       orderBy: { name: "asc" },
       select: { name: true, slug: true },
     }),
+    prisma.product.count({ where: productWhere }),
     prisma.product.findMany({
-      // Server-side category filtering: narrow by slug when one is present, so
-      // the grid only ever ships the products it renders (LCP scales with the
-      // page size, not the whole catalog).
-      where: {
-        ...LISTABLE_PRODUCT,
-        ...(categoryParam ? { category: { slug: categoryParam } } : {}),
-      },
+      where: productWhere,
       include: {
         // Category + its live promotions (name kept for the card label).
         category: {
@@ -60,9 +76,14 @@ export default async function ShopPage({
           },
         },
       },
-      orderBy: { createdAt: "desc" },
+      // `id` tie-break: products sharing a createdAt keep a stable page order.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      ...pageSlice(page, STOREFRONT_PAGE_SIZE),
     }),
   ]);
+
+  const info = pageInfo(page, STOREFRONT_PAGE_SIZE, total);
+  if (isPageOutOfRange(info)) notFound();
 
   const mappedProducts: ShopProduct[] = products.map((product) => {
     // Discount the starting (lowest-base-price) variant — that's the card's
@@ -96,5 +117,17 @@ export default async function ShopPage({
     };
   });
 
-  return <ShopClient categories={categories} products={mappedProducts} />;
+  return (
+    <ShopClient
+      categories={categories}
+      products={mappedProducts}
+      total={total}
+      pagination={
+        <Pagination
+          info={info}
+          mode={{ kind: "query", base: "/shop", params: { category: categoryParam } }}
+        />
+      }
+    />
+  );
 }

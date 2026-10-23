@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Heart, ArrowUpRight } from "lucide-react";
 import { getServerSession, requirePasswordCurrent } from "@/lib/session";
 import { getWishlistItems } from "@/lib/actions/wishlist";
@@ -8,6 +8,13 @@ import { formatMoney } from "@/lib/utils";
 import { percentOff } from "@/lib/discounts";
 import WishlistButton from "@/components/products/WishlistButton";
 import EmptyState from "@/components/EmptyState";
+import Pagination from "@/components/Pagination";
+import {
+  isPageOutOfRange,
+  pageInfo,
+  parsePageParam,
+  STOREFRONT_PAGE_SIZE,
+} from "@/lib/pagination";
 
 // Personalised to the signed-in user → always render against the live DB.
 export const dynamic = "force-dynamic";
@@ -16,13 +23,24 @@ export const metadata = {
   title: "My Wishlist | Ali Baba",
 };
 
-export default async function WishlistPage() {
+export default async function WishlistPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string | string[] }>;
+}) {
   const session = await getServerSession();
   if (!session) redirect("/login");
   requirePasswordCurrent(session);
 
-  const result = await getWishlistItems();
+  // ?page= — this route is already per-user (force-dynamic).
+  const page = parsePageParam((await searchParams).page);
+  if (page === null) notFound();
+
+  const result = await getWishlistItems(page);
   const items = result.success ? result.data : [];
+  const total = result.success ? result.total : 0;
+  const info = pageInfo(page, STOREFRONT_PAGE_SIZE, total);
+  if (isPageOutOfRange(info)) notFound();
 
   return (
     <div className="min-h-screen bg-[#FAFAFA]">
@@ -35,9 +53,9 @@ export default async function WishlistPage() {
           <h1 className="mt-2 font-serif text-4xl font-medium tracking-tight text-stone-900 md:text-5xl">
             My Wishlist
           </h1>
-          {items.length > 0 && (
+          {total > 0 && (
             <p className="mt-3 font-sans text-sm text-stone-500">
-              {items.length} item{items.length === 1 ? "" : "s"} you&apos;ve fallen for.
+              <span className="tabular-nums">{total}</span> item{total === 1 ? "" : "s"} you&apos;ve fallen for.
             </p>
           )}
         </header>
@@ -137,6 +155,7 @@ export default async function WishlistPage() {
             })}
           </div>
         )}
+        <Pagination info={info} mode={{ kind: "query", base: "/wishlist" }} />
       </div>
     </div>
   );

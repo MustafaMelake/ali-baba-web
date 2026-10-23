@@ -8,6 +8,15 @@ import EmptyState from "@/components/admin/EmptyState";
 import Pill from "@/components/admin/Pill";
 import StarRating from "@/components/StarRating";
 import ReviewActions from "@/components/admin/ReviewActions";
+import { notFound } from "next/navigation";
+import Pagination from "@/components/Pagination";
+import {
+  ADMIN_PAGE_SIZE,
+  isPageOutOfRange,
+  pageInfo,
+  pageSlice,
+  parsePageParam,
+} from "@/lib/pagination";
 
 export const metadata = {
   title: "Reviews | Admin",
@@ -16,19 +25,33 @@ export const metadata = {
 // Moderation must always reflect the live queue.
 export const dynamic = "force-dynamic";
 
-export default async function AdminReviewsPage() {
+export default async function AdminReviewsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string | string[] }>;
+}) {
   await requireAdminPage();
 
-  // Pending (isApproved: false) first, then newest approved.
-  const reviews = await prisma.review.findMany({
-    orderBy: [{ isApproved: "asc" }, { createdAt: "desc" }],
-    include: {
-      product: { select: { name: true, slug: true } },
-      user: { select: { name: true, email: true } },
-    },
-  });
+  const page = parsePageParam((await searchParams).page);
+  if (page === null) notFound();
 
-  const pendingCount = reviews.filter((r) => !r.isApproved).length;
+  // Pending (isApproved: false) first, then newest approved. The pending
+  // badge counts the WHOLE queue, not just this page.
+  const [total, pendingCount, reviews] = await Promise.all([
+    prisma.review.count(),
+    prisma.review.count({ where: { isApproved: false } }),
+    prisma.review.findMany({
+      orderBy: [{ isApproved: "asc" }, { createdAt: "desc" }, { id: "desc" }],
+      ...pageSlice(page, ADMIN_PAGE_SIZE),
+      include: {
+        product: { select: { name: true, slug: true } },
+        user: { select: { name: true, email: true } },
+      },
+    }),
+  ]);
+
+  const info = pageInfo(page, ADMIN_PAGE_SIZE, total);
+  if (isPageOutOfRange(info)) notFound();
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
@@ -115,6 +138,8 @@ export default async function AdminReviewsPage() {
           ))}
         </ul>
       )}
+
+      <Pagination info={info} mode={{ kind: "query", base: "/admin/reviews" }} tone="admin" />
     </div>
   );
 }

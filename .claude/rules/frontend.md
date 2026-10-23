@@ -60,7 +60,7 @@ page by moving it between them without a reason that outlives the diff:**
 
 | Surface | Mode | Why |
 |---|---|---|
-| `/` (homepage — hero slides, slider, locations, FAQs), `/category/[slug]`, `/product/[slug]`, `/new-arrivals`, `/cart` (shell only — the cart renders client-side) | `export const revalidate = 60` (ISR) | No per-request input, no per-user data → cacheable. This is the perf win the wishlist store exists to protect. |
+| `/` (homepage — hero slides, slider, locations, FAQs), `/category/[slug]` (+ `/page/[n]`), `/product/[slug]`, `/new-arrivals` (+ `/page/[n]`), `/cart` (shell only — the cart renders client-side) | `export const revalidate = 60` (ISR) | No per-request input, no per-user data → cacheable. This is the perf win the wishlist store exists to protect. |
 | `/shop` | **No export** — dynamic by nature | It `await`s `searchParams` for the server-side category filter, which is request-time data. A `revalidate` here would be **inert**, not wrong; don't add one to "make it consistent." |
 | `/my-orders`, `/wishlist`, `/admin/**` | `export const dynamic = "force-dynamic"` | Genuinely per-user/per-role server-rendered data with no client-hydration path. |
 
@@ -89,6 +89,8 @@ Any Client Component reading `useSearchParams()` **must** sit under a `<Suspense
 ## URL as state
 
 Filters, search, and pagination live in the **URL** (`searchParams`), not client state — bookmarkable, shareable, refresh-proof, and one targeted server query per request. Drive changes with `router.push(pathname + "?" + params, { scroll: false })` inside `useTransition`. Debounce free-text search (~400ms) before it touches the URL. Validate any enum param (e.g. `status`) against the real enum server-side — never trust the raw string in a `where`.
+
+**Pagination — one helper, two URL shapes.** Every list paginates through `src/lib/pagination.ts` + the server `<Pagination>` component (24 per storefront page, 25 per admin page; plain links, `rel=prev/next`, a canonical per page). **ISR routes paginate by PATH segment** (`/category/[slug]/page/[n]`, `/new-arrivals/page/[n]`, and collection pages) — `?page=` would read `searchParams` and turn them dynamic, undoing the caching table above. Already-dynamic routes use `?page=` (`/shop`, `/wishlist`, `/my-orders`, admin lists). Page 1 is only ever the bare URL (`/page/1` permanently redirects; `?page=1` is never emitted). A malformed or out-of-range page is `notFound()` — never silently clamped. Changing a filter drops `page`. The admin orders board keeps its cursor pagination.
 
 ## Motion & portals
 

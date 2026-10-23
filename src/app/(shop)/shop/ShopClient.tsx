@@ -18,11 +18,15 @@ export interface ShopCategory {
 export interface ShopClientProps {
   /** Categories fetched from the DB (without the synthetic "All Products"). */
   categories: ShopCategory[];
-  /** Already filtered server-side to the active category — rendered as-is. */
+  /** One page, already filtered server-side to the active category — rendered as-is. */
   products: ShopProduct[];
+  /** Products matching the filter across ALL pages (the count line). */
+  total: number;
+  /** The page control (a <Pagination />), rendered under the grid. */
+  pagination?: React.ReactNode;
 }
 
-export default function ShopClient({ categories, products }: ShopClientProps) {
+export default function ShopClient({ categories, products, total, pagination }: ShopClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Keeps the UI interactive while the server refetches the filtered grid, and
@@ -46,6 +50,7 @@ export default function ShopClient({ categories, products }: ShopClientProps) {
     const params = new URLSearchParams(searchParams.toString());
     if (slug) params.set("category", slug);
     else params.delete("category");
+    params.delete("page"); // a new filter starts on its first page
     const query = params.toString();
     startTransition(() => {
       router.push(query ? `/shop?${query}` : "/shop", { scroll: false });
@@ -138,7 +143,7 @@ export default function ShopClient({ categories, products }: ShopClientProps) {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.4 }}
         >
-          {filtered.length} {filtered.length === 1 ? "Creation" : "Creations"}
+          <span className="tabular-nums">{total}</span> {total === 1 ? "Creation" : "Creations"}
           {activeName !== ALL && ` · ${activeName}`}
         </motion.p>
 
@@ -167,6 +172,8 @@ export default function ShopClient({ categories, products }: ShopClientProps) {
         </motion.div>
 
         {/* Empty state — now genuinely reachable when a category has no products. */}
+        {pagination}
+
         {filtered.length === 0 && (
           <div className="py-24 text-center">
             <p className="font-serif text-2xl text-stone-800 mb-2">

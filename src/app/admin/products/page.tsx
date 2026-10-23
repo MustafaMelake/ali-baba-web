@@ -7,23 +7,49 @@ import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
 import Pill from "@/components/admin/Pill";
 import ProductRowActions from "@/components/admin/ProductRowActions";
+import { notFound } from "next/navigation";
+import Pagination from "@/components/Pagination";
+import {
+  ADMIN_PAGE_SIZE,
+  isPageOutOfRange,
+  pageInfo,
+  pageSlice,
+  parsePageParam,
+} from "@/lib/pagination";
 
 export const metadata = {
   title: "Products | Admin",
 };
 
-export default async function AdminProductsPage() {
+// Admin lists always render live data.
+export const dynamic = "force-dynamic";
+
+export default async function AdminProductsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string | string[] }>;
+}) {
   await requireAdminPage();
+
+  const page = parsePageParam((await searchParams).page);
+  if (page === null) notFound();
 
   // Prices live on ProductVariant, not Product — pull them to derive a "from"
   // price; category name comes from the relation.
-  const products = await prisma.product.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      category: { select: { name: true } },
-      variants: { select: { price: true } },
-    },
-  });
+  const [total, products] = await Promise.all([
+    prisma.product.count(),
+    prisma.product.findMany({
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      ...pageSlice(page, ADMIN_PAGE_SIZE),
+      include: {
+        category: { select: { name: true } },
+        variants: { select: { price: true } },
+      },
+    }),
+  ]);
+
+  const info = pageInfo(page, ADMIN_PAGE_SIZE, total);
+  if (isPageOutOfRange(info)) notFound();
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -135,6 +161,8 @@ export default async function AdminProductsPage() {
           </div>
         )}
       </div>
+
+      <Pagination info={info} mode={{ kind: "query", base: "/admin/products" }} tone="admin" />
 
       <p className="text-xs text-stone-400">
         Note: the schema has no numeric inventory field yet, so “Stock” reflects

@@ -6,6 +6,15 @@ import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
 import UserRoleEditor from "@/components/admin/UserRoleEditor";
 import ResetPasswordButton from "@/components/admin/ResetPasswordButton";
+import { notFound } from "next/navigation";
+import Pagination from "@/components/Pagination";
+import {
+  ADMIN_PAGE_SIZE,
+  isPageOutOfRange,
+  pageInfo,
+  pageSlice,
+  parsePageParam,
+} from "@/lib/pagination";
 
 export const metadata = {
   title: "Users | Admin",
@@ -25,13 +34,22 @@ function initials(name: string) {
   );
 }
 
-export default async function AdminUsersPage() {
+export default async function AdminUsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string | string[] }>;
+}) {
   // ADMIN-only; also gives us the caller's id so they can't edit their own role.
   const session = await requireAdminPage();
 
-  const [users, branches] = await Promise.all([
+  const page = parsePageParam((await searchParams).page);
+  if (page === null) notFound();
+
+  const [total, users, branches] = await Promise.all([
+    prisma.user.count(),
     prisma.user.findMany({
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      ...pageSlice(page, ADMIN_PAGE_SIZE),
       select: {
         id: true,
         name: true,
@@ -49,6 +67,9 @@ export default async function AdminUsersPage() {
       select: { id: true, name: true },
     }),
   ]);
+
+  const info = pageInfo(page, ADMIN_PAGE_SIZE, total);
+  if (isPageOutOfRange(info)) notFound();
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -125,6 +146,8 @@ export default async function AdminUsersPage() {
           </div>
         )}
       </div>
+
+      <Pagination info={info} mode={{ kind: "query", base: "/admin/users" }} tone="admin" />
     </div>
   );
 }

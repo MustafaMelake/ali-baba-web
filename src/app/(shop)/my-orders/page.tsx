@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ShoppingBag, Inbox } from "lucide-react";
 import { getServerSession, requirePasswordCurrent } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -8,6 +8,14 @@ import EmptyState from "@/components/EmptyState";
 import OrderCard from "@/components/orders/OrderCard";
 import OrderStatusTabs from "@/components/orders/OrderStatusTabs";
 import type { OrderView } from "@/components/orders/types";
+import Pagination from "@/components/Pagination";
+import {
+  isPageOutOfRange,
+  pageInfo,
+  pageSlice,
+  parsePageParam,
+  STOREFRONT_PAGE_SIZE,
+} from "@/lib/pagination";
 
 // Personalised to the signed-in user → always render against the live DB.
 export const dynamic = "force-dynamic";
@@ -27,34 +35,48 @@ function parseStatus(raw?: string): StatusFilter {
 export default async function MyOrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; page?: string | string[] }>;
 }) {
   const session = await getServerSession();
   if (!session) redirect("/login");
   requirePasswordCurrent(session);
 
-  const activeStatus = parseStatus((await searchParams).status);
+  const params = await searchParams;
+  const activeStatus = parseStatus(params.status);
+  // ?page= — already a per-user, force-dynamic route. Bad page → 404.
+  const page = parsePageParam(params.page);
+  if (page === null) notFound();
 
-  const orders = await prisma.order.findMany({
-    where: {
-      userId: session.user.id,
-      // Only constrain by status when a specific tab is active.
-      ...(activeStatus !== "ALL" ? { status: activeStatus } : {}),
-    },
-    orderBy: { createdAt: "desc" },
-    include: {
-      branch: { select: { name: true } },
-      items: {
-        select: {
-          id: true,
-          productName: true,
-          variantName: true,
-          unitPrice: true,
-          quantity: true,
+  const where = {
+    userId: session.user.id,
+    // Only constrain by status when a specific tab is active.
+    ...(activeStatus !== "ALL" ? { status: activeStatus } : {}),
+  };
+
+  const [total, orders] = await Promise.all([
+    prisma.order.count({ where }),
+    prisma.order.findMany({
+      where,
+      // `id` tie-break keeps a stable page order.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      ...pageSlice(page, STOREFRONT_PAGE_SIZE),
+      include: {
+        branch: { select: { name: true } },
+        items: {
+          select: {
+            id: true,
+            productName: true,
+            variantName: true,
+            unitPrice: true,
+            quantity: true,
+          },
         },
       },
-    },
-  });
+    }),
+  ]);
+
+  const info = pageInfo(page, STOREFRONT_PAGE_SIZE, total);
+  if (isPageOutOfRange(info)) notFound();
 
   // Serialize for the client: money stays raw (formatted client-side), dates are
   // pre-formatted server-side, VAT is the residual so the receipt reconciles.
@@ -136,6 +158,14 @@ export default async function MyOrdersPage({
             ))}
           </div>
         )}
+        <Pagination
+          info={info}
+          mode={{
+            kind: "query",
+            base: "/my-orders",
+            params: { status: activeStatus !== "ALL" ? activeStatus : undefined },
+          }}
+        />
       </div>
     </div>
   );
