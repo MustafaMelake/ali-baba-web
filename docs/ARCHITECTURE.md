@@ -74,14 +74,15 @@ The module-level singleton (cached on `globalThis` outside production) prevents 
 ### Core relations
 
 ```
-Category ──< Product >── MenuPage
+Category ──< Product >──< CollectionProduct >── Collection
                 │
                 ├──< ProductVariant >── OrderItem >── Order
                 │
                 └──< Review >── User
 ```
 
-- **`Product` → `Category` / `MenuPage`** (`onDelete: Restrict` on both): a product is classified by a `Category` and displayed on a `MenuPage`. Restrict means a category or menu page that still has products can't be deleted out from under them.
+- **`Product` → `Category`** (`onDelete: Restrict`): every product belongs to exactly one `Category`, and a category that still has products can't be deleted out from under them. (The old `MenuPage` model and `Product.menuPageId` were **deleted** — don't reintroduce them; the café menu is the separate `MenuCategory`/`MenuItem` world.)
+- **`Product` ↔ `Collection`** (through `CollectionProduct`, `onDelete: Cascade` on both sides): a product can sit in many admin-curated collections. The cascades only remove link rows, so deleting a collection never touches a product. The full deletion-physics table lives in `.claude/rules/database.md`.
 - **`Product` → `ProductVariant`** (`onDelete: Cascade`): variants are the actual purchasable unit — price lives *only* here, never on `Product`. Deleting a product cleanly cascades to its variants.
 - **`ProductVariant` → `OrderItem`** (`onDelete: Restrict`): this is the one Restrict relation the whole CRUD safety model is built around (see §4). A variant that has ever shipped in an order cannot be hard-deleted, full stop — order history is immutable.
 - **`OrderItem`** stores a **snapshot** (`productName`, `variantName`, `unitPrice`) captured at purchase time, independent of whatever the product/variant look like later. Orders never need a join back to a live, possibly-edited or possibly-deleted product to render correctly.
@@ -109,18 +110,20 @@ This composite unique index is the database-level guarantee behind the one-revie
 
 ## 3. Module 1: Analytics & Overview Dashboard
 
-[`src/app/admin/page.tsx`](../src/app/admin/page.tsx) renders four headline metrics and a 30-day revenue trend, computed directly from Prisma aggregates — no separate analytics service or cron-computed rollup table.
+[`src/app/admin/page.tsx`](../src/app/admin/page.tsx) renders four headline metrics and a 30-day revenue trend, computed directly from Prisma aggregates in `getDashboardStats()` ([`src/lib/actions/dashboard.ts`](../src/lib/actions/dashboard.ts)) — no separate analytics service or cron-computed rollup table. Every order query spreads the caller's `branchWhere`, so a MANAGER sees only their branch.
 
 | Metric | Query | Trend basis |
 |---|---|---|
-| **Total Revenue** | `order.aggregate({ _sum: { totalAmount } , where: { status: { not: CANCELLED } } })` | last-30-days sum vs. the prior 30 days |
-| **Orders Today** | `order.count({ createdAt: { gte: todayStart } })` | vs. yesterday's count |
+| **Total Revenue** | `order.aggregate({ _sum: { totalAmount }, where: { ...branchWhere, status: DELIVERED } })` | last-30-days sum vs. the prior 30 days |
+| **Orders Today** | `order.count({ ...branchWhere, createdAt: { gte: todayStart } })` (status-agnostic: it measures activity, not money) | vs. yesterday's count |
 | **Active Products** | `product.count({ isAvailable: true })` | products created in the last 30 days |
 | **Customers** | `user.count({ role: "USER" })` | new signups in the last 30 days |
 
 All eleven queries (four metrics + their comparison windows + recent orders + chart data) run inside a single `Promise.all`, so the page issues one parallel batch to Postgres rather than a sequential waterfall.
 
-**Revenue chart:** orders from the last 30 days are pulled with only `{ createdAt, totalAmount }` selected, then bucketed in-memory into 30 calendar-day buckets (keyed by `year-month-day`) and handed to [`RevenueChart`](../src/components/admin/RevenueChart.tsx) (Recharts) as a `{ date, revenue }[]` series. Bucketing happens in application code rather than a Postgres `GROUP BY ... DATE_TRUNC` — acceptable at current data volume, and keeps timezone bucketing (`startOfDay` uses the server's local time) explicit and easy to reason about.
+**Revenue is `DELIVERED`-only.** PENDING/PREPARING/SHIPPED cash is unconfirmed and is never reported as revenue. (An earlier version counted every non-`CANCELLED` order; that rule is superseded.)
+
+**Revenue chart:** `DELIVERED` orders from the last 30 days are pulled with only `{ createdAt, totalAmount }` selected, then bucketed in-memory into 30 **`Africa/Cairo` calendar days** (keyed by `storeDayKey`) and handed to [`RevenueChart`](../src/components/admin/RevenueChart.tsx) (Recharts) as a `{ date, revenue }[]` series. Every window boundary (`todayStart`, `last30Start`, …) comes from `storeMidnight` in [`src/lib/timezone.ts`](../src/lib/timezone.ts): an exact, DST-safe UTC instant for Cairo midnight, never the Node server's local clock. (An earlier version used `startOfDay` in server-local time; that is superseded.) Bucketing happens in application code rather than a Postgres `GROUP BY ... DATE_TRUNC`, which is fine at current data volume. The raw-SQL analytics do the equivalent with `AT TIME ZONE` on the same `STORE_TZ`.
 
 **Recent Orders feed:** the five most recent orders (`orderBy: { createdAt: "desc" }, take: 5`), rendered with a status pill (`PENDING` → `DELIVERED` → `CANCELLED`, color-coded) and formatted amount. Since the page is `force-dynamic`, this is a live view, not a cached snapshot — refreshing the page always shows the true current order queue.
 
@@ -248,7 +251,7 @@ The App Router is organized into two route groups that never bleed into each oth
 
 | Group | Purpose | Auth posture |
 |---|---|---|
-| `src/app/(shop)/**` | Customer storefront (catalog, PDP, cart, checkout, `/my-orders`, `/wishlist`, `/login`) | Public by default; account routes gated by the edge proxy **and** an in-page session check |
+| `src/app/(shop)/**` | Customer storefront (catalog, collections, PDP, cart, checkout, `/my-orders`, `/wishlist`, `/login`, `/forgot-password`, `/account/change-password`) | Public by default; account routes gated by the edge proxy **and** an in-page session check |
 | `src/app/admin/**` | Staff console | Every page server-reads the session; mutations call `requireAdmin()` |
 
 Two **dynamic segment** routes carry all per-entity rendering — there are no hardcoded per-item route files:
@@ -275,7 +278,11 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/my-orders", "/my-orders/:path*", "/wishlist", "/wishlist/:path*"],
+  matcher: [
+    "/my-orders", "/my-orders/:path*",
+    "/wishlist", "/wishlist/:path*",
+    "/account", "/account/:path*",
+  ],
 };
 ```
 
@@ -285,14 +292,15 @@ Three properties define its contract:
 2. **Edge-safe imports only.** The file imports `next/server` and `better-auth/cookies` and nothing else. Importing `@/lib/prisma`, `@/lib/auth`, or any Node-only module here would break the Edge runtime build. Keep it that way.
 3. **Explicit matcher, base path + sub-paths.** Each protected root is listed both bare (`/my-orders`) and wildcarded (`/my-orders/:path*`) so the base URL is always covered regardless of `path-to-regexp` zero-segment edge cases. On a miss it redirects to `/login?redirect=<original-pathname>`, preserving the intended destination for post-login return.
 
-**Defense in depth — the proxy never stands alone.** Because the proxy only checks cookie presence, the real session validation still happens inside each protected page: [`/wishlist`](../src/app/(shop)/wishlist/page.tsx) and [`/my-orders`](../src/app/(shop)/my-orders/page.tsx) both run `const session = await getServerSession(); if (!session) redirect("/login");` at the top of the Server Component. The proxy is the *first, cheap, edge-level* gate; `getServerSession()` remains the *source of truth*. A cookie that is present but expired/invalid sails through the proxy and is correctly rejected by the page. (Note: the in-page guard redirects to a bare `/login` without a `?redirect=` param, so the return-path round-trip is a property of the proxy path specifically.)
+**Defense in depth — the proxy never stands alone.** Because the proxy only checks cookie presence, the real session validation still happens inside each protected page: [`/wishlist`](../src/app/(shop)/wishlist/page.tsx), [`/my-orders`](../src/app/(shop)/my-orders/page.tsx) and [`/account/change-password`](../src/app/(shop)/account/change-password/page.tsx) all run `const session = await getServerSession(); if (!session) redirect("/login");` at the top of the Server Component. The proxy is the *first, cheap, edge-level* gate; `getServerSession()` remains the *source of truth*. A cookie that is present but expired/invalid sails through the proxy and is correctly rejected by the page. (Note: the in-page guard redirects to a bare `/login` without a `?redirect=` param, so the return-path round-trip is a property of the proxy path specifically.)
 
 ### 7.3 Authentication stack (Better Auth)
 
 | Concern | Where | Notes |
 |---|---|---|
 | Server config | [`src/lib/auth.ts`](../src/lib/auth.ts) | `betterAuth` + `prismaAdapter(prisma, { provider: "postgresql" })`; email+password (`autoSignIn`, `minPasswordLength: 8`); 7-day sessions refreshed daily; `nextCookies()` is the **last** plugin so it can set cookies on responses |
-| `role` field | `src/lib/auth.ts` `user.additionalFields` | Declared `{ type: "string", input: false, defaultValue: "USER" }` — `input: false` means a client **cannot** set its own role at signup; promotion to `ADMIN` is a direct DB write only |
+| `role` field | `src/lib/auth.ts` `user.additionalFields` | Declared `{ type: "string", input: false, defaultValue: "USER" }` — `input: false` means a client **cannot** set its own role at signup; promotion is `updateUserRole` (ADMIN) or a direct DB write only |
+| `mustChangePassword` field | `src/lib/auth.ts` `user.additionalFields` | `boolean`, `input: false`. Set by an admin password reset; while it is true, the session guards hold the user on `/account/change-password` (see [`HOW_IT_WORKS.md` §2.4](./HOW_IT_WORKS.md)) |
 | Server session read | [`src/lib/session.ts`](../src/lib/session.ts) | `getServerSession()` is wrapped in React `cache()` so a layout and a page in the same request hit the auth layer once; `requireAdmin()` throws on anonymous/non-admin callers |
 | Client session | [`src/lib/auth-client.ts`](../src/lib/auth-client.ts) | `createAuthClient` + `inferAdditionalFields<typeof auth>()`, so `session.user.role` is typed on the client with no manual augmentation; exports `signIn` / `signUp` / `signOut` / `useSession` / `getSession` |
 
@@ -310,4 +318,4 @@ const getCategoryBySlug = cache((slug: string) =>
 );
 ```
 
-`generateMetadata` and `CategoryPage` both call `getCategoryBySlug(slug)`; within a single request React serves the second call from the memoized result — **one** Postgres round-trip, not two. A miss renders `notFound()` (HTTP 404) from the page and a `"Category Not Found"` title from the metadata. Products are then filtered by the resolved, indexed `categoryId` FK rather than re-deriving from `identifier`, so the same route works identically for core categories (which carry a `CategoryIdentifier`) and standard ones (which don't). This is the same `cache()` discipline used for `getServerSession()` in §7.3 — memoize per-request reads that more than one part of the render tree needs.
+`generateMetadata` and `CategoryPage` both call `getCategoryBySlug(slug)`; within a single request React serves the second call from the memoized result — **one** Postgres round-trip, not two. A miss renders `notFound()` (HTTP 404) from the page and a `"Category Not Found"` title from the metadata. Products are then filtered by the resolved, indexed `categoryId` FK, so one route serves every category the same way. (The `CategoryIdentifier` enum that once marked "core" categories is deleted; featuring is `Category.isFeatured`.) Page 2+ is `/category/[slug]/page/[n]`, sharing the same listing module. The route is ISR (`revalidate = 60`) and renders no per-user state. This is the same `cache()` discipline used for `getServerSession()` in §7.3 — memoize per-request reads that more than one part of the render tree needs.

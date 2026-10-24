@@ -38,7 +38,7 @@ imported into every session — read them before touching the corresponding laye
 - `src/lib/discounts.ts` — pricing math (highest blast radius) · `src/lib/session.ts` — every auth guard
 - `src/lib/validators.ts` — shared client+server Zod schemas · `src/lib/action-utils.ts` — shared action helpers
 - `src/lib/timezone.ts` — Africa/Cairo store-day math · `src/lib/prisma.ts` — the client singleton
-- `prisma/schema.prisma` — data model · `src/generated/prisma` — checked-in generated client (`@/generated/prisma/client`, `/enums`)
+- `prisma/schema.prisma` — data model · `src/generated/prisma` — generated client (gitignored; `postinstall`/`build` regenerate it) (`@/generated/prisma/client`, `/enums`)
 
 ## Modular rules (loaded every session)
 

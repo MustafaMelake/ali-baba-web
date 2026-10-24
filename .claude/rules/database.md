@@ -38,6 +38,11 @@ These `onDelete` policies *are* the data-safety model. **Do not weaken them** �
 | `MenuItem → MenuCategory` | Cascade | café items die with their category |
 | `BranchVariantAvailability → Branch` / `→ ProductVariant` | Cascade | per-branch stock overrides die with either (a missing row means "available") |
 | `HeroSlide → Product` | **SetNull** | a banner never blocks a product delete (Restrict would also misreport as `deleteProduct`'s "appears in existing orders" P2003) nor silently drops the slide and orphans its bucket images (Cascade bypasses `deleteUploadedFiles`); a slide left with no destination is hidden by `liveHeroSlideWhere` and flagged in `/admin/hero` |
+| `CollectionProduct → Collection` / `→ Product` | Cascade | link rows only — deleting a collection never touches its products, deleting a product drops it from every collection |
+| `CollectionCategory → Collection` / `→ Category` | Cascade | link rows only — a collection never blocks a category delete (the `Product → Category` Restrict still does) |
+| `Collection ↔ Promotion` (implicit `_CollectionToPromotion`) | Cascade | the join row dies with either side; a promotion left with no target simply prices nothing |
+
+A `Collection` is **not** a `Category`: a product has exactly one category but may sit in many collections (`CollectionProduct`, ordered by its own `order`, PK `[collectionId, productId]`), and a collection may be shown on many category pages (`CollectionCategory`). Created **`isActive: false`** (a draft): a draft has no page and **prices nothing** — the engine's include traverses only active collections (see `@rules/business-logic.md`). At most `COLLECTION_MAX_PRODUCTS` (200) members per collection, enforced in the actions.
 
 **Ordered variants are archived, not deleted.** When an edit removes a variant that has shipped, `updateProduct` catches the `P2003` **after** the transaction commits and archives it (`isAvailable: false`, `sku: null` to free the SKU) instead of deleting — reporting `archivedCount` to the UI. This cleanup runs post-commit deliberately: a `P2003` must never roll back an otherwise-valid product update.
 
@@ -52,8 +57,10 @@ Prefer a unique constraint + caught error over an application-level pre-check th
 - `Review @@unique([userId, productId])` → the `P2002` *is* the "You've already reviewed this product" path (one review per customer per product). Also indexed on `productId` and `isApproved` (moderation queue).
 - `CartItem @@unique([userId, variantId])` → the upsert key for cart sync.
 - `WishlistItem @@unique([userId, productId])`.
-- `StoreSettings` is a **singleton** `id @default("store")` — never create a second row; a missing row is answered from frozen in-memory defaults that must mirror the schema defaults.
-- `Category.slug`, `Product.slug`, `Branch.slug`, `MenuCategory.slug`, `Order.orderNumber` are all `@unique`. Slugs are minted once at creation and **never regenerated on rename** (so `/[slug]` links never 404).
+- `StoreSettings` is a **singleton** `id @default("store")` — never create a second row; a missing row is answered from frozen in-memory defaults that must mirror the schema defaults. `StoreSettings.whatsappNumber` (nullable, canonical E.164 — `null` = "not configured") is read through its own `getStoreContact()`, never the pricing reader every billing path shares.
+- `Category.slug`, `Product.slug`, `Branch.slug`, `MenuCategory.slug`, `Collection.slug`, `Order.orderNumber` are all `@unique`. Slugs are minted once at creation and **never regenerated on rename** (so `/[slug]` links never 404). The collection slug `page` is reserved (it would shadow `/collections/page/[n]`) and minted as `page-collection`.
+- `Order.customerPhone` holds **canonical E.164** (`+201XXXXXXXXX`) — `checkoutSchema` normalizes through `normalizeEgyptMobile`, and `@@index([customerPhone, status])` backs the PENDING throttle. Rows from before `20261023000000_normalize_order_phone` that weren't Egyptian mobiles were left untouched (reported, never rewritten).
+- `User.mustChangePassword` (`@default(false)`, Better Auth `input: false`) is set by an admin reset and cleared only by `changeTemporaryPassword` — see `@rules/backend.md`.
 
 ## Constraints the schema can't express (enforced in app logic)
 

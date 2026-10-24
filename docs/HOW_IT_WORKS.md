@@ -54,13 +54,17 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/my-orders", "/my-orders/:path*", "/wishlist", "/wishlist/:path*"],
+  matcher: [
+    "/my-orders", "/my-orders/:path*",
+    "/wishlist", "/wishlist/:path*",
+    "/account", "/account/:path*",
+  ],
 };
 ```
 
 - **Optimistic by design.** `getSessionCookie` confirms a Better Auth cookie is *present*; it does not validate it against Postgres (Prisma can't run on the Edge). The proxy converts "a new protected page shipped without a guard" into a cheap redirect — it is not the security boundary.
 - **Edge-safe.** It imports only `next/server` and `better-auth/cookies`. Never import `@/lib/prisma` or `@/lib/auth` here.
-- **Defense in depth.** The protected pages still run `getServerSession()` + `redirect("/login")` themselves ([`/wishlist`](../src/app/(shop)/wishlist/page.tsx), [`/my-orders`](../src/app/(shop)/my-orders/page.tsx)). The admin surface is gated separately in its layout (§5) and re-checked in every loader/action. The proxy is the first cheap gate; `getServerSession()` stays the source of truth and correctly rejects a present-but-expired cookie that slipped past the Edge.
+- **Defense in depth.** The protected pages still run `getServerSession()` + `redirect("/login")` themselves ([`/wishlist`](../src/app/(shop)/wishlist/page.tsx), [`/my-orders`](../src/app/(shop)/my-orders/page.tsx), [`/account/change-password`](../src/app/(shop)/account/change-password/page.tsx)), and the first two also call `requirePasswordCurrent(session)` so a user whose password an admin just reset is held on `/account/change-password` (§2.4). The admin surface is gated separately in its layout (§5) and re-checked in every loader/action. The proxy is the first cheap gate; `getServerSession()` stays the source of truth and correctly rejects a present-but-expired cookie that slipped past the Edge.
 
 ### 2.3 The login flow — Server Component Suspense boundary
 
@@ -92,7 +96,15 @@ export function sanitizeRedirect(path: string | null): string {
 
 Because the guard lives in `@/lib/utils` rather than one client island, any future redirect-consuming surface — a signup flow honoring `?redirect=`, a password-reset return path, a Server Action that needs to validate a callback target — imports the same function instead of re-implementing (and potentially drifting from) the open-redirect policy. There is exactly one definition of "what counts as a safe redirect" for the whole app.
 
-### 2.4 Routing topology
+### 2.4 Forgot password — a WhatsApp hand-off and an admin reset
+
+There is no email provider, by decision. [`/forgot-password`](../src/app/(shop)/forgot-password/page.tsx) (linked from `/login`, ISR 60, `noindex`) asks for the email or phone on the account and opens `wa.me/<store number>` with a prefilled message. It makes **no request to our server** and looks nothing up, so it can't be used to enumerate customers; the number is `StoreSettings.whatsappNumber` (Admin → Settings, canonical E.164 via the same `normalizeEgyptMobile` checkout uses), and when none is set the page shows a neutral "contact the store" message.
+
+An admin then resets the account from `/admin/users` → **Reset password** (`resetUserPassword` in [`manage-users.ts`](../src/lib/actions/manage-users.ts), ADMIN-only, never on their own row). The writes run **flag → hash → revoke**: `User.mustChangePassword = true`, a 16-character CSPRNG temporary password stored through Better Auth's own `password.hash` + `internalAdapter.updatePassword`, then every session deleted. A failure part-way therefore leaves the user forced to change, never signed in unflagged. The password is shown once in a dialog (copy button + a `wa.me` link to the customer's last order phone; the link opens the chat only, the password is never in a URL or a log).
+
+The flag rides on the session (`input: false`). Server guards hold a flagged user: `requirePasswordCurrent` redirects from `/my-orders`, `/wishlist`, the admin layout and `requireAdminPage`; `requireAdmin` (so every `ensureAdmin` action) and `requireDashboardAccess` (live DB read) refuse. ISR storefront pages never read the session, so the client `PasswordChangeGate` in the root layout redirects there instead, and the cached HTML stays the same for everyone. On [`/account/change-password`](../src/app/(shop)/account/change-password/page.tsx) (force-dynamic, protected by the proxy), `changeTemporaryPassword` calls `auth.api.changePassword` (it verifies the temporary password and revokes other sessions) and clears the flag **only after** that succeeds. Guests have no session, so guest checkout is unaffected.
+
+### 2.5 Routing topology
 
 Two App Router route groups, two dynamic segment routes:
 
@@ -101,7 +113,8 @@ Two App Router route groups, two dynamic segment routes:
 | `src/app/(shop)/**` | — | Public storefront; account routes gated by the proxy + in-page check |
 | `src/app/admin/**` | — | Staff console for **ADMIN + branch-scoped MANAGER**; the layout admits both roles, and the per-page/per-action guards (`requireAdminPage` / `requireDashboardAccess`) enforce the finer scope (§5.5) |
 | `(shop)/product/[slug]/page.tsx` | `Product.slug` (`@unique`) | Product detail page |
-| `(shop)/category/[slug]/page.tsx` | `Category.slug` (`@unique`) | **The single** category landing route — one file serves every category, featured or standard (§3.1) |
+| `(shop)/category/[slug]/page.tsx` (+ `/page/[n]`) | `Category.slug` (`@unique`) | **The single** category landing route — one file serves every category, featured or standard (§3.1) |
+| `(shop)/collections/[slug]/page.tsx` (+ `/page/[n]`) | `Collection.slug` (`@unique`, active only) | An admin-curated collection; `/collections` lists the active ones (§3.4) |
 
 ---
 
@@ -119,9 +132,9 @@ const getCategoryBySlug = cache((slug: string) =>
 );
 ```
 
-Both `generateMetadata` and `CategoryPage` call `getCategoryBySlug(slug)`; the second call within a request is served from React's memo — **one** round-trip per request. A miss renders `notFound()` (HTTP 404) and a `"Category Not Found"` title. Products are filtered by the resolved, indexed `categoryId` FK, their variants and live promotions are included so the grid can price each card through the Discount Engine (§6), and the page is `export const dynamic = "force-dynamic"` because [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx) seeds per-user wishlist hearts — it must never render from a shared ISR cache that would leak one user's state to the next.
+Both `generateMetadata` and `CategoryPage` call `getCategoryBySlug(slug)`; the second call within a request is served from React's memo — **one** round-trip per request. A miss renders `notFound()` (HTTP 404) and a `"Category Not Found"` title. Products are filtered by the resolved, indexed `categoryId` FK and priced through the shared card include/mapping in [`product-cards.ts`](../src/lib/product-cards.ts) (variants plus all four promotion levels, §6), 24 per page — page 2+ lives at `/category/[slug]/page/[n]` so the route never reads `searchParams`. Page 1 also shows the category's active collections as cards above "All <category>". The page is **ISR (`export const revalidate = 60`)**: it renders no per-user state at all. Wishlist hearts hydrate client-side from a shared store (§8.1), so [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx) takes pre-priced cards and never reads the session. (This replaced an earlier `force-dynamic` design that seeded hearts server-side; don't reintroduce it.)
 
-**Footer links — now DB-backed, not a coupling caveat.** [`Footer.tsx`](../src/components/layout/Footer.tsx) no longer links into this route via a hardcoded constant array. The main nav columns are now driven by the `FooterLink` model (see §5.8), so an admin-authored link's `url` is whatever the admin typed — not derived from a category's current `name`/`slug` — and a category rename in the admin can no longer silently 404 a footer link. (If no managed links exist yet, the footer falls back to a live `prisma.category.findMany` read for its "Collection" column, not the old static array.)
+**Footer links — now DB-backed, not a coupling caveat.** [`Footer.tsx`](../src/components/layout/Footer.tsx) no longer links into this route via a hardcoded constant array. The main nav columns are now driven by the `FooterLink` model (see §5.8), so an admin-authored link's `url` is whatever the admin typed — not derived from a category's current `name`/`slug` — and a category rename in the admin can no longer silently 404 a footer link. There is **no fallback by design**: an empty table or a failed read collapses the nav section rather than rendering dead links. A separate **Collections** column lists active collections flagged `showInFooter` (cached under the `footer-collections` tag, busted by every collection mutation).
 
 ### 3.2 Homepage slider & `/shop` directory
 
@@ -129,7 +142,7 @@ The homepage ([`(shop)/page.tsx`](../src/app/(shop)/page.tsx)) projects **every 
 
 ### 3.3 Product Detail Page — multi-variant client islands
 
-The PDP ([`(shop)/product/[slug]/page.tsx`](../src/app/(shop)/product/[slug]/page.tsx)) is a Server Component that fetches the product, its variants (`orderBy: { price: "asc" }`), the live promotions targeting the variant / product / category levels, its approved reviews, the session, and the wishlist state in a single `Promise.all`. It prices **each** variant through the Discount Engine server-side (§6) before handing the **full variant set** to a client island — multi-variant products are now fully selectable by customers, which was previously a gap.
+The PDP ([`(shop)/product/[slug]/page.tsx`](../src/app/(shop)/product/[slug]/page.tsx)) is a Server Component that fetches the product, its variants (`orderBy: { price: "asc" }`), the live promotions targeting the variant / product / category / active-collection levels, and its approved reviews + rating stats in a single `Promise.all`. It reads no session and no wishlist state, so it stays on ISR (`revalidate = 60`). It prices **each** variant through the Discount Engine server-side (§6) before handing the **full variant set** to a client island — multi-variant products are now fully selectable by customers, which was previously a gap.
 
 - [`ProductPurchasePanel.tsx`](../src/components/products/ProductPurchasePanel.tsx) (client) groups price, variant selection, quantity stepper, and the Add-to-Cart CTA into one island. It holds a single `useState<string>` source of truth — `selectedVariantId` — and **derives** the displayed price, sold-out state, and the cart payload from the active variant. Nothing is stored in parallel state, so the price node can never drift from the selected pill. It defaults to the cheapest *available* variant (`variants.find(v => v.isAvailable) ?? variants[0]`), preserving the "from {price}" promise shown on product cards.
 - [`VariantSelector.tsx`](../src/components/products/VariantSelector.tsx) (client, stateless/presentational) renders a **single-axis** row of pills — one per `variant.name`, each showing that variant's own price — matching the flat `ProductVariant` shape (a free-text `name`, not a size×color matrix). It returns `null` for single-variant products, exposes `role="radiogroup"`/`role="radio"` semantics, and keeps sold-out variants **in the DOM but disabled** (strikethrough price) so the option stays indexable rather than vanishing.
@@ -138,6 +151,14 @@ The PDP ([`(shop)/product/[slug]/page.tsx`](../src/app/(shop)/product/[slug]/pag
 This replaced the old single-component `ProductAddToCart`, which only ever surfaced the cheapest variant. Crucially, the variant selector and the cart's `variantId` keying (§4) shipped together — a selector that lets a customer add two variants of one product would have been money-incorrect against a product-id-keyed cart.
 
 ---
+
+### 3.4 Collections — curated sets that are not categories
+
+A `Collection` is an admin-curated, ordered set of products with its own page. A product has exactly one category but may sit in many collections, and a collection may be shown on many category pages. Admins manage them at `/admin/collections` (ADMIN-only): a global order (▲▼), Active / Footer switches, an image, linked categories, and the member list (add by search, bulk-add a whole category, drag to reorder with ▲▼ as the keyboard fallback, at most 200). The product edit form has a matching Collections multi-select.
+
+New collections start **inactive** (a draft): no page, not listed, and they price nothing. The storefront side is all ISR 60 with path pagination: `/collections` (active collections, member counts from **one** grouped query) and `/collections/[slug]` (curated order, no sort param, only listable products, filtered before paginating). Active collections also show as cards on page 1 of each linked category, in the footer's Collections column, and as a Collections group in the search palette.
+
+A promotion can target a collection, which makes it the Discount Engine's fourth level (§6). That is why some collection writes also refresh prices storefront-wide: membership, publish/unpublish and delete call `revalidatePath("/", "layout")` when a live or scheduled promotion targets the collection, and only the collection's own surfaces otherwise.
 
 ## 4. The Cart — variant-keyed integrity, dual-mode persistence
 
@@ -269,7 +290,7 @@ Both `placeOrder` and `updateOrderStatus` (§5.2) call `revalidatePath("/admin")
 The page is a Server Component that accepts `searchParams: Promise<{ status?: string; query?: string; cursor?: string; dir?: string }>` — filter, search, **and pagination** state all live **in the URL**, not in client component state. This means a filtered/searched view is bookmarkable, shareable, and survives a refresh, and the server can run exactly one targeted Prisma query per request instead of fetching everything and filtering client-side.
 
 - `status` is validated against the `OrderStatus` enum before use (`parseStatus()` in the page) — an invalid or missing value always falls back to the synthetic `"ALL"` tab. The raw URL string is never trusted directly in a `where` clause.
-- `query` searches `customerName` (case-insensitive `contains`) and `customerPhone` (`contains`), OR'd together with the order-number match described below.
+- `query` searches `customerName` (case-insensitive `contains`) and `customerPhone` (`contains` on the national digits, so `010…`, `+2010…` and Arabic-Indic input all match the stored E.164 form), OR'd together with the order-number match described below.
 - `cursor` + `dir` drive the pager (below); changing the filter or search deletes the cursor pair, since a cursor row may not exist under the new filter.
 
 **Cursor pagination — no offsets.** The list is paginated at **`ORDERS_PAGE_SIZE = 50`** rows per page, newest first, using Prisma's **cursor** mechanism (`cursor: { id }`, `skip: 1` to exclude the cursor row itself, and a `take` of `±(pageSize + 1)` — the sentinel row detects whether the walk can continue, and a *negative* take walks backwards for "Previous"). There is **no offset `skip`-based pagination**: the cost of fetching a page is independent of how deep it sits in the list. `getOrders()` returns `{ pageSize, total, hasMore, hasPrevious, startCursor, endCursor }` alongside the rows — the client passes `endCursor` back as `cursor` with direction `"next"` to walk older orders, or `startCursor` with `"prev"` to walk back — and [`AdminOrdersPagination.tsx`](../src/components/admin/AdminOrdersPagination.tsx) renders the controls. Ordering is the deterministic compound `[{ createdAt: "desc" }, { id: "desc" }]`, so same-timestamp rows can never be skipped or repeated across page boundaries, and the active filter's `total` falls out of the same `groupBy` that feeds the tab counters — pagination adds no extra query.
@@ -378,7 +399,7 @@ CRUD lives in [`src/lib/actions/promotions.ts`](../src/lib/actions/promotions.ts
 - **update** → `set` the chosen ids — this **replaces** the whole selection, mirroring the multi-select's "this is the complete desired target list" semantics (not a delta).
 - **delete** → Prisma removes the implicit join rows automatically; **no catalog rows are ever touched**.
 
-`validatePromotion()` enforces the invariants server-side before any write: a name of at least 2 characters, a valid `DiscountType`, a strictly positive `value` (and `≤ 100` for `PERCENTAGE`), parseable `startDate`/`endDate` with `endDate ≥ startDate`, and **at least one** target across the three categories. The list view derives a human schedule badge from the date window at render time — **Scheduled** (now < start), **Live** (within window), **Expired** (now > end) — and shows an **Inactive** pill when `isActive` is false, plus per-target counts.
+`validatePromotion()` enforces the invariants server-side before any write: a name of at least 2 characters, a valid `DiscountType`, a strictly positive `value` (and `≤ 100` for `PERCENTAGE`), parseable `startDate`/`endDate` with `endDate ≥ startDate`, and **at least one** target across the four levels (categories, collections, products, variants — one tabbed picker with a chip summary that warns when a targeted collection is inactive). It also refuses a `FIXED_AMOUNT` that would make the cheapest available targeted variant free, counting collection members too. The list view derives a human schedule badge from the date window at render time — **Scheduled** (now < start), **Live** (within window), **Expired** (now > end) — and shows an **Inactive** pill when `isActive` is false, plus per-target counts.
 
 ### 5.7 Advanced Analytics (Super-Admin only)
 
@@ -441,7 +462,8 @@ model Promotion {
   endDate   DateTime
   isActive  Boolean      @default(true)
 
-  // Targets — a promotion may link to any combination of the three.
+  // Targets — a promotion may link to any combination of the four
+  // (categories, collections, products, variants).
   categories Category[]
   products   Product[]
   variants   ProductVariant[]
@@ -482,12 +504,12 @@ resolvePrice(base, promotions, now) → {
 
 The module is intentionally **pure and dependency-free** — no Prisma, no React — so the exact same function runs on:
 
-- **product cards** (the storefront grid, `/shop`, and the dynamic category route via [`CategoryPageTemplate`](../src/components/CategoryPageTemplate.tsx)) — pricing the starting (lowest-base-price) variant, and surfacing the original as a struck-through `compareAtPrice` plus a `-N%` sale badge when `hasDiscount`;
+- **product cards** (`/shop`, category, `/new-arrivals` and collection pages — all through the shared include/mapping in [`product-cards.ts`](../src/lib/product-cards.ts)) — pricing the starting (lowest-base-price) variant, and surfacing the original as a struck-through `compareAtPrice` plus a `-N%` sale badge when `hasDiscount`;
 - the **product detail page** (§3.3) — pricing every variant so the selector and price node reflect live discounts;
-- the **checkout summary**; and
+- the homepage hero slides, the search palette, the wishlist page, the DB cart and guest re-pricing (the **checkout summary**'s source); and
 - **`placeOrder`** (§7) — re-resolving each line authoritatively at purchase time.
 
-Because the storefront, the cart preview, and the server-side order all call `resolvePrice`, they can never disagree: the customer is billed exactly the price they were shown.
+Because the storefront, the cart preview, and the server-side order all call `resolvePrice` over the same four levels (`gatherPromotions` of variant, product, category and `collectionPromotionsOf(product)`, where the collection include traverses only **active** collections), they can never disagree: the customer is billed exactly the price they were shown.
 
 ---
 
@@ -500,15 +522,15 @@ Checkout ([`src/app/(shop)/checkout/page.tsx`](../src/app/(shop)/checkout/page.t
 Delivery areas and pickup locations are now **strictly driven by the live `Branch` table** — the legacy static `DeliveryLocation` enum and its `CitySelect` dropdown are gone from the checkout flow. The page loads active branches once via `getActiveBranches()` (§5.5) and renders them through a single `BranchSelect`, so whatever the customer picks resolves to a **real `branchId`** ready to stamp onto the order:
 
 - **Delivery** — the "Delivery Area" selector is the branch list **plus** a synthetic **"Other Areas"** option. Choosing a branch sends that branch's id; choosing "Other Areas" sends `branchId = null`. A `null` leaves the order **unassigned**, which means it surfaces to the **Super Admin** (`ADMIN`) only — no branch manager owns it (§5.1, §5.2).
-- **Pickup** — the customer chooses a branch directly; its id is stamped as `branchId`, and `pickupBranch` additionally keeps the human-readable branch **label** for the receipt.
+- **Pickup** — the customer chooses a branch directly; its id is stamped as `branchId`, and `pickupBranch` additionally keeps the human-readable branch **label** for the receipt. A pickup **must** resolve to a real, active branch: with none available (or the chosen one retired mid-checkout) the CTA is disabled with `PICKUP_UNAVAILABLE_ERROR`, and `placeOrder` refuses it too. An order nobody can collect is never created.
 
 Arabic sub-labels in the dropdown are presentational only (keyed by branch `slug` in the client), not stored on the `Branch` model — a branch without a known sub-label simply shows its name.
 
 ### 7.2 The transaction
 
-Before any pricing work, the payload is validated by the **same shared `checkoutSchema`** the form runs (empty cart, 1–50 items × 1–99 quantity, name/phone, and the conditional rule a tampered client could bypass: **a DELIVERY order MUST carry a non-empty `addressLine`**), and a per-phone throttle caps simultaneously-`PENDING` orders (3) so guest-writable checkout can't be flooded.
+Before any pricing work, the payload is validated by the **same shared `checkoutSchema`** the form runs (empty cart, 1–50 items × 1–99 quantity, name, an Egyptian mobile normalized to canonical E.164 `+201XXXXXXXXX` — Arabic-Indic digits and separators accepted — and the conditional rule a tampered client could bypass: **a DELIVERY order MUST carry a non-empty `addressLine`**), and a per-phone throttle caps simultaneously-`PENDING` orders (3) per canonical phone (indexed on `[customerPhone, status]`), so guest-writable checkout can't be flooded by retyping one number in another format.
 
-`placeOrder` then wraps the whole order in `prisma.$transaction`. First it does a **defensive branch resolution**: a supplied `branchId` is only stamped if it matches a **real, active** branch (`findFirst({ where: { id, isActive: true } })`); a stale, invalid, or deactivated id silently falls back to `null` so the order never fails — it just routes to the Super Admin. The transaction itself is kept deliberately **short — two statements regardless of cart size**: one **batched `findMany` (`id IN …`)** reads every line's `ProductVariant` (price, availability, parent product availability) **and its live promotions at the variant / product / category levels** (filtered by `livePromotionWhere(now)`) in a single query — never trusting anything the browser sent — and the loop then does no DB work at all, rejecting the whole order if any item has gone unavailable since it was added to the cart. (This replaced an N+1 `findUnique`-per-line that held the transaction open in proportion to cart size.)
+`placeOrder` then does a **defensive branch resolution**: a supplied `branchId` is only stamped if it matches a **real, active** branch (`findFirst({ where: { id, isActive: true } })`). For DELIVERY a stale, invalid, or deactivated id falls back to `null` and the order routes to the Super Admin; for PICKUP it is refused (§7.1). The transaction itself is kept deliberately **short — at most three statements regardless of cart size**: one **batched `findMany` (`id IN …`)** reads every line's `ProductVariant` (price, availability, parent product availability, per-branch availability) **and its live promotions at the variant / product / category / active-collection levels** (filtered by `livePromotionWhere(now)`) in a single query — never trusting anything the browser sent — and the loop then does no DB work at all, rejecting the whole order if any item has gone unavailable since it was added to the cart. (This replaced an N+1 `findUnique`-per-line that held the transaction open in proportion to cart size.)
 
 The best live discount is then applied per line via `resolvePrice` (§6), and **the discounted `finalPrice` is what gets snapshotted** onto the `OrderItem` (`productName`, `variantName`, `unitPrice`, `quantity` at the moment of purchase), so a later catalogue price change *or a promotion ending* never rewrites history on an already-placed order. Either every line and the order header are created together, or none of it is.
 
@@ -548,22 +570,13 @@ The order view-model ([`src/components/orders/types.ts`](../src/components/order
 
 ### 8.1 Wishlist System
 
-The wishlist lets a signed-in customer heart a product from any card ([`ProductCard.tsx`](../src/components/ProductCard.tsx)) or the detail page (via [`WishlistButton.tsx`](../src/components/products/WishlistButton.tsx) inside `ProductPurchasePanel`), backed by a `WishlistItem` model (`@@unique([userId, productId])`, cascade-deleted with the user or product) and two server actions in [`src/lib/actions/wishlist.ts`](../src/lib/actions/wishlist.ts): `toggleWishlist(productId)` and `getWishlistItems()`.
+The wishlist lets a signed-in customer heart a product from any card ([`ProductCard.tsx`](../src/components/ProductCard.tsx)) or the detail page (via [`WishlistButton.tsx`](../src/components/products/WishlistButton.tsx) inside `ProductPurchasePanel`), backed by a `WishlistItem` model (`@@unique([userId, productId])`, cascade-deleted with the user or product) and server actions in [`src/lib/actions/wishlist.ts`](../src/lib/actions/wishlist.ts): `toggleWishlist(productId)`, `getWishlistedProductIds()` (the heart set) and `getWishlistItems(page)` (the `/wishlist` page, 24 per page via `?page=`, returning `{ data, total }`).
 
-**O(1) membership lookup.** Every list-rendering page (`/shop`, the dynamic `/category/[slug]` route, the PDP) fetches `getWishlistedProductIds(): Promise<string[]>` once per request and converts it to a `Set`:
+**Hearts hydrate client-side, never server-seeded.** Catalog pages (`/`, `/category/[slug]`, `/new-arrivals`, `/collections/**`, the PDP) are ISR: one cached HTML response serves every visitor, so they must not render any per-user state. A cached page embedding one user's hearts would show them to the next visitor. The cached HTML therefore paints every heart empty. [`src/lib/wishlist-store.ts`](../src/lib/wishlist-store.ts) is a small Zustand store holding one `ReadonlySet<string>` of product ids. Once `useSession()` resolves, the first [`WishlistButton`](../src/components/products/WishlistButton.tsx) to mount calls `ensureLoaded(userId)`, which fetches `getWishlistedProductIds()` **once per user** and shares the set with every heart on the page, so each heart's lookup is O(1). Guests short-circuit to a known-empty set with no round-trip, which also clears the previous user's hearts on sign-out. While the store is `loading` (or the session is pending) the heart renders neutral, so a logged-in user never sees a filled heart flash off.
 
-```ts
-// CategoryPageTemplate.tsx
-const favorited = new Set(await getWishlistedProductIds());
-...
-<ProductCard initialIsFavorited={favorited.has(product.id)} ... />
-```
+Toggles are optimistic against the store (`useTransition` calling `toggleWishlist`, rollback + `sonner.toast.error` on failure). `getWishlistedProductIds()` is called from the store **only**, never from a page.
 
-Without the `Set`, seeding N product cards' heart state would mean N `Array.includes` scans (O(N²) overall for a page of N products). The `Set` makes each card's lookup O(1), so the cost of wiring wishlist state into a grid scales linearly with the number of products, not quadratically.
-
-**Deterministic Server Component hydration.** The heart's *initial* state is computed entirely on the server — `getWishlistedProductIds()` runs in the same Server Component that fetches the product list, and the boolean it produces (`initialIsFavorited`) is passed down as a prop, not derived from a client-side fetch after mount. `WishlistButton.tsx` then takes over interactivity client-side (optimistic flip on click, `useTransition` calling `toggleWishlist`, rollback + `sonner.toast.error` on failure) — but the *first paint* the browser renders already shows the correct heart state for that user. There is no flash of an unfilled heart followed by a pop-in once a client fetch resolves.
-
-**Why `force-dynamic` instead of ISR.** Wishlist state is **per-user**, and ISR's whole point is serving one cached HTML response to every visitor — caching a page that embeds one specific user's heart states would leak them to (or stale them for) the next visitor who happens to hit the same cached entry. Every product-listing page (`/shop`, the dynamic category route, the PDP) is therefore `export const dynamic = "force-dynamic"`, trading the cache for a guarantee that the rendered hearts always belong to the request's actual session. The alternative — client-side hydration of wishlist state after mount — was deliberately rejected, since it reintroduces the flash-then-pop-in problem the deterministic-hydration approach above exists to avoid.
+**Superseded design, don't reintroduce it:** pages used to call `getWishlistedProductIds()` per request and pass `initialIsFavorited` into each card, which forced every listing route to `force-dynamic`. The store exists to remove that trap. The cost is a brief empty-heart first paint for signed-in users. In exchange, every catalog page is served from the shared cache.
 
 ### 8.2 Order History (`/my-orders`)
 
@@ -603,3 +616,5 @@ The platform is server-rendered and server-validated end to end — Prisma queri
 All critical architectural "Hardening" tasks tracked by this document and its storefront companion are officially resolved: the footer is a fully dynamic, DB-backed CMS (`FooterLink`, §5.8) instead of a hardcoded array that could silently 404; the open-redirect guard (`sanitizeRedirect`) is a single, globally shared utility in `@/lib/utils` rather than logic duplicated per surface; the `/shop` catalog filters server-side through `searchParams` instead of shipping the full product set to the client; and the PDP variant selector, the `variantId`-keyed cart, centralized Edge route protection, the single dynamic category route, the storefront-wide Discount Engine, the DB-backed cross-device cart, and the branch-driven checkout — every item this document and `STOREFRONT_ARCHITECTURE.md` once tracked as open work — have shipped and are documented above as `BUILT`.
 
 The subsequent **July 2026 hardening wave** is likewise fully landed and reflected above: **all money columns migrated from `Float` to `Decimal`** (currency never drifts on binary rounding; `vatRate` stays `Float` as a deliberate rate-not-currency exception); the orphaned `MenuPage` model and the unread `ProductVariant.sortOrder` column were **deleted**; the admin orders board moved to **cursor pagination** (`cursor`/`take`/`startCursor`/`endCursor`, no offset `skip`); **revenue was formalized as `DELIVERED`-only** across the dashboard and analytics; **all date bucketing unified on `Africa/Cairo`** exact-UTC instants via `src/lib/timezone.ts` (never the Node server clock); the shared Server-Action idioms (`ensureAdmin`, `prismaErrorCode`, `slugify`) were consolidated into `src/lib/action-utils.ts`; orphaned UploadThing media is purged post-commit via `UTApi` (`src/lib/uploadthing-server.ts`); and the cart gained a strict **50-distinct-line DB cap** (`syncCartItemAction` → `CART_LIMIT_ERROR`) with optimistic client rollback plus a persisted pending-ops ledger. The platform is highly optimized for performance (server-side filtering and rendering, request-level query dedupe, cursor pagination, zero client-side data-fetching caches), security (server-validated pricing and stock, branch-scoped RBAC resolved live from the database, a single shared open-redirect policy), correctness (`Decimal` money, timezone-exact reporting, `DELIVERED`-only revenue), and operational flexibility (admin-editable footer navigation, branch-driven fulfillment, a merchandising console for time-boxed promotions). The system state is now fully synchronized with this documentation.
+
+The **October 2026 wave** has also landed and is reflected above. It added homepage hero slides; canonical E.164 order phones, so the PENDING throttle sees one phone however it is typed (migration `20261023000000_normalize_order_phone`); refused pickups without an active branch; a WhatsApp forgot-password hand-off with an admin reset that holds the user on `/account/change-password` (§2.4); one paginator across storefront and admin lists (path segments on ISR routes, `?page=` on dynamic ones); `/collections` renamed to `/new-arrivals`; and curated **Collections** (§3.4) as the Discount Engine's fourth targeting level. Open debts are tracked in [`DOMAIN_MAP.md` §18](./DOMAIN_MAP.md).
