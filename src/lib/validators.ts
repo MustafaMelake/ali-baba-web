@@ -488,6 +488,64 @@ export const changePasswordSchema = z
 
 export type ChangePasswordInput = z.input<typeof changePasswordSchema>;
 
+// ─── Collections ─────────────────────────────────────────────────────────────
+
+/** The one cap on products per collection (bounds every write + the admin list). */
+export const COLLECTION_MAX_PRODUCTS = 200;
+/** Categories a single collection may be shown under. */
+export const COLLECTION_MAX_CATEGORIES = 50;
+/** Collections a single product may belong to (the product form's multi-select). */
+export const PRODUCT_MAX_COLLECTIONS = 50;
+
+/** A collection's own fields (the admin modal + create/update actions). */
+export const collectionSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Name must be at least 2 characters.")
+    .max(80, "Name is too long (max 80 characters)."),
+  description: optionalNote(600, "Description"),
+  image: z
+    .string()
+    .trim()
+    .refine((url) => url === "" || isHostedImageUrl(url), HOSTED_IMAGE_ERROR)
+    .nullish()
+    .transform((value) => value || null),
+  isActive: z.boolean(),
+  showInFooter: z.boolean(),
+});
+
+export type CollectionInput = z.input<typeof collectionSchema>;
+
+/** A list of distinct ids, at most `max` — every collection link write. */
+const distinctIds = (max: number, tooMany: string) =>
+  z
+    .array(z.string().trim().min(1, "Missing id."))
+    .max(max, tooMany)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      error: "Each item may appear only once.",
+    });
+
+/** A collection's products, IN ORDER (index = curated position). */
+export const collectionProductIdsSchema = distinctIds(
+  COLLECTION_MAX_PRODUCTS,
+  `A collection can hold at most ${COLLECTION_MAX_PRODUCTS} products.`,
+);
+/** The categories a collection is shown under. */
+export const collectionCategoryIdsSchema = distinctIds(
+  COLLECTION_MAX_CATEGORIES,
+  `A collection can be shown under at most ${COLLECTION_MAX_CATEGORIES} categories.`,
+);
+/** The collections one product belongs to (product edit form). */
+export const productCollectionIdsSchema = distinctIds(
+  PRODUCT_MAX_COLLECTIONS,
+  `A product can be in at most ${PRODUCT_MAX_COLLECTIONS} collections.`,
+);
+/** A full reordering of the collections. */
+export const collectionReorderSchema = distinctIds(500, "Too many collections in one reorder.").pipe(
+  z.array(z.string()).min(1, "Nothing to reorder."),
+);
+
 // ─── Hero slides ─────────────────────────────────────────────────────────────
 
 /**

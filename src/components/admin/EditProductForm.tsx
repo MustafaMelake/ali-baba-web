@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { productUpdateSchema, fieldErrors } from "@/lib/validators";
 import { updateProduct } from "@/app/admin/products/actions";
+import { setProductCollections } from "@/lib/actions/collections";
+import MultiSelect from "@/components/admin/MultiSelect";
 import { UploadDropzone } from "@/lib/uploadthing";
 import { cn, deriveVariantDiscount, slugify } from "@/lib/utils";
 
@@ -116,12 +118,19 @@ function newVariantRow(): VariantRow {
 export default function EditProductForm({
   product,
   categories,
+  collections,
+  initialCollectionIds,
 }: {
   product: EditableProduct;
   categories: SelectOption[];
+  /** Every collection, for the "Collections" multi-select. */
+  collections: { id: string; name: string; isActive: boolean }[];
+  /** The collections this product is in now. */
+  initialCollectionIds: string[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [collectionIds, setCollectionIds] = useState<string[]>(initialCollectionIds);
 
   const [name, setName] = useState(product.name);
   const [slug, setSlug] = useState(product.slug);
@@ -198,6 +207,21 @@ export default function EditProductForm({
         setFormError(result.error);
         toast.error(result.error);
         return;
+      }
+
+      // Collection memberships save through their own action — only when the
+      // selection actually changed.
+      const sameCollections =
+        collectionIds.length === initialCollectionIds.length &&
+        collectionIds.every((id) => initialCollectionIds.includes(id));
+      if (!sameCollections) {
+        const linked = await setProductCollections(product.id, collectionIds);
+        if (!linked.success) {
+          // The product itself saved; say exactly what didn't.
+          toast.error(`Product saved, but its collections didn't: ${linked.error}`);
+          router.refresh();
+          return;
+        }
       }
 
       toast.success("Product updated");
@@ -281,6 +305,24 @@ export default function EditProductForm({
               ))}
             </select>
           </Field>
+
+          {/* Collections — curated sets this product appears in. New
+              memberships land at the end of each collection's order. */}
+          <div className="space-y-1.5">
+            <span className="text-sm font-medium text-stone-700">Collections</span>
+            <MultiSelect
+              options={collections.map((c) => ({
+                value: c.id,
+                label: c.name,
+                hint: c.isActive ? undefined : "Draft — not visible to customers",
+              }))}
+              selected={collectionIds}
+              onChange={setCollectionIds}
+              placeholder="Not in any collection"
+              searchPlaceholder="Search collections…"
+              emptyText="No collections yet — create one under Collections."
+            />
+          </div>
         </div>
       </section>
 

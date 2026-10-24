@@ -10,6 +10,7 @@ import {
 } from "@/lib/discounts";
 import { searchQuerySchema, searchTokens } from "@/lib/validators";
 import { LISTABLE_PRODUCT } from "@/lib/catalog";
+import { ACTIVE_COLLECTION, listableCountsByCollection } from "@/lib/collections";
 
 /**
  * Storefront search — the two reads behind the search palette
@@ -49,11 +50,22 @@ export type SearchCategoryHit = {
   productCount: number;
 };
 
+/** A curated collection — same row shape as a category hit, its own group. */
+export type SearchCollectionHit = {
+  id: string;
+  name: string;
+  slug: string;
+  image: string | null;
+  /** Listable products in the collection. */
+  productCount: number;
+};
+
 export type SearchResults = {
   /** The normalized query these hits answer (see normalizeSearchQuery). */
   query: string;
   products: SearchProductHit[];
   categories: SearchCategoryHit[];
+  collections: SearchCollectionHit[];
 };
 
 export type SearchSuggestions = {
@@ -71,6 +83,8 @@ export type SearchSuggestionsResult =
 
 const PRODUCT_LIMIT = 6;
 const CATEGORY_LIMIT = 3;
+/** Collections shown for a query (active ones, matched on name). */
+const COLLECTION_LIMIT = 4;
 /**
  * Name matches fetched before the in-memory relevance ranking — headroom over
  * PRODUCT_LIMIT so an alphabetical cut can't drop the best (prefix) match.
@@ -217,7 +231,7 @@ export async function searchCatalog(query: string): Promise<SearchCatalogResult>
   const now = new Date();
 
   try {
-    const [nameRows, otherRows, categoryRows] = await Promise.all([
+    const [nameRows, otherRows, categoryRows, collectionRows] = await Promise.all([
       // Primary: every word in the product name — ranked in memory below.
       prisma.product.findMany({
         where: { ...LISTABLE_PRODUCT, AND: nameHasEveryWord },
@@ -250,6 +264,17 @@ export async function searchCatalog(query: string): Promise<SearchCatalogResult>
         orderBy: { name: "asc" },
         take: NAME_CANDIDATE_LIMIT,
       }),
+      // Active collections with something to show, every word in the name.
+      prisma.collection.findMany({
+        where: {
+          ...ACTIVE_COLLECTION,
+          AND: nameHasEveryWord,
+          products: { some: { product: LISTABLE_PRODUCT } },
+        },
+        select: { id: true, name: true, slug: true, image: true },
+        orderBy: { name: "asc" },
+        take: NAME_CANDIDATE_LIMIT,
+      }),
     ]);
 
     const products = [...byNameRelevance(nameRows, term), ...otherRows]
@@ -260,7 +285,14 @@ export async function searchCatalog(query: string): Promise<SearchCatalogResult>
       .slice(0, CATEGORY_LIMIT)
       .map(toCategoryHit);
 
-    return { success: true, data: { query: term, products, categories } };
+    const rankedCollections = byNameRelevance(collectionRows, term).slice(0, COLLECTION_LIMIT);
+    const counts = await listableCountsByCollection(rankedCollections.map((c) => c.id));
+    const collections: SearchCollectionHit[] = rankedCollections.map((c) => ({
+      ...c,
+      productCount: counts.get(c.id) ?? 0,
+    }));
+
+    return { success: true, data: { query: term, products, categories, collections } };
   } catch (err) {
     console.error("searchCatalog failed:", err);
     return { success: false, error: "Search is unavailable right now. Please try again." };

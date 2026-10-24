@@ -4,8 +4,10 @@ import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import CategoryPageTemplate from "@/components/CategoryPageTemplate";
 import Pagination from "@/components/Pagination";
-import { livePromotionWhere, PROMOTION_SELECT_FIELDS } from "@/lib/discounts";
+import CollectionCard from "@/components/CollectionCard";
 import { LISTABLE_PRODUCT } from "@/lib/catalog";
+import { getCategoryCollectionCards } from "@/lib/collections";
+import { productCardInclude, toProductCard } from "@/lib/product-cards";
 import {
   isPageOutOfRange,
   pageHref,
@@ -61,45 +63,24 @@ export async function CategoryListing({ slug, page }: { slug: string; page: numb
 
   // One instant for the DB promotion filter and the card prices alike.
   const now = new Date();
+  // LISTABLE before paginating, so the page count is exact.
   const where = { ...LISTABLE_PRODUCT, categoryId: category.id };
 
-  const [total, rawProducts] = await Promise.all([
+  const [total, rows, collectionCards] = await Promise.all([
     prisma.product.count({ where }),
     prisma.product.findMany({
       where,
-      include: {
-        category: {
-          select: {
-            name: true,
-            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-          },
-        },
-        promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-        variants: {
-          where: { isAvailable: true },
-          orderBy: { price: "asc" }, // [0] = starting (lowest) available price
-          include: {
-            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-          },
-        },
-      },
+      include: productCardInclude(now),
       // `id` tie-break: products sharing a createdAt keep a stable page order.
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       ...pageSlice(page, STOREFRONT_PAGE_SIZE),
     }),
+    // The category's collections ride on page 1 only.
+    page === 1 ? getCategoryCollectionCards(category.id) : Promise.resolve([]),
   ]);
 
   const info = pageInfo(page, STOREFRONT_PAGE_SIZE, total);
   if (isPageOutOfRange(info)) notFound();
-
-  const products = rawProducts.map((p) => ({
-    ...p,
-    variants: p.variants.map((v) => ({
-      ...v,
-      price: v.price.toNumber(),
-      compareAtPrice: v.compareAtPrice?.toNumber() ?? null,
-    })),
-  }));
 
   return (
     <CategoryPageTemplate
@@ -108,8 +89,27 @@ export async function CategoryListing({ slug, page }: { slug: string; page: numb
         category.subtitle ??
         `Discover our ${category.name} — each piece handcrafted with care.`
       }
-      products={products}
-      now={now}
+      eyebrow="Category"
+      crumbs={[{ label: "Shop", href: "/shop" }]}
+      cards={rows.map((p) => toProductCard(p, now))}
+      total={total}
+      // Collection cards first, then EVERY product of the category — no
+      // product is only reachable through a collection.
+      gridHeading={collectionCards.length > 0 ? `All ${category.name}` : undefined}
+      beforeGrid={
+        collectionCards.length > 0 ? (
+          <section
+            aria-label={`${category.name} collections`}
+            className="mx-auto max-w-screen-xl px-6 pt-14 md:px-10 md:pt-20 lg:px-14"
+          >
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {collectionCards.map((c) => (
+                <CollectionCard key={c.slug} collection={c} />
+              ))}
+            </div>
+          </section>
+        ) : undefined
+      }
       pagination={
         <Pagination info={info} mode={{ kind: "path", base: basePath(category.slug) }} />
       }

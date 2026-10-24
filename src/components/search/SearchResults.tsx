@@ -6,6 +6,7 @@ import Link from "next/link";
 import { ArrowRight, ArrowUpRight, LayoutGrid, SearchX } from "lucide-react";
 import type {
   SearchCategoryHit,
+  SearchCollectionHit,
   SearchProductHit,
   SearchResults,
   SearchSuggestions,
@@ -18,7 +19,8 @@ import { formatMoney } from "@/lib/utils";
 
 export type SearchOption =
   | { kind: "product"; key: string; href: string; hit: SearchProductHit }
-  | { kind: "category"; key: string; href: string; hit: SearchCategoryHit };
+  | { kind: "category"; key: string; href: string; hit: SearchCategoryHit }
+  | { kind: "collection"; key: string; href: string; hit: SearchCollectionHit };
 
 export interface SearchSectionModel {
   key: string;
@@ -35,12 +37,17 @@ function categoryOption(hit: SearchCategoryHit): SearchOption {
   return { kind: "category", key: `category-${hit.id}`, href: `/category/${hit.slug}`, hit };
 }
 
+function collectionOption(hit: SearchCollectionHit): SearchOption {
+  return { kind: "collection", key: `collection-${hit.id}`, href: `/collections/${hit.slug}`, hit };
+}
+
 /** Result groups for a query, in arrow-key order. Empty groups drop out. */
 export function resultSections(results: SearchResults | null): SearchSectionModel[] {
   if (!results) return [];
   const sections: SearchSectionModel[] = [
     { key: "products", label: "Products", layout: "rows", options: results.products.map(productOption) },
     { key: "categories", label: "Categories", layout: "rows", options: results.categories.map(categoryOption) },
+    { key: "collections", label: "Collections", layout: "rows", options: results.collections.map(collectionOption) },
   ];
   return sections.filter((section) => section.options.length > 0);
 }

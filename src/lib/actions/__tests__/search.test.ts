@@ -118,10 +118,17 @@ function stubSearch(rows: {
   nameRows?: ReturnType<typeof productRow>[];
   otherRows?: ReturnType<typeof productRow>[];
   categoryRows?: ReturnType<typeof categoryRow>[];
+  collectionRows?: { id: string; name: string; slug: string; image: string | null }[];
+  collectionCounts?: { collectionId: string; _count: { _all: number } }[];
 }) {
   mockPrisma.product.findMany.mockImplementation(((args: { where?: { NOT?: unknown } }) =>
     Promise.resolve(args.where?.NOT ? (rows.otherRows ?? []) : (rows.nameRows ?? []))) as never);
   mockPrisma.category.findMany.mockResolvedValue((rows.categoryRows ?? []) as never);
+  mockPrisma.collection.findMany.mockResolvedValue((rows.collectionRows ?? []) as never);
+  // groupBy's overloaded signature hides the mock helpers — cast to a plain vi.fn.
+  (mockPrisma.collectionProduct.groupBy as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+    rows.collectionCounts ?? [],
+  );
 }
 
 /** The args of every product.findMany call, in call order (primary first). */
@@ -334,7 +341,7 @@ describe("searchCatalog — relevance", () => {
 
     expect(result).toEqual({
       success: true,
-      data: { query: "Cake Pops", products: [], categories: [] },
+      data: { query: "Cake Pops", products: [], categories: [], collections: [] },
     });
   });
 });
@@ -523,5 +530,31 @@ describe("getSearchSuggestions", () => {
 
     expect(result).toEqual({ success: false, error: "Couldn't load suggestions." });
     expect(consoleError).toHaveBeenCalled();
+  });
+});
+
+describe("searchCatalog — collections group", () => {
+  it("returns ACTIVE collections with listable products, name-matched, with listable counts", async () => {
+    stubSearch({
+      collectionRows: [
+        { id: "c2", name: "Gift Boxes Deluxe", slug: "gift-boxes-deluxe", image: null },
+        { id: "c1", name: "Gift Boxes", slug: "gift-boxes", image: "/g.jpg" },
+      ],
+      collectionCounts: [{ collectionId: "c1", _count: { _all: 7 } }],
+    });
+
+    const res = await searchCatalog("gift");
+    if (!res.success) throw new Error(res.error);
+
+    // Prefix-ranked like categories; a collection with no counted products reads 0.
+    expect(res.data.collections).toEqual([
+      { id: "c1", name: "Gift Boxes", slug: "gift-boxes", image: "/g.jpg", productCount: 7 },
+      { id: "c2", name: "Gift Boxes Deluxe", slug: "gift-boxes-deluxe", image: null, productCount: 0 },
+    ]);
+    const where = (mockPrisma.collection.findMany.mock.calls[0][0] as any).where;
+    expect(where.isActive).toBe(true);
+    expect(where.products).toEqual({ some: { product: expect.objectContaining({ isAvailable: true }) } });
+    // One grouped count for the whole batch.
+    expect(mockPrisma.collectionProduct.groupBy).toHaveBeenCalledTimes(1);
   });
 });

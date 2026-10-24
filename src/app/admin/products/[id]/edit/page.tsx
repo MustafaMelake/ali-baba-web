@@ -19,12 +19,14 @@ export default async function EditProductPage({
 
   const { id } = await params;
 
-  // Product (with its variants) + the category select options, in parallel.
-  const [product, categories] = await Promise.all([
+  // Product (with its variants + collection links), the category select
+  // options and every collection for the multi-select — in parallel.
+  const [product, categories, collections] = await Promise.all([
     prisma.product.findUnique({
       where: { id },
       include: {
         category: { select: { id: true, name: true } },
+        collections: { select: { collectionId: true } },
         variants: {
           orderBy: { price: "asc" },
           select: {
@@ -40,6 +42,10 @@ export default async function EditProductPage({
     prisma.category.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true },
+    }),
+    prisma.collection.findMany({
+      orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+      select: { id: true, name: true, isActive: true },
     }),
   ]);
 
@@ -64,6 +70,8 @@ export default async function EditProductPage({
       </div>
 
       <EditProductForm
+        collections={collections}
+        initialCollectionIds={product.collections.map((c) => c.collectionId)}
         product={{
           id: product.id,
           name: product.name,

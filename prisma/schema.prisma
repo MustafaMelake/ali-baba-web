@@ -216,6 +216,9 @@ model Category {
   /// Promotions targeting this whole category (Discount Engine).
   promotions Promotion[]
 
+  /// Collections shown as cards on this category's page (links only).
+  collections CollectionCategory[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -245,6 +248,9 @@ model Product {
 
   /// Homepage hero slides advertising this product (SetNull on delete).
   heroSlides HeroSlide[]
+
+  /// The collections this product is in (ordered links; Cascade = link only).
+  collections CollectionProduct[]
 
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -668,6 +674,79 @@ model FooterLink {
 
   // Matches the storefront read: where isActive, ordered by `order` ascending.
   @@index([isActive, order])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Collections (admin-curated)
+//
+// A Collection is a curated, ordered set of products ("Ramadan Favourites",
+// "Gift Boxes") with its own page at /collections/[slug]. It is NOT a Category:
+// a product has exactly one Category (its classification) but may sit in many
+// Collections, and a Collection may be shown under many Categories (as cards on
+// those category pages). Naming is deliberate — "collection" never means
+// "category" anywhere in this codebase.
+//
+// Deletion physics: every Cascade below deletes LINK rows only. Deleting a
+// Collection removes its product/category links, never a Product or Category;
+// deleting a Product or Category removes its own links.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Collection {
+  id          String  @id @default(cuid())
+  name        String
+  /// Minted once from the name at creation, never regenerated on rename, so
+  /// /collections/[slug] links never 404.
+  slug        String  @unique
+  description String?
+  /// Card/header image — an UploadThing URL or a /public path (isHostedImageUrl).
+  image       String?
+  /// Ascending display position: the /collections index, the footer column and
+  /// the collection cards on a category page all use this one global order.
+  order       Int     @default(0)
+  /// Draft until published: an inactive collection doesn't exist for customers
+  /// (no page, no footer/search entry, and it prices nothing).
+  isActive     Boolean @default(false)
+  /// Listed in the footer's "Collections" column (when also active).
+  showInFooter Boolean @default(false)
+
+  products   CollectionProduct[]
+  categories CollectionCategory[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Matches the storefront read: where isActive, ordered by `order` ascending.
+  @@index([isActive, order])
+}
+
+/// A product's place in a collection. `order` is the admin's curated sequence.
+model CollectionProduct {
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  order        Int        @default(0)
+  createdAt    DateTime   @default(now())
+
+  // A product appears at most once per collection (a duplicate add is a P2002).
+  @@id([collectionId, productId])
+  // The collection page read: one collection's products in curated order.
+  @@index([collectionId, order])
+  // FK index for the product-side cascade and "which collections is it in".
+  @@index([productId])
+}
+
+/// A collection shown (as a card) on a category's page. Unordered — cards use
+/// the collection's global `order`.
+model CollectionCategory {
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  categoryId   String
+  category     Category   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, categoryId])
+  // The category page read: "which collections are linked to this category".
+  @@index([categoryId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

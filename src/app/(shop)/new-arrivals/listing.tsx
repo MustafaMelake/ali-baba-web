@@ -11,14 +11,8 @@ import {
 } from "@/lib/pagination";
 import { ArrowRight, ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@/generated/prisma/client";
-import ProductCard, { type ShopProduct } from "@/components/ProductCard";
-import {
-  gatherPromotions,
-  livePromotionWhere,
-  PROMOTION_SELECT_FIELDS,
-  resolvePrice,
-} from "@/lib/discounts";
+import ProductCard from "@/components/ProductCard";
+import { productCardInclude, toProductCard } from "@/lib/product-cards";
 import { LISTABLE_PRODUCT } from "@/lib/catalog";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,81 +22,8 @@ import { LISTABLE_PRODUCT } from "@/lib/catalog";
 // previews every category below the grid.
 // ─────────────────────────────────────────────────────────────────────────────
 
-
 /** Products previewed per category section — the "View all" link goes deeper. */
 const PER_CATEGORY_LIMIT = 4;
-
-/**
- * The standard card include: category name + the three-level live-promotion
- * hierarchy (category / product / variant) for the Discount Engine, with
- * variants ordered by price so `[0]` is the starting (lowest) price.
- */
-function cardInclude(now: Date) {
-  return {
-    category: {
-      select: {
-        name: true,
-        promotions: {
-          where: livePromotionWhere(now),
-          select: PROMOTION_SELECT_FIELDS,
-        },
-      },
-    },
-    promotions: {
-      where: livePromotionWhere(now),
-      select: PROMOTION_SELECT_FIELDS,
-    },
-    variants: {
-      where: { isAvailable: true },
-      orderBy: { price: "asc" }, // [0] = starting (lowest) price
-      include: {
-        promotions: {
-          where: livePromotionWhere(now),
-          select: PROMOTION_SELECT_FIELDS,
-        },
-      },
-    },
-  } satisfies Prisma.ProductInclude;
-}
-
-type CardRow = Prisma.ProductGetPayload<{
-  include: ReturnType<typeof cardInclude>;
-}>;
-
-/**
- * Prices a product's starting variant through the Discount Engine and
- * serializes it into the plain-number `ShopProduct` the client card expects.
- * Same mapping as `/shop` and `CategoryPageTemplate` — the math lives only in
- * `discounts.ts`.
- */
-function toCard(product: CardRow, now: Date): ShopProduct {
-  const starting = product.variants[0];
-  const priced = resolvePrice(
-    starting?.price ?? 0,
-    gatherPromotions(
-      starting?.promotions,
-      product.promotions,
-      product.category.promotions
-    ),
-    now
-  );
-  return {
-    id: product.id,
-    variantId: starting?.id ?? "",
-    name: product.name,
-    slug: product.slug,
-    category: product.category.name,
-    price: priced.finalPrice,
-    // Live promo → struck-through base price; otherwise fall back to the
-    // variant's manual Compare-At (mirrors the PDP). The Decimal column is
-    // serialized to a plain number for the client card.
-    compareAtPrice: priced.hasDiscount
-      ? priced.basePrice
-      : starting?.compareAtPrice?.toNumber() ?? null,
-    image: product.images[0] ?? "/placeholder.jpg",
-    tagline: product.description ?? undefined,
-  };
-}
 
 const BASE = "/new-arrivals";
 
@@ -128,7 +49,7 @@ export async function NewArrivalsListing({ page }: { page: number }) {
     prisma.product.count({ where: LISTABLE_PRODUCT }),
     prisma.product.findMany({
       where: LISTABLE_PRODUCT,
-      include: cardInclude(now),
+      include: productCardInclude(now),
       // `id` tie-break: products sharing a createdAt keep a stable page order.
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       ...pageSlice(page, STOREFRONT_PAGE_SIZE),
@@ -152,7 +73,7 @@ prisma.category.findMany({
         sliderOrder: true,
         products: {
           where: LISTABLE_PRODUCT,
-          include: cardInclude(now),
+          include: productCardInclude(now),
           orderBy: { createdAt: "desc" },
           take: PER_CATEGORY_LIMIT,
         },
@@ -164,7 +85,7 @@ prisma.category.findMany({
   const info = pageInfo(page, STOREFRONT_PAGE_SIZE, total);
   if (isPageOutOfRange(info)) notFound();
 
-  const latestArrivals = latestRows.map((p) => toCard(p, now));
+  const latestArrivals = latestRows.map((p) => toProductCard(p, now));
 
   // Featured categories lead in their curated slider order; the rest follow
   // alphabetically (the query's order — Array.prototype.sort is stable).
@@ -179,7 +100,7 @@ prisma.category.findMany({
       slug: category.slug,
       subtitle: category.subtitle,
       total: category._count.products,
-      products: category.products.map((p) => toCard(p, now)),
+      products: category.products.map((p) => toProductCard(p, now)),
     }));
 
   const isEmpty = latestArrivals.length === 0 && categorySections.length === 0;

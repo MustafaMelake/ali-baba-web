@@ -33,6 +33,22 @@ const getActiveFooterLinks = unstable_cache(
   { tags: ["footer-links"], revalidate: 3600 }, // tag-invalidated; 1h safety TTL
 );
 
+/**
+ * Active collections flagged "show in footer", in the admin's order. Same
+ * caching shape as the managed links: tag "footer-collections" (collection
+ * mutations call updateTag), 1h safety TTL.
+ */
+const getFooterCollections = unstable_cache(
+  async () =>
+    prisma.collection.findMany({
+      where: { isActive: true, showInFooter: true },
+      orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+      select: { name: true, slug: true },
+    }),
+  ["footer-collections"], // cache key
+  { tags: ["footer-collections"], revalidate: 3600 },
+);
+
 type FooterColumn = { heading: string; links: NavLink[] };
 
 // Developer credit — fixed, not admin-managed (it isn't store navigation).
@@ -45,7 +61,28 @@ const DEVELOPER = {
 /** External links open in a new tab without handing the opener to the target. */
 const EXTERNAL = { target: "_blank", rel: "noopener noreferrer" } as const;
 
+/** The "Collections" column — null when no collection is flagged for the footer. */
+async function getCollectionsColumn(): Promise<FooterColumn | null> {
+  try {
+    const collections = await getFooterCollections();
+    if (collections.length === 0) return null;
+    return {
+      heading: "Collections",
+      links: [
+        ...collections.map((c) => ({ label: c.name, href: `/collections/${c.slug}` })),
+        { label: "All collections", href: "/collections" },
+      ],
+    };
+  } catch (err) {
+    console.error("Footer: failed to load collections —", err);
+    return null;
+  }
+}
+
 async function getFooterColumns(): Promise<FooterColumn[]> {
+  const collectionsColumn = await getCollectionsColumn();
+  const withCollections = (cols: FooterColumn[]) =>
+    collectionsColumn ? [...cols, collectionsColumn] : cols;
   try {
     const links = await getActiveFooterLinks();
     // Group by `group`, preserving first-appearance order for the columns and
@@ -56,11 +93,13 @@ async function getFooterColumns(): Promise<FooterColumn[]> {
       col.push({ label: link.label, href: link.url });
       columns.set(link.group, col);
     }
-    return [...columns].map(([heading, groupLinks]) => ({ heading, links: groupLinks }));
+    return withCollections(
+      [...columns].map(([heading, groupLinks]) => ({ heading, links: groupLinks })),
+    );
   } catch (err) {
     // No fallback by design — an empty result collapses the nav section.
     console.error("Footer: failed to load managed links —", err);
-    return [];
+    return withCollections([]);
   }
 }
 
