@@ -648,6 +648,7 @@ Read row → depends on column. ● = hard dependency (breaks), ○ = soft (degr
 | `59a5f00` | D-6 no throttle index · D-7 phones not normalized | `normalizeEgyptMobile` inside `checkoutSchema` → canonical E.164; `@@index([customerPhone, status])`; migration `20261023000000_normalize_order_phone` (idempotent, never deletes, leaves un-parseable values untouched and reports them in a NOTICE); admin search on national digits |
 | `7d06e14` | D-9 `placeOrder` error leak | Already fixed in code (whitelist of `OrderLineUnavailableError`); the leak path is now pinned by tests |
 | `7d2fded` | D-10 `/my-orders` unpaginated | One paginator (`src/lib/pagination.ts` + `<Pagination>`): path segments on ISR routes, `?page=` on dynamic ones |
+| _(dotenv devDependency)_ | D-26 `dotenv` undeclared (resolved only transitively via `c12`) | Declared `dotenv` in `devDependencies` — `prisma.config.ts` imports `dotenv/config` |
 | `44b9a14` | Pickup orders could fall back to "unassigned" | `placeOrder` + checkout refuse a PICKUP without an active branch |
 | _(infra consolidation + storage hygiene)_ | D-15 idiom duplication · D-14 orphaned UploadThing files · D-3 dead `updateTag("categories")` | Extracted `prismaErrorCode` (was ×11), `ensureAdmin` (was ×5; plus the session-returning `ensureAdminSession` variant manage-users needs) and `slugify` (was ×3) into **`src/lib/action-utils.ts`** — every `src/lib/actions/*` file and `app/admin/products/actions.ts` now imports the single copy (menu keeps its random-token slug fallback as a thin `menuSlug` wrapper; client-form slugify copies stay, the util is server-only). Added **`src/lib/uploadthing-server.ts`** (`UTApi` + `deleteUploadedFiles`): product/category deletes capture stored URLs pre-delete and purge post-commit; image-replacing updates purge the removed/replaced files — all best-effort, never failing the DB write. Removed the dead `updateTag("categories")` calls from all three category mutations (tag registered nowhere; the footer's `footer-links` tag is untouched). |
 
@@ -665,7 +666,6 @@ Read row → depends on column. ● = hard dependency (breaks), ○ = soft (degr
 | D-23 | §3.7 / §4 | The two free-product guards (promotion side, collection side) are check-then-write, not transactional. A concurrent price edit can slip between them, and `placeOrder`'s 0 EGP refusal is the backstop | Correctness edge (low) |
 | D-24 | §6 | Legacy order phones that weren't Egyptian mobiles stay un-normalized, so the throttle can't see them; the migration's NOTICE reports the count | Data hygiene |
 | D-25 | §12 | Admin order search matches a numeric query on phone digits **and** order numbers, so a short number can return more rows than the order it names | UX (minor) |
-| D-26 | §15 | `prisma.config.ts` imports `dotenv/config` but `dotenv` isn't declared in `package.json` (it resolves transitively today) | Build hygiene |
 | D-27 | §3 | The PDP's collection-level promotion include is covered at the shared-helper level only, with no page-level test | Test coverage |
 
 ---
