@@ -60,6 +60,7 @@ function input(overrides: Partial<PromotionInput> = {}): PromotionInput {
     categoryIds: ["cat_oriental"],
     productIds: ["prod_kunafa"],
     variantIds: ["var_small"],
+    collectionIds: [],
     ...overrides,
   };
 }
@@ -105,7 +106,7 @@ describe("createPromotion — fixed-amount ceiling", () => {
     expect(res).toEqual({ success: true, id: "promo_1" });
   });
 
-  it("looks for the cheapest AVAILABLE variant across variant, product and category targets", async () => {
+  it("looks for the cheapest AVAILABLE variant across variant, product, category and collection targets", async () => {
     mockPrisma.productVariant.findFirst.mockResolvedValue(null);
 
     await createPromotion(input());
@@ -118,6 +119,7 @@ describe("createPromotion — fixed-amount ceiling", () => {
             { id: { in: ["var_small"] } },
             { productId: { in: ["prod_kunafa"] } },
             { product: { categoryId: { in: ["cat_oriental"] } } },
+            { product: { collections: { some: { collectionId: { in: [] } } } } },
           ],
         },
         orderBy: { price: "asc" },
@@ -167,6 +169,7 @@ describe("togglePromotionActive — re-checks prices when switching on", () => {
       categories: [{ id: "cat_oriental" }],
       products: [],
       variants: [],
+      collections: [],
     } as never;
   }
 
@@ -216,7 +219,7 @@ describe("createPromotion — field rules", () => {
     ["a blank start date", { startDate: "" }, "Start date is invalid."],
     ["an unparseable end date", { endDate: "next week" }, "End date is invalid."],
     ["an end before the start", { startDate: "2026-10-27", endDate: "2026-10-20" }, "End date must be on or after the start date."],
-    ["no targets at all", { categoryIds: [], productIds: [""], variantIds: [] }, "Link the promotion to at least one category, product or variant."],
+    ["no targets at all", { categoryIds: [], productIds: [""], variantIds: [] }, "Link the promotion to at least one category, collection, product or variant."],
   ])("refuses %s", async (_label, overrides, error) => {
     const res = await createPromotion(input(overrides));
 
@@ -276,6 +279,78 @@ describe("createPromotion — field rules", () => {
     expect(res).toEqual({
       success: false,
       error: "One of the selected items no longer exists. Refresh and try again.",
+    });
+  });
+});
+
+describe("collection targets — the fourth level", () => {
+  it("guards a fixed discount against the cheapest product of a targeted collection (active or not)", async () => {
+    mockPrisma.productVariant.findFirst.mockResolvedValue(cheapest(30));
+
+    const res = await createPromotion(
+      input({ categoryIds: [], productIds: [], variantIds: [], collectionIds: ["col_gifts"], value: 30 }),
+    );
+
+    expect(res.success).toBe(false);
+    const where = (mockPrisma.productVariant.findFirst.mock.calls[0][0] as any).where;
+    expect(where.OR).toContainEqual({
+      product: { collections: { some: { collectionId: { in: ["col_gifts"] } } } },
+    });
+    expect(mockPrisma.promotion.create).not.toHaveBeenCalled();
+  });
+
+  it("a collection alone is a valid target, and is connected on create", async () => {
+    mockPrisma.productVariant.findFirst.mockResolvedValue(cheapest(500));
+
+    const res = await createPromotion(
+      input({ categoryIds: [], productIds: [], variantIds: [], collectionIds: ["col_gifts"] }),
+    );
+
+    expect(res.success).toBe(true);
+    expect(mockPrisma.promotion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ collections: { connect: [{ id: "col_gifts" }] } }),
+      }),
+    );
+  });
+
+  it("replaces the collection targets on update", async () => {
+    mockPrisma.productVariant.findFirst.mockResolvedValue(null);
+    await updatePromotion("promo_1", input({ collectionIds: ["col_a", "col_b"] }));
+    expect(mockPrisma.promotion.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ collections: { set: [{ id: "col_a" }, { id: "col_b" }] } }),
+      }),
+    );
+  });
+
+  it("re-activation re-checks collection targets too", async () => {
+    mockPrisma.promotion.findUnique.mockResolvedValue({
+      type: DiscountType.FIXED_AMOUNT,
+      value: money(60),
+      categories: [],
+      products: [],
+      variants: [],
+      collections: [{ id: "col_gifts" }],
+    } as never);
+    mockPrisma.productVariant.findFirst.mockResolvedValue(cheapest(55));
+
+    const res = await togglePromotionActive("promo_1", true);
+
+    expect(res.success).toBe(false);
+    const where = (mockPrisma.productVariant.findFirst.mock.calls[0][0] as any).where;
+    expect(where.OR).toContainEqual({
+      product: { collections: { some: { collectionId: { in: ["col_gifts"] } } } },
+    });
+  });
+
+  it("still requires at least one target of any kind", async () => {
+    const res = await createPromotion(
+      input({ categoryIds: [], productIds: [], variantIds: [], collectionIds: [] }),
+    );
+    expect(res).toEqual({
+      success: false,
+      error: "Link the promotion to at least one category, collection, product or variant.",
     });
   });
 });

@@ -151,3 +151,12 @@ describe("getWishlistItems — pagination", () => {
     );
   });
 });
+
+describe("getWishlistItems — prices the collection level too", () => {
+  it("reads the product's ACTIVE collections' promotions", async () => {
+    mockPrisma.wishlistItem.findMany.mockResolvedValue([] as never);
+    await getWishlistItems();
+    const args = mockPrisma.wishlistItem.findMany.mock.calls[0][0] as any;
+    expect(args.include.product.include.collections.where).toEqual({ collection: { isActive: true } });
+  });
+});

@@ -24,6 +24,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
 import { ensureAdmin, prismaErrorCode, slugify } from "@/lib/action-utils";
 import { deleteUploadedFiles } from "@/lib/uploadthing-server";
+import type { Prisma } from "@/generated/prisma/client";
+import { DiscountType } from "@/generated/prisma/enums";
 import {
   COLLECTION_MAX_PRODUCTS,
   collectionCategoryIdsSchema,
@@ -124,15 +126,106 @@ async function surfacesOf(collectionIds: string[]) {
 }
 
 /**
+ * Promotions that can price products through these collections: switched on
+ * and not over yet (live OR scheduled — a scheduled one goes live without any
+ * admin action, so its price must already be right on every cached page).
+ */
+function pricingPromotionWhere(collectionIds: string[], now: Date) {
+  return {
+    isActive: true,
+    endDate: { gte: now },
+    collections: { some: { id: { in: collectionIds } } },
+  };
+}
+
+/**
+ * PRICE FRESHNESS. Collection-targeted promotions price products on EVERY
+ * surface (cards, PDP, hero, search, cart) — and `placeOrder` bills the new
+ * price at once. So a change to which products a promoted collection prices
+ * (its membership, its isActive, its existence) must bust the whole storefront
+ * like a promotion mutation does, or a cached PDP could show for up to 60s a
+ * price the customer won't be billed. `onlyActive`: membership changes only
+ * matter while the collection is active (a draft prices nothing).
+ */
+async function collectionsArePromoted(
+  collectionIds: string[],
+  { onlyActive }: { onlyActive: boolean },
+): Promise<boolean> {
+  if (collectionIds.length === 0) return false;
+  const ids = onlyActive
+    ? (
+        await prisma.collection.findMany({
+          where: { id: { in: collectionIds }, isActive: true },
+          select: { id: true },
+        })
+      ).map((c) => c.id)
+    : collectionIds;
+  if (ids.length === 0) return false;
+  const count = await prisma.promotion.count({ where: pricingPromotionWhere(ids, new Date()) });
+  return count > 0;
+}
+
+/** Whether any of these collections is active (a draft prices nothing). */
+async function collectionsAreActive(collectionIds: string[]): Promise<boolean> {
+  if (collectionIds.length === 0) return false;
+  const count = await prisma.collection.count({ where: { id: { in: collectionIds }, isActive: true } });
+  return count > 0;
+}
+
+/**
+ * NO PROMOTION MAY MAKE A PRODUCT FREE — the collection side of the guard in
+ * promotions.ts. Publishing a collection, or adding products to one, brings
+ * its fixed-amount promotions to products they never priced before; refuse
+ * the change if the largest such promotion (live or scheduled) would reach the
+ * cheapest available variant. `products` narrows the check to the products
+ * being added; "members" checks every product already in the collection(s).
+ */
+async function freeProductProblem(
+  collectionIds: string[],
+  products: Prisma.ProductWhereInput | "members",
+): Promise<string | null> {
+  if (collectionIds.length === 0) return null;
+  const promotion = await prisma.promotion.findFirst({
+    where: { ...pricingPromotionWhere(collectionIds, new Date()), type: DiscountType.FIXED_AMOUNT },
+    orderBy: { value: "desc" },
+    select: { name: true, value: true },
+  });
+  if (!promotion) return null;
+
+  const cheapest = await prisma.productVariant.findFirst({
+    where: {
+      isAvailable: true,
+      product:
+        products === "members"
+          ? { collections: { some: { collectionId: { in: collectionIds } } } }
+          : products,
+    },
+    orderBy: { price: "asc" },
+    select: { price: true, name: true, product: { select: { name: true } } },
+  });
+  if (!cheapest) return null;
+
+  const price = cheapest.price.toNumber();
+  const value = promotion.value.toNumber();
+  if (value < price) return null;
+  return `"${promotion.name}" takes ${value} EGP off this collection — it would make "${cheapest.product.name} — ${cheapest.name}" (${price} EGP) free. Lower that promotion first.`;
+}
+
+/**
  * Every surface a collection appears on: the index, its own page, the cards on
  * each linked category page, the footer column, and the admin list. Pass the
  * slugs read BEFORE a write as `before`, so a removed link or a deleted
  * collection still busts the page that showed it. Page 2+ of a paginated
  * listing ages out on its own 60s window (the accepted bound).
+ *
+ * `pricesChanged` (see collectionsArePromoted) adds the storefront-wide bust
+ * promotion mutations use — revalidatePath("/", "layout").
  */
 function revalidateCollectionSurfaces(
+  pricesChanged: boolean,
   ...sets: { slugs: string[]; categorySlugs: string[] }[]
 ) {
+  if (pricesChanged) revalidatePath("/", "layout");
   revalidatePath("/collections");
   revalidatePath("/admin/collections");
   updateTag("footer-collections");
@@ -245,7 +338,8 @@ export async function createCollection(input: unknown): Promise<CreateCollection
       });
     });
 
-    revalidateCollectionSurfaces({ slugs: [created.slug], categorySlugs: [] });
+    // A new collection is empty and (by default) a draft — no prices move.
+    revalidateCollectionSurfaces(false, { slugs: [created.slug], categorySlugs: [] });
     return { success: true, id: created.id, slug: created.slug };
   } catch (err) {
     // P2002 = a concurrent create minted the same slug between check and insert.
@@ -267,8 +361,23 @@ export async function updateCollection(id: string, input: unknown): Promise<Coll
   if (!parsed.success) return { success: false, error: firstIssue(parsed.error, "Invalid collection.") };
 
   try {
-    const before = await prisma.collection.findUnique({ where: { id }, select: { image: true } });
+    const before = await prisma.collection.findUnique({
+      where: { id },
+      select: { image: true, isActive: true },
+    });
     if (!before) return { success: false, error: COLLECTION_GONE };
+
+    // Publishing brings the collection's fixed-amount promotions to its
+    // products — refuse if one would make a product free.
+    const activating = !before.isActive && parsed.data.isActive;
+    if (activating) {
+      const problem = await freeProductProblem([id], "members");
+      if (problem) return { success: false, error: problem };
+    }
+    // isActive flips which products its promotions price, both ways.
+    const pricesChanged =
+      before.isActive !== parsed.data.isActive &&
+      (await collectionsArePromoted([id], { onlyActive: false }));
 
     await prisma.collection.update({ where: { id }, data: parsed.data, select: { id: true } });
 
@@ -277,7 +386,7 @@ export async function updateCollection(id: string, input: unknown): Promise<Coll
       await deleteUploadedFiles([before.image]);
     }
 
-    revalidateCollectionSurfaces(await surfacesOf([id]));
+    revalidateCollectionSurfaces(pricesChanged, await surfacesOf([id]));
     return { success: true };
   } catch (err) {
     if (prismaErrorCode(err) === "P2025") return { success: false, error: COLLECTION_GONE };
@@ -297,12 +406,14 @@ export async function deleteCollection(id: string): Promise<CollectionActionResu
     const before = await surfacesOf([id]);
     if (before.slugs.length === 0) return { success: false, error: COLLECTION_GONE };
     const existing = await prisma.collection.findUnique({ where: { id }, select: { image: true } });
+    // Read BEFORE the delete — the promotion join rows go with it.
+    const pricesChanged = await collectionsArePromoted([id], { onlyActive: true });
 
     await prisma.collection.delete({ where: { id } });
 
     if (existing?.image) await deleteUploadedFiles([existing.image]);
 
-    revalidateCollectionSurfaces(before);
+    revalidateCollectionSurfaces(pricesChanged, before);
     return { success: true };
   } catch (err) {
     if (prismaErrorCode(err) === "P2025") return { success: false, error: COLLECTION_GONE };
@@ -325,7 +436,8 @@ export async function reorderCollections(orderedIds: unknown): Promise<Collectio
         prisma.collection.update({ where: { id }, data: { order: index }, select: { id: true } }),
       ),
     );
-    revalidateCollectionSurfaces(await surfacesOf(parsed.data));
+    // Order only — never what is priced.
+    revalidateCollectionSurfaces(false, await surfacesOf(parsed.data));
     return { success: true };
   } catch (err) {
     if (prismaErrorCode(err) === "P2025") return { success: false, error: LINK_GONE };
@@ -360,7 +472,8 @@ export async function setCollectionCategories(
     ]);
 
     // Both the categories it left and the ones it joined.
-    revalidateCollectionSurfaces(before, await surfacesOf([id]));
+    // Categories only decide where the cards show — never what is priced.
+    revalidateCollectionSurfaces(false, before, await surfacesOf([id]));
     return { success: true };
   } catch (err) {
     const code = prismaErrorCode(err);
@@ -386,6 +499,15 @@ export async function setCollectionProducts(
     const surfaces = await surfacesOf([id]);
     if (surfaces.slugs.length === 0) return { success: false, error: COLLECTION_GONE };
 
+    // Only an ACTIVE collection prices anything. Its fixed-amount promotions
+    // must not make any product in the new list free.
+    const active = await collectionsAreActive([id]);
+    if (active) {
+      const problem = await freeProductProblem([id], { id: { in: parsed.data } });
+      if (problem) return { success: false, error: problem };
+    }
+    const pricesChanged = active && (await collectionsArePromoted([id], { onlyActive: true }));
+
     await prisma.$transaction([
       prisma.collectionProduct.deleteMany({ where: { collectionId: id } }),
       prisma.collectionProduct.createMany({
@@ -393,7 +515,7 @@ export async function setCollectionProducts(
       }),
     ]);
 
-    revalidateCollectionSurfaces(surfaces);
+    revalidateCollectionSurfaces(pricesChanged, surfaces);
     return { success: true };
   } catch (err) {
     const code = prismaErrorCode(err);
@@ -419,6 +541,18 @@ export async function addCategoryProductsToCollection(
   try {
     const surfaces = await surfacesOf([id]);
     if (surfaces.slugs.length === 0) return { success: false, error: COLLECTION_GONE };
+
+    // The products about to join must not be made free by an active
+    // collection's fixed-amount promotions.
+    const active = await collectionsAreActive([id]);
+    if (active) {
+      const problem = await freeProductProblem([id], {
+        categoryId,
+        collections: { none: { collectionId: id } },
+      });
+      if (problem) return { success: false, error: problem };
+    }
+    const pricesChanged = active && (await collectionsArePromoted([id], { onlyActive: true }));
 
     const result = await prisma.$transaction(async (tx) => {
       const current = await tx.collectionProduct.aggregate({
@@ -449,7 +583,7 @@ export async function addCategoryProductsToCollection(
       };
     }
 
-    revalidateCollectionSurfaces(surfaces);
+    revalidateCollectionSurfaces(pricesChanged && result.added > 0, surfaces);
     return { success: true, added: result.added };
   } catch (err) {
     const code = prismaErrorCode(err);
@@ -477,6 +611,22 @@ export async function setProductCollections(
   const wanted = new Set(parsed.data);
 
   try {
+    // Joining collections brings their fixed-amount promotions to this
+    // product — refuse if one (on an ACTIVE collection) would make it free.
+    const current = await prisma.collectionProduct.findMany({
+      where: { productId },
+      select: { collectionId: true },
+    });
+    const joining = parsed.data.filter((c) => !current.some((x) => x.collectionId === c));
+    const activeJoining = (
+      await prisma.collection.findMany({
+        where: { id: { in: joining }, isActive: true },
+        select: { id: true },
+      })
+    ).map((c) => c.id);
+    const problem = await freeProductProblem(activeJoining, { id: productId });
+    if (problem) return { success: false, error: problem };
+
     const outcome = await prisma.$transaction(async (tx) => {
       const current = await tx.collectionProduct.findMany({
         where: { productId },
@@ -521,7 +671,9 @@ export async function setProductCollections(
       };
     }
 
-    revalidateCollectionSurfaces(await surfacesOf(outcome.changed));
+    // This product's price moves if any collection it joined/left is promoted.
+    const pricesChanged = await collectionsArePromoted(outcome.changed, { onlyActive: true });
+    revalidateCollectionSurfaces(pricesChanged, await surfacesOf(outcome.changed));
     revalidatePath(`/admin/products/${productId}/edit`);
     return { success: true };
   } catch (err) {

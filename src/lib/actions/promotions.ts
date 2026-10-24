@@ -41,6 +41,8 @@ export type PromotionInput = {
   categoryIds: string[];
   productIds: string[];
   variantIds: string[];
+  /** Collections — prices every product in each, while the collection is active. */
+  collectionIds: string[];
 };
 
 export type CreatePromotionResult =
@@ -63,6 +65,7 @@ type ValidatedPromotion = {
   categoryIds: string[];
   productIds: string[];
   variantIds: string[];
+  collectionIds: string[];
 };
 
 /** Drop empties + de-dupe an id list coming off a multi-select. */
@@ -137,8 +140,9 @@ function validatePromotion(input: PromotionInput): ValidatedPromotion | { error:
   const categoryIds = cleanIds(input.categoryIds);
   const productIds = cleanIds(input.productIds);
   const variantIds = cleanIds(input.variantIds);
-  if (categoryIds.length + productIds.length + variantIds.length === 0) {
-    return { error: "Link the promotion to at least one category, product or variant." };
+  const collectionIds = cleanIds(input.collectionIds);
+  if (categoryIds.length + productIds.length + variantIds.length + collectionIds.length === 0) {
+    return { error: "Link the promotion to at least one category, collection, product or variant." };
   }
 
   return {
@@ -151,19 +155,26 @@ function validatePromotion(input: PromotionInput): ValidatedPromotion | { error:
     categoryIds,
     productIds,
     variantIds,
+    collectionIds,
   };
 }
 
 /**
  * A fixed-amount discount at or above a targeted price makes that product free
  * (the engine floors at 0), so it must stay below the cheapest AVAILABLE
- * variant the promotion reaches — directly, through its product, or through
- * its category. Returns the admin-facing error, or null when it's safe.
+ * variant the promotion reaches — directly, through its product, its
+ * category, or any collection it targets. Collections count whether or not
+ * they're active right now: a draft collection prices nothing today but would
+ * the moment it's published (activation re-checks from the other side too —
+ * see collections.ts). Returns the admin-facing error, or null when it's safe.
  * Prices edited after the promotion is saved are caught by placeOrder, which
  * refuses any 0 EGP line.
  */
 async function fixedAmountProblem(
-  promotion: Pick<ValidatedPromotion, "type" | "value" | "categoryIds" | "productIds" | "variantIds">,
+  promotion: Pick<
+    ValidatedPromotion,
+    "type" | "value" | "categoryIds" | "productIds" | "variantIds" | "collectionIds"
+  >,
 ): Promise<string | null> {
   if (promotion.type !== DiscountType.FIXED_AMOUNT) return null;
 
@@ -174,6 +185,7 @@ async function fixedAmountProblem(
         { id: { in: promotion.variantIds } },
         { productId: { in: promotion.productIds } },
         { product: { categoryId: { in: promotion.categoryIds } } },
+        { product: { collections: { some: { collectionId: { in: promotion.collectionIds } } } } },
       ],
     },
     orderBy: { price: "asc" },
@@ -212,6 +224,7 @@ export async function createPromotion(
         categories: { connect: parsed.categoryIds.map((id) => ({ id })) },
         products: { connect: parsed.productIds.map((id) => ({ id })) },
         variants: { connect: parsed.variantIds.map((id) => ({ id })) },
+        collections: { connect: parsed.collectionIds.map((id) => ({ id })) },
       },
       select: { id: true },
     });
@@ -262,6 +275,7 @@ export async function updatePromotion(
         categories: { set: parsed.categoryIds.map((id) => ({ id })) },
         products: { set: parsed.productIds.map((id) => ({ id })) },
         variants: { set: parsed.variantIds.map((id) => ({ id })) },
+        collections: { set: parsed.collectionIds.map((id) => ({ id })) },
       },
       select: { id: true },
     });
@@ -301,6 +315,7 @@ export async function togglePromotionActive(
           categories: { select: { id: true } },
           products: { select: { id: true } },
           variants: { select: { id: true } },
+          collections: { select: { id: true } },
         },
       });
       if (!stored) return { success: false, error: "That promotion no longer exists." };
@@ -311,6 +326,7 @@ export async function togglePromotionActive(
         categoryIds: stored.categories.map((c) => c.id),
         productIds: stored.products.map((p) => p.id),
         variantIds: stored.variants.map((v) => v.id),
+        collectionIds: stored.collections.map((c) => c.id),
       });
       if (tooBig) return { success: false, error: tooBig };
     }
@@ -336,7 +352,7 @@ export async function togglePromotionActive(
 
 /**
  * Hard-deletes a promotion. The implicit m2m join rows (to categories/products/
- * variants) are removed automatically by Prisma — no catalog rows are touched.
+ * variants/collections) are removed automatically by Prisma — no catalog rows are touched.
  */
 export async function deletePromotion(id: string): Promise<PromotionActionResult> {
   const denied = await ensureAdmin();

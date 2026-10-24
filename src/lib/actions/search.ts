@@ -3,6 +3,8 @@
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import {
+  collectionPromotionsInclude,
+  collectionPromotionsOf,
   gatherPromotions,
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
@@ -116,6 +118,8 @@ function hitSelect(now: Date) {
       },
     },
     promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+    // Promotions on the product's ACTIVE collections (the fourth level).
+    ...collectionPromotionsInclude(now),
     variants: {
       where: { isAvailable: true },
       orderBy: { price: "asc" }, // [0] = starting (lowest) price
@@ -163,6 +167,7 @@ function toProductHit(product: HitRow, now: Date): SearchProductHit {
       starting?.promotions,
       product.promotions,
       product.category.promotions,
+      collectionPromotionsOf(product),
     ),
     now,
   );

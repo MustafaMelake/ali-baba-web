@@ -134,7 +134,42 @@ export function applyPromotion(basePrice: Numeric, promo: PromotionLike): number
   return roundMoney(Math.max(0, raw));
 }
 
-/** Merge + de-dupe promotion lists (variant + product + category) by id. */
+/**
+ * The fourth targeting level — live promotions on the product's ACTIVE
+ * collections. Spread into a PRODUCT include/select next to its own
+ * `promotions`: `{ ...collectionPromotionsInclude(now), promotions: {…} }`.
+ *
+ * Only active collections are traversed: an inactive (draft) collection
+ * doesn't exist for customers, so it prices nothing — and because every
+ * surface and `placeOrder` read through this one include, they agree by
+ * construction. Pass the same `now` as every other level.
+ */
+export function collectionPromotionsInclude(now: Date) {
+  return {
+    collections: {
+      where: { collection: { isActive: true } },
+      select: {
+        collection: {
+          select: { promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } },
+        },
+      },
+    },
+  };
+}
+
+/** Flatten a product's collection links (from `collectionPromotionsInclude`) into one list. */
+export function collectionPromotionsOf(product: {
+  collections?: { collection: { promotions: PromotionLike[] } }[] | null;
+}): PromotionLike[] {
+  return (product.collections ?? []).flatMap((link) => link.collection.promotions);
+}
+
+/**
+ * Merge + de-dupe promotion lists by id — the four targeting levels: variant,
+ * product, category, and the product's active collections
+ * (`collectionPromotionsOf`). A promotion reached through several levels (or
+ * several collections) counts once; "Cheapest Wins" then picks one.
+ */
 export function gatherPromotions(
   ...lists: (PromotionLike[] | null | undefined)[]
 ): PromotionLike[] {

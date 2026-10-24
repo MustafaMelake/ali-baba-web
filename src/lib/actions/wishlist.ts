@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import {
+  collectionPromotionsInclude,
+  collectionPromotionsOf,
   gatherPromotions,
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
@@ -112,6 +114,8 @@ export async function getWishlistItems(page: unknown = 1): Promise<GetWishlistRe
                 },
               },
               promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+              // Promotions on the product's ACTIVE collections (the fourth level).
+              ...collectionPromotionsInclude(now),
               variants: {
                 where: { isAvailable: true },
                 orderBy: { price: "asc" }, // [0] = starting price
@@ -151,6 +155,7 @@ export async function getWishlistItems(page: unknown = 1): Promise<GetWishlistRe
           starting.promotions,
           product.promotions,
           product.category.promotions,
+          collectionPromotionsOf(product),
         ),
         now,
       );

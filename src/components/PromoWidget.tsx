@@ -46,9 +46,11 @@ export default async function PromoWidget() {
       type: true,
       value: true,
       endDate: true,
-      // Deep-link target: a promotion aimed at exactly one category sends the
-      // seal straight to that category; anything broader lands on /new-arrivals.
+      // Deep-link target: a promotion aimed at exactly one category — or at
+      // exactly one ACTIVE collection — sends the seal straight there; anything
+      // broader lands on /new-arrivals. (A draft collection has no page.)
       categories: { select: { slug: true } },
+      collections: { where: { isActive: true }, select: { slug: true } },
     },
   });
 
@@ -73,9 +75,12 @@ export default async function PromoWidget() {
       ? advertisedPercent(featured.value.toNumber()) // never rounds the discount UP
       : null;
 
-  const href =
-    featured.categories.length === 1
-      ? `/category/${featured.categories[0].slug}`
+  const onlyCategory = featured.categories.length === 1 && featured.collections.length === 0;
+  const onlyCollection = featured.collections.length === 1 && featured.categories.length === 0;
+  const href = onlyCategory
+    ? `/category/${featured.categories[0].slug}`
+    : onlyCollection
+      ? `/collections/${featured.collections[0].slug}`
       : "/new-arrivals";
 
   const endsOn =

@@ -31,6 +31,7 @@ import {
   setCollectionCategories,
   setCollectionProducts,
   setProductCollections,
+  updateCollection,
 } from "@/lib/actions/collections";
 import { requireAdmin } from "@/lib/session";
 import { revalidatePath, updateTag } from "next/cache";
@@ -265,5 +266,137 @@ describe("deleteCollection", () => {
   it("reports a collection that no longer exists", async () => {
     mockPrisma.collection.findMany.mockResolvedValue([] as never);
     expect(await deleteCollection("gone")).toEqual({ success: false, error: "That collection no longer exists." });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Price freshness + the collection side of the free-product guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("collection mutations that move prices bust the whole storefront", () => {
+  /**
+   * collection.findMany serves two reads: surfacesOf (selects slug) and the
+   * active-collection filter (selects id). `active` decides the second.
+   */
+  function stubCollection({ active, promoted }: { active: boolean; promoted: boolean }) {
+    mockPrisma.collection.findMany.mockImplementation((async (args: { select?: Record<string, unknown> }) =>
+      args.select && "slug" in args.select
+        ? [{ slug: "gift-boxes", categories: [{ category: { slug: "oriental-sweets" } }] }]
+        : active
+          ? [{ id: "c1" }]
+          : []) as never);
+    mockPrisma.collection.count.mockResolvedValue((active ? 1 : 0) as never);
+    mockPrisma.promotion.count.mockResolvedValue((promoted ? 1 : 0) as never);
+    mockPrisma.promotion.findFirst.mockResolvedValue(null as never); // no fixed-amount promo
+  }
+  const bustedStorefront = () =>
+    mockedRevalidate.mock.calls.some(([path, type]) => path === "/" && type === "layout");
+
+  it("membership change on an ACTIVE, PROMOTED collection → revalidatePath('/', 'layout')", async () => {
+    stubCollection({ active: true, promoted: true });
+    await setCollectionProducts("c1", ["p1", "p2"]);
+    expect(bustedStorefront()).toBe(true);
+    // live OR scheduled: switched on and not over yet
+    const where = (mockPrisma.promotion.count.mock.calls[0][0] as any).where;
+    expect(where).toMatchObject({ isActive: true, collections: { some: { id: { in: ["c1"] } } } });
+    expect(where.endDate.gte).toBeInstanceOf(Date);
+  });
+
+  it("membership change on an un-promoted collection → targeted fan-out only", async () => {
+    stubCollection({ active: true, promoted: false });
+    await setCollectionProducts("c1", ["p1"]);
+    expect(bustedStorefront()).toBe(false);
+    expect(mockedRevalidate).toHaveBeenCalledWith("/collections/gift-boxes");
+  });
+
+  it("an INACTIVE collection prices nothing — no storefront bust, no guard read", async () => {
+    stubCollection({ active: false, promoted: true });
+    await setCollectionProducts("c1", ["p1"]);
+    expect(bustedStorefront()).toBe(false);
+    expect(mockPrisma.promotion.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("publishing / unpublishing a promoted collection busts the storefront", async () => {
+    stubCollection({ active: false, promoted: true });
+    mockPrisma.collection.findUnique.mockResolvedValue({ image: null, isActive: false } as never);
+    await updateCollection("c1", input({ isActive: true }));
+    expect(bustedStorefront()).toBe(true);
+  });
+
+  it("an edit that doesn't touch isActive never busts the storefront", async () => {
+    stubCollection({ active: true, promoted: true });
+    mockPrisma.collection.findUnique.mockResolvedValue({ image: null, isActive: true } as never);
+    await updateCollection("c1", input({ isActive: true, name: "Gift Boxes 2026" }));
+    expect(bustedStorefront()).toBe(false);
+  });
+
+  it("deleting an active, promoted collection busts the storefront (read before the delete)", async () => {
+    stubCollection({ active: true, promoted: true });
+    mockPrisma.collection.findUnique.mockResolvedValue({ image: null } as never);
+    await deleteCollection("c1");
+    expect(bustedStorefront()).toBe(true);
+    expect(mockPrisma.promotion.count.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPrisma.collection.delete.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("joining a promoted collection from the product form busts the storefront", async () => {
+    stubCollection({ active: true, promoted: true });
+    mockPrisma.collectionProduct.findMany.mockResolvedValue([] as never);
+    groupBy.mockResolvedValue([]);
+    await setProductCollections("p1", ["c1"]);
+    expect(bustedStorefront()).toBe(true);
+  });
+});
+
+describe("no promotion may make a product free — the collection side", () => {
+  const fixed = (value: number) =>
+    mockPrisma.promotion.findFirst.mockResolvedValue({ name: "Gift week", value: { toNumber: () => value } } as never);
+  const cheapest = (price: number) =>
+    mockPrisma.productVariant.findFirst.mockResolvedValue({
+      price: { toNumber: () => price },
+      name: "Small",
+      product: { name: "Basbousa" },
+    } as never);
+
+  beforeEach(() => {
+    mockPrisma.collection.count.mockResolvedValue(1 as never);
+    mockPrisma.promotion.count.mockResolvedValue(1 as never);
+  });
+
+  it("refuses to publish a collection whose fixed-amount promotion would zero a member", async () => {
+    mockPrisma.collection.findUnique.mockResolvedValue({ image: null, isActive: false } as never);
+    fixed(50);
+    cheapest(40);
+    const res = await updateCollection("c1", input({ isActive: true }));
+    expect(res.success).toBe(false);
+    if (!res.success) expect(res.error).toContain("free");
+    expect(mockPrisma.collection.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses to add a product the collection's fixed-amount promotion would zero", async () => {
+    fixed(50);
+    cheapest(45);
+    const res = await setCollectionProducts("c1", ["cheap"]);
+    expect(res.success).toBe(false);
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses the bulk add, and the product-form join, the same way", async () => {
+    fixed(50);
+    cheapest(45);
+    expect((await addCategoryProductsToCollection("c1", "k1")).success).toBe(false);
+
+    mockPrisma.collectionProduct.findMany.mockResolvedValue([] as never);
+    mockPrisma.collection.findMany.mockImplementation((async (args: { select?: Record<string, unknown> }) =>
+      args.select && "slug" in args.select ? [] : [{ id: "c1" }]) as never);
+    expect((await setProductCollections("p1", ["c1"])).success).toBe(false);
+  });
+
+  it("allows it when the discount stays below the cheapest price", async () => {
+    fixed(20);
+    cheapest(45);
+    const res = await setCollectionProducts("c1", ["p1"]);
+    expect(res).toEqual({ success: true });
   });
 });

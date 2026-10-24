@@ -1,6 +1,8 @@
 import type { Prisma } from "@/generated/prisma/client";
 import type { ShopProduct } from "@/components/ProductCard";
 import {
+  collectionPromotionsInclude,
+  collectionPromotionsOf,
   gatherPromotions,
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
@@ -35,6 +37,8 @@ export function productCardInclude(now: Date) {
       },
     },
     promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+    // The fourth level: promotions on the product's ACTIVE collections.
+    ...collectionPromotionsInclude(now),
     variants: {
       where: { isAvailable: true },
       orderBy: { price: "asc" }, // [0] = starting (lowest) price
@@ -54,7 +58,12 @@ export function toProductCard(product: ProductCardRow, now: Date): ShopProduct {
   const starting = product.variants[0];
   const priced = resolvePrice(
     starting?.price ?? 0,
-    gatherPromotions(starting?.promotions, product.promotions, product.category.promotions),
+    gatherPromotions(
+      starting?.promotions,
+      product.promotions,
+      product.category.promotions,
+      collectionPromotionsOf(product),
+    ),
     now,
   );
   return {

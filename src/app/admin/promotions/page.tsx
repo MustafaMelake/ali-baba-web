@@ -68,7 +68,7 @@ export default async function AdminPromotionsPage({
   await requireAdminPage();
   const draft = parsePromotionDraft(await searchParams);
 
-  const [promotions, categories, products] = await Promise.all([
+  const [promotions, categories, products, collections] = await Promise.all([
     prisma.promotion.findMany({
       orderBy: { createdAt: "desc" },
       select: {
@@ -82,7 +82,8 @@ export default async function AdminPromotionsPage({
         categories: { select: { id: true } },
         products: { select: { id: true } },
         variants: { select: { id: true } },
-        _count: { select: { categories: true, products: true, variants: true } },
+        collections: { select: { id: true } },
+        _count: { select: { categories: true, products: true, variants: true, collections: true } },
       },
     }),
     prisma.category.findMany({
@@ -100,11 +101,21 @@ export default async function AdminPromotionsPage({
         },
       },
     }),
+    prisma.collection.findMany({
+      orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+      select: { id: true, name: true, isActive: true },
+    }),
   ]);
 
   // Option lists shared by every Create/Edit modal on the page.
   const options: PromotionFormOptions = {
     categories: categories.map((c) => ({ value: c.id, label: c.name })),
+    collections: collections.map((c) => ({
+      value: c.id,
+      label: c.name,
+      hint: c.isActive ? undefined : "Inactive — prices nothing until published",
+      isActive: c.isActive,
+    })),
     products: products.map((p) => ({
       value: p.id,
       label: p.name,
@@ -124,7 +135,7 @@ export default async function AdminPromotionsPage({
       <PageHeader
         eyebrow="Merchandising"
         title="Promotions"
-        description="Create time-boxed discounts and target them at specific categories, products or variants."
+        description="Create time-boxed discounts and target them at categories, collections, products or variants."
         action={
           // Keyed by the draft so a new hand-off remounts it (and reopens the form).
           <CreatePromotionButton
@@ -205,12 +216,17 @@ export default async function AdminPromotionsPage({
                               {p._count.products} prod
                             </Pill>
                           )}
+                          {p._count.collections > 0 && (
+                            <Pill className="bg-stone-100 text-stone-600 ring-stone-500/15">
+                              {p._count.collections} coll
+                            </Pill>
+                          )}
                           {p._count.variants > 0 && (
                             <Pill className="bg-stone-100 text-stone-600 ring-stone-500/15">
                               {p._count.variants} var
                             </Pill>
                           )}
-                          {p._count.categories + p._count.products + p._count.variants === 0 && (
+                          {p._count.categories + p._count.products + p._count.variants + p._count.collections === 0 && (
                             <span className="text-xs text-stone-400">—</span>
                           )}
                         </div>
@@ -232,6 +248,7 @@ export default async function AdminPromotionsPage({
                               categoryIds: p.categories.map((c) => c.id),
                               productIds: p.products.map((x) => x.id),
                               variantIds: p.variants.map((v) => v.id),
+                              collectionIds: p.collections.map((c) => c.id),
                             }}
                             options={options}
                           />

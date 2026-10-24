@@ -93,6 +93,8 @@ function variantRow(o: {
   variantPromos?: PromotionLike[];
   productPromos?: PromotionLike[];
   categoryPromos?: PromotionLike[];
+  /** Promotions reached through the product's ACTIVE collections (one list per collection). */
+  collectionPromos?: PromotionLike[][];
 }) {
   return {
     id: o.id,
@@ -107,6 +109,7 @@ function variantRow(o: {
       isAvailable: o.productAvailable ?? true,
       promotions: o.productPromos ?? [],
       category: { promotions: o.categoryPromos ?? [] },
+      collections: (o.collectionPromos ?? []).map((promotions) => ({ collection: { promotions } })),
     },
   };
 }
@@ -1021,5 +1024,47 @@ describe("placeOrder — PICKUP needs a real, active branch", () => {
     const res = await placeOrder(payload());
     expect(res.success).toBe(true);
     expect(persistedOrder().branchId).toBe("b-pickup");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Collection-targeted promotions — the fourth level, billed like the others
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("placeOrder — collection-targeted promotions", () => {
+  it("reads the product's ACTIVE collections' live promotions in the SAME batched query", async () => {
+    await placeOrder(payload());
+    const args = mockPrisma.productVariant.findMany.mock.calls[0][0] as any;
+    const collections = args.include.product.select.collections;
+    expect(collections.where).toEqual({ collection: { isActive: true } });
+    expect(collections.select.collection.select.promotions.where).toEqual(
+      expect.objectContaining({ isActive: true }),
+    );
+    expect(mockPrisma.productVariant.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("bills the collection discount, snapshotted onto the order line", async () => {
+    stubVariants([
+      variantRow({ id: "v1", price: 200, collectionPromos: [[livePromo({ id: "col-20", value: 20 })]] }),
+    ]);
+    const res = await placeOrder(payload());
+    expect(res.success).toBe(true);
+    expect(persistedOrder().items.create[0].unitPrice).toBe(160);
+  });
+
+  it("never stacks a collection promotion with another level — the cheapest wins", async () => {
+    stubVariants([
+      variantRow({
+        id: "v1",
+        price: 200,
+        categoryPromos: [livePromo({ id: "cat-10", value: 10 })],
+        collectionPromos: [
+          [livePromo({ id: "col-25", value: 25 })],
+          [livePromo({ id: "col-25", value: 25 })], // same promo via a 2nd collection — counted once
+        ],
+      }),
+    ]);
+    await placeOrder(payload());
+    expect(persistedOrder().items.create[0].unitPrice).toBe(150);
   });
 });

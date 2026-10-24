@@ -6,6 +6,8 @@ import { getServerSession, requireDashboardAccess } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { FulfillmentMethod, OrderStatus } from "@/generated/prisma/enums";
 import {
+  collectionPromotionsInclude,
+  collectionPromotionsOf,
   gatherPromotions,
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
@@ -173,6 +175,8 @@ export async function placeOrder(
               isAvailable: true,
               // …its parent product…
               promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+              // …one of that product's ACTIVE collections (same batched read)…
+              ...collectionPromotionsInclude(now),
               // …or that product's category.
               category: {
                 select: {
@@ -235,6 +239,7 @@ export async function placeOrder(
           dbVariant.promotions,
           dbVariant.product.promotions,
           dbVariant.product.category?.promotions,
+          collectionPromotionsOf(dbVariant.product),
         );
         const { finalPrice } = resolvePrice(dbVariant.price, promotions, now);
 

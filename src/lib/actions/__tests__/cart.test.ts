@@ -31,7 +31,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockDeep<PrismaClient>() }));
 // the cart paths never call it.
 vi.mock("@/lib/session", () => ({ getServerSession: vi.fn(), requireAdmin: vi.fn() }));
 
-import { syncCartItemAction, mergeCartAction, rePriceGuestCart } from "@/lib/actions/cart";
+import { syncCartItemAction, mergeCartAction, rePriceGuestCart, getDbCartAction } from "@/lib/actions/cart";
 import { getServerSession } from "@/lib/session";
 import { CART_LIMIT_ERROR } from "@/lib/validators";
 
@@ -463,5 +463,22 @@ describe("rePriceGuestCart — live detail for the cart page", () => {
       success: true,
       data: [{ isAvailable: false, price: 90, compareAtPrice: 120, promotionName: null }],
     });
+  });
+});
+
+describe("cart reads price the collection level too (the checkout preview's source)", () => {
+  it("getDbCartAction reads the product's ACTIVE collections' promotions", async () => {
+    mockedSession.mockResolvedValue({ user: { id: "user_1" } } as never);
+    mockPrisma.cartItem.findMany.mockResolvedValue([] as never);
+    await getDbCartAction();
+    const args = mockPrisma.cartItem.findMany.mock.calls[0][0] as any;
+    expect(args.include.variant.include.product.include.collections.where).toEqual({ collection: { isActive: true } });
+  });
+
+  it("rePriceGuestCart reads the product's ACTIVE collections' promotions", async () => {
+    mockPrisma.productVariant.findMany.mockResolvedValue([] as never);
+    await rePriceGuestCart(["v1"]);
+    const args = mockPrisma.productVariant.findMany.mock.calls[0][0] as any;
+    expect(args.select.product.select.collections.where).toEqual({ collection: { isActive: true } });
   });
 });

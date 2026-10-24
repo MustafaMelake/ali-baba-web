@@ -19,12 +19,23 @@ const TYPE_OPTIONS = [
   { value: DiscountType.FIXED_AMOUNT, label: "Fixed amount (EGP)" },
 ] as const;
 
-/** The option lists that feed the three multi-selects (built on the server). */
+/** The option lists that feed the target picker (built on the server). */
 export type PromotionFormOptions = {
   categories: MultiSelectOption[];
+  /** `isActive: false` → the picker warns it prices nothing until published. */
+  collections: (MultiSelectOption & { isActive: boolean })[];
   products: MultiSelectOption[];
   variants: MultiSelectOption[];
 };
+
+/** The four target levels, in picker order. */
+const TARGET_TABS = [
+  { key: "categories", label: "Category" },
+  { key: "collections", label: "Collection" },
+  { key: "products", label: "Product" },
+  { key: "variants", label: "Variant" },
+] as const;
+type TargetTab = (typeof TARGET_TABS)[number]["key"];
 
 /** A promotion flattened for the form (ISO date strings + id arrays). */
 export type EditablePromotion = {
@@ -38,6 +49,7 @@ export type EditablePromotion = {
   categoryIds: string[];
   productIds: string[];
   variantIds: string[];
+  collectionIds: string[];
 };
 
 /**
@@ -99,8 +111,31 @@ export default function PromotionModal({
   const [endDate, setEndDate] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [categoryIds, setCategoryIds] = useState<string[]>([]);
+  const [collectionIds, setCollectionIds] = useState<string[]>([]);
   const [productIds, setProductIds] = useState<string[]>([]);
   const [variantIds, setVariantIds] = useState<string[]>([]);
+  const [targetTab, setTargetTab] = useState<TargetTab>("categories");
+
+  // The four target levels behind the one picker.
+  const targets: Record<
+    TargetTab,
+    { options: MultiSelectOption[]; selected: string[]; set: (ids: string[]) => void; noun: string; kind: string }
+  > = {
+    categories: { options: options.categories, selected: categoryIds, set: setCategoryIds, noun: "categories", kind: "Category" },
+    collections: { options: options.collections, selected: collectionIds, set: setCollectionIds, noun: "collections", kind: "Collection" },
+    products: { options: options.products, selected: productIds, set: setProductIds, noun: "products", kind: "Product" },
+    variants: { options: options.variants, selected: variantIds, set: setVariantIds, noun: "variants", kind: "Variant" },
+  };
+  const inactiveCollections = new Set(options.collections.filter((c) => !c.isActive).map((c) => c.value));
+  const selectedTargets = TARGET_TABS.flatMap(({ key }) =>
+    targets[key].selected.map((id) => ({
+      tab: key,
+      id,
+      kind: targets[key].kind,
+      label: targets[key].options.find((o) => o.value === id)?.label ?? id,
+      inactive: key === "collections" && inactiveCollections.has(id),
+    })),
+  );
 
   // Sync the form to the row (or sensible defaults) each time the modal opens.
   useEffect(() => {
@@ -115,8 +150,10 @@ export default function PromotionModal({
     setEndDate(toDateInputValue(promotion?.endDate) || draft?.endDate || dateInputFromNow(30));
     setIsActive(promotion?.isActive ?? true);
     setCategoryIds(promotion?.categoryIds ?? []);
+    setCollectionIds(promotion?.collectionIds ?? []);
     setProductIds(promotion?.productIds ?? []);
     setVariantIds(promotion?.variantIds ?? []);
+    setTargetTab("categories");
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [isOpen, promotion, draft]);
 
@@ -146,6 +183,7 @@ export default function PromotionModal({
       categoryIds,
       productIds,
       variantIds,
+      collectionIds,
     };
 
     startTransition(async () => {
@@ -332,51 +370,81 @@ export default function PromotionModal({
                   </button>
                 </div>
 
-                {/* Targets */}
-                <div className="space-y-4 rounded-xl border border-stone-200 bg-stone-50/40 px-4 py-4">
+                {/* Targets — one picker, four tabs, one summary */}
+                <div className="space-y-4 rounded-xl border border-stone-200 bg-stone-50/40 px-4 py-4 text-start">
                   <div>
                     <p className="text-sm font-semibold text-stone-700">Apply to</p>
                     <p className="text-xs text-stone-400">
-                      Pick any mix — a promotion can target whole categories,
-                      individual products, or specific variants.
+                      Any mix of categories, collections, products and variants. A
+                      product reached more than one way still gets ONE discount —
+                      the cheapest result wins.
                     </p>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-stone-700">Categories</label>
+                  <div role="tablist" aria-label="Target type" className="inline-flex flex-wrap gap-1 rounded-full bg-stone-100 p-1">
+                    {TARGET_TABS.map((tab) => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={targetTab === tab.key}
+                        onClick={() => setTargetTab(tab.key)}
+                        className={cn(
+                          "rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors",
+                          targetTab === tab.key ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-800",
+                        )}
+                      >
+                        {tab.label}
+                        {targets[tab.key].selected.length > 0 && (
+                          <span className="ms-1.5 tabular-nums text-primary">{targets[tab.key].selected.length}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div role="tabpanel">
                     <MultiSelect
-                      options={options.categories}
-                      selected={categoryIds}
-                      onChange={setCategoryIds}
-                      placeholder="No categories selected"
-                      searchPlaceholder="Search categories…"
-                      emptyText="No categories yet."
+                      key={targetTab}
+                      options={targets[targetTab].options}
+                      selected={targets[targetTab].selected}
+                      onChange={targets[targetTab].set}
+                      placeholder={`No ${targets[targetTab].noun} selected`}
+                      searchPlaceholder={`Search ${targets[targetTab].noun}…`}
+                      emptyText={`No ${targets[targetTab].noun} yet.`}
                     />
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-stone-700">Products</label>
-                    <MultiSelect
-                      options={options.products}
-                      selected={productIds}
-                      onChange={setProductIds}
-                      placeholder="No products selected"
-                      searchPlaceholder="Search products…"
-                      emptyText="No products yet."
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-stone-700">Variants</label>
-                    <MultiSelect
-                      options={options.variants}
-                      selected={variantIds}
-                      onChange={setVariantIds}
-                      placeholder="No variants selected"
-                      searchPlaceholder="Search variants…"
-                      emptyText="No variants yet."
-                    />
-                  </div>
+                  {/* Summary of everything selected, across all four tabs */}
+                  {selectedTargets.length > 0 && (
+                    <div>
+                      <p className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-stone-400">Selected</p>
+                      <ul className="flex flex-wrap gap-1.5">
+                        {selectedTargets.map((t) => (
+                          <li
+                            key={`${t.tab}-${t.id}`}
+                            className={cn(
+                              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs ring-1 ring-inset",
+                              t.inactive
+                                ? "bg-amber-50 text-amber-800 ring-amber-600/20"
+                                : "bg-white text-stone-700 ring-stone-200",
+                            )}
+                          >
+                            <span className="text-stone-400">{t.kind}</span>
+                            {t.label}
+                            {t.inactive && <span className="font-semibold">· inactive — prices nothing until published</span>}
+                            <button
+                              type="button"
+                              onClick={() => targets[t.tab].set(targets[t.tab].selected.filter((id) => id !== t.id))}
+                              aria-label={`Remove ${t.kind} ${t.label}`}
+                              className="text-stone-400 transition-colors hover:text-stone-700"
+                            >
+                              ×
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               </div>
 

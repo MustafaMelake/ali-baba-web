@@ -1,12 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { ShopProduct } from "@/components/ProductCard";
-import {
-  gatherPromotions,
-  livePromotionWhere,
-  PROMOTION_SELECT_FIELDS,
-  resolvePrice,
-} from "@/lib/discounts";
 import { LISTABLE_PRODUCT } from "@/lib/catalog";
+import { productCardInclude, toProductCard } from "@/lib/product-cards";
 import { notFound } from "next/navigation";
 import Pagination from "@/components/Pagination";
 import {
@@ -57,25 +52,9 @@ export default async function ShopPage({
     prisma.product.count({ where: productWhere }),
     prisma.product.findMany({
       where: productWhere,
-      include: {
-        // Category + its live promotions (name kept for the card label).
-        category: {
-          select: {
-            name: true,
-            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-          },
-        },
-        // Product-level live promotions.
-        promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-        // [0] = starting price; carry each variant's own live promotions.
-        variants: {
-          where: { isAvailable: true },
-          orderBy: { price: "asc" },
-          include: {
-            promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-          },
-        },
-      },
+      // The shared card include: category name + the four-level live
+      // promotion hierarchy; [0] = the starting (lowest) available variant.
+      include: productCardInclude(now),
       // `id` tie-break: products sharing a createdAt keep a stable page order.
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       ...pageSlice(page, STOREFRONT_PAGE_SIZE),
@@ -85,37 +64,9 @@ export default async function ShopPage({
   const info = pageInfo(page, STOREFRONT_PAGE_SIZE, total);
   if (isPageOutOfRange(info)) notFound();
 
-  const mappedProducts: ShopProduct[] = products.map((product) => {
-    // Discount the starting (lowest-base-price) variant — that's the card's
-    // representative price and the variant quick-add adds.
-    const starting = product.variants[0];
-    const priced = resolvePrice(
-      starting?.price ?? 0,
-      gatherPromotions(
-        starting?.promotions,
-        product.promotions,
-        product.category.promotions,
-      ),
-      now,
-    );
-    return {
-      id: product.id,
-      variantId: starting?.id ?? "", // starting (lowest) variant id
-      name: product.name,
-      slug: product.slug,
-      category: product.category.name,
-      price: priced.finalPrice, // discounted starting price
-      // Live promo → struck-through base price; otherwise fall back to the
-      // variant's manual Compare-At so admin-set "was" prices show on the card
-      // too (mirrors the PDP — see product/[slug]/page.tsx). The Decimal column
-      // is serialized to a plain number for the client card.
-      compareAtPrice: priced.hasDiscount
-        ? priced.basePrice
-        : starting?.compareAtPrice?.toNumber() ?? null,
-      image: product.images[0] ?? "/placeholder.jpg",
-      tagline: product.description ?? undefined,
-    };
-  });
+  // Priced through the one card chain (product-cards.ts) — the math lives
+  // only in discounts.ts.
+  const mappedProducts: ShopProduct[] = products.map((product) => toProductCard(product, now));
 
   return (
     <ShopClient

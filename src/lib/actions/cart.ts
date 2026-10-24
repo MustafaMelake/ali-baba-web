@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 // Session comes from our cached server-side wrapper (not better-auth directly).
 import { getServerSession } from "@/lib/session";
 import {
+  collectionPromotionsInclude,
+  collectionPromotionsOf,
   gatherPromotions,
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
@@ -283,6 +285,8 @@ export async function getDbCartAction(): Promise<CartActionResult<DbCartItem[]>>
               include: {
                 // …product-level…
                 promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+                // …its ACTIVE collections'…
+                ...collectionPromotionsInclude(now),
                 // …and category-level (plus the name for display).
                 category: {
                   select: {
@@ -308,6 +312,7 @@ export async function getDbCartAction(): Promise<CartActionResult<DbCartItem[]>>
           variant.promotions,
           product.promotions,
           product.category?.promotions,
+          collectionPromotionsOf(product),
         );
         const { finalPrice } = resolvePrice(variant.price, promotions, now);
         return {
@@ -404,6 +409,7 @@ export async function rePriceGuestCart(
             slug: true,
             isAvailable: true,
             promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+            ...collectionPromotionsInclude(now),
             category: {
               select: {
                 promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
@@ -421,6 +427,7 @@ export async function rePriceGuestCart(
           v.promotions,
           v.product.promotions,
           v.product.category?.promotions,
+          collectionPromotionsOf(v.product),
         ),
         now,
       );

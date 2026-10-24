@@ -524,10 +524,13 @@ model Promotion {
   endDate   DateTime
   isActive  Boolean      @default(true)
 
-  // Targets — a promotion may link to any combination of the three.
-  categories Category[]
-  products   Product[]
-  variants   ProductVariant[]
+  // Targets — a promotion may link to any combination of the four. A
+  // collection target prices every product in that collection, but only while
+  // the collection is ACTIVE (the shared include traverses active ones only).
+  categories  Category[]
+  products    Product[]
+  variants    ProductVariant[]
+  collections Collection[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -711,6 +714,9 @@ model Collection {
 
   products   CollectionProduct[]
   categories CollectionCategory[]
+  /// Promotions targeting this collection (implicit m2m — deleting either side
+  /// removes only the join row). Applies only while the collection is active.
+  promotions Promotion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -1,5 +1,7 @@
 import type { Prisma } from "@/generated/prisma/client";
 import {
+  collectionPromotionsInclude,
+  collectionPromotionsOf,
   gatherPromotions,
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
@@ -160,6 +162,8 @@ export function heroSlideStorefrontSelect(now: Date) {
           where: livePromotionWhere(now),
           select: PROMOTION_SELECT_FIELDS,
         },
+        // Promotions on the product's ACTIVE collections (the fourth level).
+        ...collectionPromotionsInclude(now),
         category: {
           select: {
             promotions: {
@@ -236,6 +240,7 @@ export function toHeroSlideView(
         starting.promotions,
         row.product.promotions,
         row.product.category.promotions,
+        collectionPromotionsOf(row.product),
       ),
       now,
     );

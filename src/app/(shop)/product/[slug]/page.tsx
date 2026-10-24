@@ -8,6 +8,8 @@ import ReviewGate from "@/components/ReviewGate";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/utils";
 import {
+  collectionPromotionsInclude,
+  collectionPromotionsOf,
   gatherPromotions,
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
@@ -62,6 +64,8 @@ export default async function ProductPage({
         },
         // Product-level live promotions.
         promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
+        // Promotions on the product's ACTIVE collections (the fourth level).
+        ...collectionPromotionsInclude(now),
         variants: {
           orderBy: { price: "asc" },
           include: {
@@ -99,10 +103,16 @@ export default async function ProductPage({
   // Engine: when a live promotion applies, `price` becomes the discounted amount
   // and the original is surfaced as `compareAtPrice` (struck-through in the panel).
   // With no promotion, the manual `compareAtPrice` field is preserved as-is.
+  const collectionPromotions = collectionPromotionsOf(product);
   const variants = product.variants.map((v) => {
     const priced = resolvePrice(
       v.price,
-      gatherPromotions(v.promotions, product.promotions, product.category.promotions),
+      gatherPromotions(
+        v.promotions,
+        product.promotions,
+        product.category.promotions,
+        collectionPromotions,
+      ),
       now,
     );
     return {

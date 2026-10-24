@@ -558,3 +558,12 @@ describe("searchCatalog — collections group", () => {
     expect(mockPrisma.collectionProduct.groupBy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("searchCatalog — prices the collection level too", () => {
+  it("every product hit reads the product's ACTIVE collections' promotions", async () => {
+    await searchCatalog("cake");
+    for (const args of productCalls()) {
+      expect(args.select.collections.where).toEqual({ collection: { isActive: true } });
+    }
+  });
+});
