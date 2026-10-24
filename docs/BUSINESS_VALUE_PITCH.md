@@ -30,9 +30,13 @@ Money is the one place where "almost right" is unacceptable. This platform treat
 
 Your marketing team should be able to be bold. The platform makes bold *safe*.
 
-- **A dedicated promotions engine with built-in guardrails** → Launch percentage discounts, flat-amount offers, and product- or category-wide campaigns from a control panel — no developer needed. **Impact: your team can react to the market in minutes — Ramadan, Mother's Day, a slow Tuesday — not days.**
+- **A dedicated promotions engine with built-in guardrails** → Launch percentage discounts and flat-amount offers on a whole category, a curated collection, a single product, or one size of a product — from a control panel, no developer needed. **Impact: your team can react to the market in minutes — Ramadan, Mother's Day, a slow Tuesday — not days.**
 
-- **"Best discount wins" — discounts never stack** → When multiple campaigns overlap, the customer automatically receives the single best applicable offer, never a pile-up of combined discounts. **Impact: you can run several campaigns simultaneously without ever accidentally selling at a loss. Your margin floor is protected by the system itself, not by someone remembering to switch a promotion off.**
+- **"Best discount wins" — discounts never stack** → When multiple campaigns overlap, the customer automatically receives the single best applicable offer, never a pile-up of combined discounts. And the system refuses any promotion that would make a product free. **Impact: you can run several campaigns simultaneously and no customer ever gets more than the one best offer. Discounts can never pile up by accident — that guarantee is enforced by the system itself, not by someone remembering to switch a promotion off.**
+
+- **Homepage launch banners you control** → A full-width banner at the top of the homepage for whatever you just released: upload a desktop and a phone image, link it to a product or any page, schedule its start and end dates, and choose whether to show the live price. New banners start as drafts until you publish them. **Impact: a new product gets the most valuable spot on the site the day it launches — and the price on the banner is always the exact price the customer pays.**
+
+- **Curated collections** → Group products into collections ("Eid Gift Boxes", "New This Week") that can appear under several categories, each with its own page, its own order, and its own campaigns. **Impact: you merchandise the way a shop window works — by occasion and story, not only by product type — and a large catalog stays easy to browse, page by page.**
 
 - **Time-boxed campaigns that start and stop themselves** → Every promotion carries a precise start and end moment, enforced automatically. **Impact: no expired sale still quietly running at 2 a.m., no staff member needed to "remember to turn it off." Flash sales become genuinely risk-free.**
 
@@ -44,7 +48,9 @@ This is where the platform stops being a shop and becomes a management system.
 
 - **Branch-level command with head-office oversight** → Branch managers see and manage *only their own branch's* orders and workload; ownership sees everything, everywhere. This separation is enforced by the system, not by trust. **Impact: managers stay focused, sensitive whole-business data stays with you, and you can scale to branch #5 and #10 with the exact same control model.**
 
-- **Automatic fake-order and spam protection** → Any phone number is limited to a small number of unconfirmed orders at a time. In the Egyptian cash-on-delivery market, fake and prank orders are one of the biggest hidden costs in e-commerce — wasted ingredients, wasted delivery runs, wasted staff hours. **Impact: your kitchens bake for real customers only. Inventory, drivers, and staff time are protected automatically, 24/7.**
+- **Automatic fake-order and spam protection** → Any phone number is limited to a small number of unconfirmed orders at a time — and the system recognises the same number however it is typed (`010…`, `+2010…`, with spaces, or in Arabic digits), so the limit can't be dodged by rewriting it. In the Egyptian cash-on-delivery market, fake and prank orders are one of the biggest hidden costs in e-commerce — wasted ingredients, wasted delivery runs, wasted staff hours. **Impact: your kitchens bake for real customers only. Inventory, drivers, and staff time are protected automatically, 24/7.**
+
+- **Account recovery through WhatsApp** → A customer who forgets their password taps "Forgot password?" and lands in a WhatsApp chat with your store. Your team issues a one-time temporary password from the dashboard, and the customer must choose a new one the moment they sign in. **Impact: no lost customers, no email system to run — recovery happens on the channel your customers already use.**
 
 - **Reports built on cash actually collected — not wishful thinking** → Revenue figures count **delivered** orders only. Pending, cancelled, and refused orders never inflate your numbers. **Impact: when the dashboard says you made X this week, you actually made X. Decisions about staffing, ingredients, and expansion are built on real money, not optimistic totals.**
 
@@ -70,10 +76,10 @@ In e-commerce, speed is not a luxury; it is a sales figure. Industry data is una
 
 | | Template platforms (Shopify / WooCommerce) | **Ali Baba Platform** |
 |---|---|---|
-| **Ownership** | You rent. Monthly fees forever, plus paid plugins for every real feature, plus transaction cuts. | **You own the asset outright.** No per-sale commission, no plugin treadmill. |
+| **Ownership** | You rent. Monthly fees forever, plus paid plugins for every real feature, plus transaction cuts. | **You own the asset outright.** No per-sale commission, no plugin treadmill — only standard hosting costs (database, image storage, web hosting), which start on free tiers and grow with your traffic. |
 | **Multi-branch operations** | An afterthought — bolted on with third-party apps that don't talk to each other. | **Native.** Branch routing, branch-scoped managers, and branch-level reporting are the platform's skeleton, not an add-on. |
 | **Egyptian market reality** | Built for card-payment Western markets; blind to COD fraud and local timekeeping. | **Built for Egypt.** Fake-order throttling for the cash-on-delivery market and Cairo-accurate reporting are engineered in. |
-| **Pricing security** | Discount plugins are the #1 source of stacking bugs and margin leaks. | **A single disciplined promotions engine** where the best offer wins and margin loss is structurally impossible. |
+| **Pricing security** | Discount plugins are the #1 source of stacking bugs and margin leaks. | **A single disciplined promotions engine** where the best offer wins and discount stacking is structurally impossible. |
 | **Fit** | You adapt your business to the template. | **The platform was shaped around your business** — patisserie, café menu, branches, and all. |
 
 The honest summary for the room: *template platforms are excellent at being average for everyone. This platform is excellent at being yours.*
@@ -97,4 +103,5 @@ Keep these in your pocket for Q&A:
 - *"Prank orders die at the door — before a single tray goes in the oven."*
 - *"If the dashboard says you earned it, the money was collected. Full stop."*
 - *"Every report runs on Cairo's clock, even if the servers are on the other side of the planet."*
-- *"Shopify takes a cut of every sale you make, forever. This platform takes nothing — it's yours."*
+- *"Shopify takes a cut of every sale you make, forever. This platform takes no cut of your sales — you pay only for standard hosting, and the platform is yours."*
+- *"Launch a product in the morning, and by noon it owns the top of your homepage — with the exact price the customer will pay."*
