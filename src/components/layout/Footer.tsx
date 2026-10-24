@@ -2,6 +2,7 @@ import Link from "next/link";
 import { unstable_cache } from "next/cache";
 import { FaInstagram } from "react-icons/fa6";
 import { prisma } from "@/lib/prisma";
+import { storeDayParts } from "@/lib/timezone";
 
 /**
  * Footer — a React Server Component.
@@ -167,7 +168,7 @@ export default async function Footer() {
         {/* ─── Bottom Bar ──────────────────────────────────── */}
         <div className="py-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="font-sans text-xs text-white/25 tracking-wide">
-            © {new Date().getFullYear()} Ali Baba. All rights reserved.
+            © {storeDayParts(new Date()).year} Ali Baba. All rights reserved.
           </p>
 
           {/* Developer credit — as quiet as the copyright; brightens on hover. */}

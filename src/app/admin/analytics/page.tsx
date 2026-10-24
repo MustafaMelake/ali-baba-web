@@ -9,6 +9,7 @@ import {
 import { requireAdminPage } from "@/lib/session";
 import { getAnalytics } from "@/lib/actions/analytics";
 import { formatEGP } from "@/lib/utils";
+import { STORE_TZ } from "@/lib/timezone";
 import BranchSalesChart from "@/components/admin/analytics/BranchSalesChart";
 import PeakHoursChart from "@/components/admin/analytics/PeakHoursChart";
 
@@ -19,7 +20,7 @@ export const metadata = {
 // Analytics must always reflect the live database, never a cached snapshot.
 export const dynamic = "force-dynamic";
 
-/** "20 Jun 2026 · 14:30" style timestamp for the "as of" line. */
+/** Cairo "20 Jun 2026 · 14:30" style timestamp for the "as of" line. */
 function asOf(iso: string) {
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
@@ -28,6 +29,7 @@ function asOf(iso: string) {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
+    timeZone: STORE_TZ,
   })
     .format(new Date(iso))
     .replace(",", " ·");

@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { percentOff } from "@/lib/discounts"
+import { STORE_TZ } from "@/lib/timezone"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -66,16 +67,21 @@ export function whatsappHref(phone: string, text?: string): string | null {
   return text ? `${base}?text=${encodeURIComponent(text)}` : base;
 }
 
-/** Compact, locale-stable date — e.g. "20 Jun 2026". */
+// Every displayed date/time is store (Cairo) wall-clock, never the runtime's
+// zone — production renders in UTC, which put dates a day early and order
+// times 2–3h off.
+
+/** Compact, locale-stable Cairo date — e.g. "20 Jun 2026". */
 export function formatDate(date: Date) {
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
     month: "short",
     year: "numeric",
+    timeZone: STORE_TZ,
   }).format(date)
 }
 
-/** Humanized date + time for invoices — e.g. "21 June 2026 · 14:30". */
+/** Humanized Cairo date + time for invoices — e.g. "21 June 2026 · 14:30". */
 export function formatDateTime(date: Date) {
   return new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
@@ -84,6 +90,7 @@ export function formatDateTime(date: Date) {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
+    timeZone: STORE_TZ,
   })
     .format(date)
     .replace(",", " ·")

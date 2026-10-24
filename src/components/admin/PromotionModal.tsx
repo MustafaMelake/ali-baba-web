@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { createPromotion, updatePromotion } from "@/lib/actions/promotions";
 import { DiscountType } from "@/generated/prisma/enums";
 import { cn } from "@/lib/utils";
+import { storeDayKey, storeDayParts } from "@/lib/timezone";
 import MultiSelect, { type MultiSelectOption } from "@/components/admin/MultiSelect";
 
 const inputClasses =
@@ -63,20 +64,23 @@ export type PromotionDraft = {
   endDate?: string;
 };
 
-/** Render a Date / ISO string as the "yyyy-mm-dd" a date input expects (local). */
+/**
+ * Render a Date / ISO string as the "yyyy-mm-dd" a date input expects — the
+ * CAIRO calendar day, never the browser's: the server reads the field back as
+ * Cairo day edges (storeDateStart / storeDateEnd), so a browser in another zone
+ * would otherwise show (and re-save) the neighbouring day.
+ */
 function toDateInputValue(value: string | undefined): string {
   if (!value) return "";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "";
-  const offsetMs = d.getTimezoneOffset() * 60_000;
-  return new Date(d.getTime() - offsetMs).toISOString().slice(0, 10);
+  return storeDayKey(d);
 }
 
-/** Today + `days`, formatted for a date input. */
+/** Cairo today + `days` (calendar arithmetic, DST-proof), for a date input. */
 function dateInputFromNow(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return toDateInputValue(d.toISOString());
+  const { year, month, day } = storeDayParts(new Date());
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
 /**
