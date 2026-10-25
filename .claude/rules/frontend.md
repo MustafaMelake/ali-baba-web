@@ -64,6 +64,8 @@ page by moving it between them without a reason that outlives the diff:**
 | `/shop` | **No export** — dynamic by nature | It `await`s `searchParams` for the server-side category filter, which is request-time data. A `revalidate` here would be **inert**, not wrong; don't add one to "make it consistent." |
 | `/my-orders`, `/wishlist`, `/account/change-password`, `/admin/**` | `export const dynamic = "force-dynamic"` | Genuinely per-user/per-role server-rendered data with no client-hydration path. |
 
+**A dynamic-segment ISR route also needs `generateStaticParams`.** `revalidate = 60` alone does **not** make `/product/[slug]`, `/category/[slug]`, `/collections/[slug]` or any `/page/[n]` cacheable. With no `generateStaticParams`, Next server-renders a dynamic segment on every request (`ƒ` in the build table; production showed `Cache-Control: private, no-cache, no-store` and a MISS on every hit). Each of these routes exports `generateStaticParams() { return []; }`. Nothing is pre-rendered at build, and each URL renders on its first visit, then serves from the cache (`●`). Leave `dynamicParams` at its default so unknown slugs still reach `notFound()`; that 404 is cached for the window too, which is why create actions bust their new path. `next dev` renders everything per request, so confirm a caching change with `npx next build` (the route table) — never `npm run build`, which runs `migrate deploy`.
+
 **Wishlist hearts hydrate client-side, never server-seeded.** `getWishlistedProductIds()`
 is called from **`src/lib/wishlist-store.ts` only** — never from a page. The cached
 HTML paints with empty hearts; once `useSession()` resolves, the first `WishlistButton`

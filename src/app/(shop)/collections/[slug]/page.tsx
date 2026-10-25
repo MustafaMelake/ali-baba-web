@@ -6,6 +6,15 @@ import { CollectionListing, collectionMetadata } from "./listing";
 // Page 2+ live at ./page/[n].
 export const revalidate = 60;
 
+// No paths are pre-rendered at build: each URL renders on its first visit, then
+// serves from the shared ISR cache like any static page. Without this, a dynamic
+// segment is server-rendered on EVERY request (`ƒ`) and `revalidate` above is
+// ignored. dynamicParams stays at its default (true), so an unknown slug
+// still reaches notFound().
+export async function generateStaticParams(): Promise<{ slug: string }[]> {
+  return [];
+}
+
 export async function generateMetadata({
   params,
 }: {

@@ -190,7 +190,7 @@ export async function deleteProduct(id: string): Promise<DeleteProductResult> {
   // a Restrict-blocked (ordered) product keeps its row and must keep its media.
   const existing = await prisma.product.findUnique({
     where: { id },
-    select: { images: true },
+    select: { images: true, slug: true },
   });
   if (!existing) {
     return { success: false, error: "That product no longer exists." };
@@ -206,6 +206,8 @@ export async function deleteProduct(id: string): Promise<DeleteProductResult> {
     revalidatePath("/shop");
     revalidatePath("/new-arrivals");
     revalidatePath("/"); // featured products surface on the homepage
+    // The ISR page would otherwise keep serving the deleted product.
+    revalidatePath(`/product/${existing.slug}`);
 
     return { success: true };
   } catch (err) {
@@ -276,6 +278,8 @@ export async function createProduct(
     revalidatePath("/shop");
     revalidatePath("/new-arrivals");
     revalidatePath("/");
+    // The PDP is ISR: a visit before this slug existed cached a 404 there.
+    revalidatePath(`/product/${data.slug}`);
 
     return { success: true, productId: product.id };
   } catch (err) {

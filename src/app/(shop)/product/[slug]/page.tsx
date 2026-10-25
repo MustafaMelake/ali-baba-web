@@ -23,6 +23,15 @@ import {
 // and promotion mutations bust the tree via revalidatePath("/", "layout").
 export const revalidate = 60;
 
+// No paths are pre-rendered at build: each URL renders on its first visit, then
+// serves from the shared ISR cache like any static page. Without this, a dynamic
+// segment is server-rendered on EVERY request (`ƒ`) and `revalidate` above is
+// ignored. dynamicParams stays at its default (true), so an unknown slug
+// still reaches notFound().
+export async function generateStaticParams(): Promise<{ slug: string }[]> {
+  return [];
+}
+
 // How many of the newest approved reviews ship with the initial page. The
 // header's count and average come from a DB aggregate over the FULL approved
 // set, so this cap only bounds the RSC payload — never the numbers. Paging

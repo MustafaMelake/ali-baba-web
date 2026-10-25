@@ -6,6 +6,15 @@ import { NewArrivalsListing, newArrivalsMetadata } from "../../listing";
 // Page 2+ of New Arrivals — a PATH segment, so it shares the ISR cache.
 export const revalidate = 60;
 
+// No paths are pre-rendered at build: each URL renders on its first visit, then
+// serves from the shared ISR cache like any static page. Without this, a dynamic
+// segment is server-rendered on EVERY request (`ƒ`) and `revalidate` above is
+// ignored. dynamicParams stays at its default (true), so an
+// unknown page number still reaches notFound().
+export async function generateStaticParams(): Promise<{ n: string }[]> {
+  return [];
+}
+
 type Params = Promise<{ n: string }>;
 
 /** Page number from the segment: 2+ renders; 1 → the bare URL; junk → 404. */

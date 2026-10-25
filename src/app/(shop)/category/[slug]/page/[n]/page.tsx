@@ -7,6 +7,15 @@ import { CategoryListing, categoryMetadata } from "../../listing";
 // (frontend.md caching table). Same 60s window as page 1.
 export const revalidate = 60;
 
+// No paths are pre-rendered at build: each URL renders on its first visit, then
+// serves from the shared ISR cache like any static page. Without this, a dynamic
+// segment is server-rendered on EVERY request (`ƒ`) and `revalidate` above is
+// ignored. dynamicParams stays at its default (true), so an
+// unknown slug or page number still reaches notFound().
+export async function generateStaticParams(): Promise<{ slug: string; n: string }[]> {
+  return [];
+}
+
 type Params = Promise<{ slug: string; n: string }>;
 
 /** Page number from the segment: 2+ renders; 1 → the bare URL; junk → 404. */

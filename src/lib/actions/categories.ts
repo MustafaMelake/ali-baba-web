@@ -83,20 +83,20 @@ export async function createCategory(
   const sliderOrder = sanitizeSliderOrder(input.sliderOrder);
 
   try {
-    const id = await prisma.$transaction(async (tx) => {
+    const { id, slug } = await prisma.$transaction(async (tx) => {
       const slug = await ensureUniqueSlug(tx, baseSlug);
 
-      const created = await tx.category.create({
+      return tx.category.create({
         data: { name, slug, subtitle, image, isFeatured, sliderOrder },
-        select: { id: true },
+        select: { id: true, slug: true },
       });
-
-      return created.id;
     });
 
     revalidatePath("/"); // homepage CategorySlider
     revalidatePath("/new-arrivals");
     revalidatePath("/admin/categories");
+    // The route is ISR: a visit before this category existed cached a 404 here.
+    revalidatePath(`/category/${slug}`);
 
     return { success: true, id };
   } catch (err) {
@@ -226,7 +226,7 @@ export async function deleteCategory(id: string): Promise<DeleteCategoryResult> 
     // keeps its row, so it must keep its media too).
     const existing = await prisma.category.findUnique({
       where: { id },
-      select: { image: true },
+      select: { image: true, slug: true },
     });
 
     await prisma.category.delete({ where: { id } });
@@ -237,6 +237,8 @@ export async function deleteCategory(id: string): Promise<DeleteCategoryResult> 
     revalidatePath("/"); // homepage CategorySlider
     revalidatePath("/new-arrivals");
     revalidatePath("/admin/categories");
+    // The ISR page would otherwise keep serving the deleted category.
+    if (existing) revalidatePath(`/category/${existing.slug}`);
 
     return { success: true };
   } catch (err) {

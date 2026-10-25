@@ -586,15 +586,17 @@ The Prisma/Neon substrate plus the platform's shared coding idioms.
 
 ## 16 · Cache Topology & Revalidation Matrix
 
+Every dynamic-segment row below (`[slug]`, `[n]`) is ISR **only because** its page exports `generateStaticParams() { return []; }`. Without it the route builds as `ƒ` and production serves it `private, no-store` on every request, which was the case until that fix. Unknown slugs 404, and that 404 is cached for the window, so create actions bust their new path.
+
 | Surface | Strategy | Staleness bound | Invalidated by (writer → mechanism) |
 |---|---|---|---|
 | `/` homepage | **ISR 60** | 60 s (promo + hero-slide time-window expiry; branch-stock toggles, which don't revalidate `/`) | category actions → `revalidatePath("/")`; product actions → `revalidatePath("/")`; **hero-slide actions → `revalidatePath("/")`** (+ `/admin/hero`); FAQ + location actions → `revalidatePath("/")`; promotion actions → `revalidatePath("/", "layout")` |
 | `/admin/hero` | `force-dynamic` | live (badges compare each window against `now`) | hero-slide actions → `revalidatePath("/admin/hero")` |
-| `/product/[slug]` | ISR 60 | 60 s | product actions (both slugs on rename); review approve/delete; promotions (layout) |
-| `/category/[slug]` | ISR 60 | 60 s | `updateCategory` (own slug); collection actions (every linked category, before + after); promotions (layout) |
+| `/product/[slug]` | ISR 60 | 60 s | product create / update / delete (own slug; both slugs on rename); review approve/delete; promotions (layout) |
+| `/category/[slug]` | ISR 60 | 60 s (product price edits: accepted, not busted) | category create / update / delete (own slug); collection actions (every linked category, before + after); promotions (layout) |
 | `/category/[slug]/page/[n]`, `/new-arrivals/page/[n]`, `/collections/page/[n]`, `/collections/[slug]/page/[n]` | ISR 60 | 60 s | **not busted directly** — mutations bust the base path; deeper pages age out on their own window (accepted); promotions + priced collection changes (layout) |
 | `/new-arrivals` | ISR 60 | 60 s | product create/update/delete; category create/update/delete; promotions (layout) |
-| `/collections`, `/collections/[slug]` | ISR 60 | 60 s | every collection action → `revalidateCollectionSurfaces` (index, each affected slug); `revalidatePath("/", "layout")` when the change re-prices a promoted collection; promotions (layout) |
+| `/collections`, `/collections/[slug]` | ISR 60 | 60 s (product price edits: accepted, not busted) | every collection action → `revalidateCollectionSurfaces` (index, each affected slug); `revalidatePath("/", "layout")` when the change re-prices a promoted collection; promotions (layout) |
 | `/forgot-password` | ISR 60 | 60 s | `updateStoreWhatsapp` → `revalidatePath("/forgot-password")` |
 | `/account/change-password` | `force-dynamic` | live | n/a (per-user) |
 | Footer collections query | `unstable_cache` tag `footer-collections` | tag-immediate | every collection action → `updateTag("footer-collections")` |
