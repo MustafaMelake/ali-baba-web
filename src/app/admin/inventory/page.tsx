@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { Boxes, CircleCheck, ImageIcon, Package, SearchX } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import {
@@ -13,7 +14,15 @@ import {
   parseStockFilter,
   parseStockQuery,
 } from "@/lib/branch-stock-filter";
+import {
+  ADMIN_PAGE_SIZE,
+  isPageOutOfRange,
+  pageInfo,
+  pageSlice,
+  parsePageParam,
+} from "@/lib/pagination";
 import { cn, formatEGP } from "@/lib/utils";
+import Pagination from "@/components/Pagination";
 import PageHeader from "@/components/admin/PageHeader";
 import EmptyState from "@/components/admin/EmptyState";
 import Pill from "@/components/admin/Pill";
@@ -45,12 +54,16 @@ const HEADER = {
  * editing or deleting the product itself stays on the ADMIN-only products page.
  *
  * Search (`?q=`) and the stock tabs (`?stock=all|in|out`) live in the URL and
- * are applied server-side by `filterBranchStock` over the loaded set.
+ * are applied server-side by `filterBranchStock` over the loaded set. The
+ * filtered list is then paginated (`?page=`, ADMIN_PAGE_SIZE products per
+ * page) — in memory, because the tab counts and the headline pill need the
+ * whole branch anyway. A filter change drops `page`; a malformed or
+ * out-of-range page is a 404, like every other admin list.
  */
 export default async function AdminInventoryPage({
   searchParams,
 }: {
-  searchParams: Promise<{ branch?: string; q?: string; stock?: string }>;
+  searchParams: Promise<{ branch?: string; q?: string; stock?: string; page?: string }>;
 }) {
   let scope: DashboardScope;
   try {
@@ -73,6 +86,8 @@ export default async function AdminInventoryPage({
   const sp = await searchParams;
   const query = parseStockQuery(sp.q);
   const stock = parseStockFilter(sp.stock);
+  const page = parsePageParam(sp.page);
+  if (page === null) notFound();
 
   // The branch picker is ADMIN-only; a manager sees exactly one branch.
   const branches = await prisma.branch.findMany({
@@ -152,6 +167,13 @@ export default async function AdminInventoryPage({
   // follow the search.
   const totalOut = rows.reduce((sum, p) => sum + p.outCount, 0);
   const { products: visible, counts } = filterBranchStock(rows, { query, stock });
+
+  // One page of the filtered list (the order — category, then name — is the
+  // query's, so pages are stable between requests).
+  const info = pageInfo(page, ADMIN_PAGE_SIZE, visible.length);
+  if (isPageOutOfRange(info)) notFound();
+  const { skip, take } = pageSlice(page, ADMIN_PAGE_SIZE);
+  const pageRows = visible.slice(skip, skip + take);
 
   // Switching branch keeps the manager's search + tab.
   function branchHref(id: string) {
@@ -247,7 +269,7 @@ export default async function AdminInventoryPage({
           )
         ) : (
           <ul className="divide-y divide-stone-100">
-            {visible.map((product) => {
+            {pageRows.map((product) => {
               const thumb = product.images[0];
               return (
                 <li key={product.id} className="px-4 py-5 sm:px-6">
@@ -325,6 +347,21 @@ export default async function AdminInventoryPage({
           </ul>
         )}
       </div>
+
+      {/* Renders nothing on a single page. Links keep the branch, search and tab. */}
+      <Pagination
+        info={info}
+        mode={{
+          kind: "query",
+          base: "/admin/inventory",
+          params: {
+            branch: scope.role === "ADMIN" ? branchId : undefined,
+            q: query || undefined,
+            stock: stock !== "all" ? stock : undefined,
+          },
+        }}
+        tone="admin"
+      />
     </div>
   );
 }

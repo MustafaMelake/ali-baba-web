@@ -18,7 +18,8 @@ const TABS: { value: StockFilter; label: string }[] = [
  * Search + stock tabs for /admin/inventory. Same shape as AdminOrderFilters:
  * state lives in the URL (`?q=` debounced, `?stock=`), every change is a
  * `router.push` inside a transition, and the page re-filters server-side.
- * Other params (an ADMIN's `?branch=`) ride along untouched.
+ * Other params (an ADMIN's `?branch=`) ride along untouched — except `?page=`,
+ * which every filter change drops (the list it numbered no longer exists).
  */
 export default function BranchStockFilters({
   activeStock,
@@ -44,6 +45,7 @@ export default function BranchStockFilters({
   }
 
   function push(params: URLSearchParams) {
+    params.delete("page"); // a new filter starts on page 1
     const qs = params.toString();
     startTransition(() =>
       router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false }),
@@ -67,6 +69,7 @@ export default function BranchStockFilters({
       const params = new URLSearchParams(searchParams.toString());
       if (term.trim()) params.set("q", term.trim());
       else params.delete("q");
+      params.delete("page"); // a new search starts on page 1
       const qs = params.toString();
       startTransition(() =>
         router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false }),
