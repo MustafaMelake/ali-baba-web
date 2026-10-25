@@ -90,9 +90,23 @@ function BrandIntro({ promo }: { promo?: React.ReactNode }) {
         </p>
         <BrandButtons compact className="mt-4 flex flex-wrap items-center gap-3 md:mt-7 md:gap-4" />
       </div>
-      {/* The seal slot may render nothing (no live promotion) — `empty:hidden`
-          then drops the wrapper, so it adds no gap on phones. */}
-      {promo && <div className="shrink-0 self-start empty:hidden md:self-center">{promo}</div>}
+      {/* The seal. Desktop: in flow, beside the text. Phones: out of the flow
+          (it reserves nothing, so no empty row and no layout shift), pinned
+          to the inline-end edge of the hero block and straddling its bottom
+          edge — half over the band, half over the top of the category
+          section, whose heading starts well below (its own top padding).
+          Its containing block is Hero's banner wrapper (`relative z-10`), so
+          it paints above that next section. Scaled to ~56px on phones: at
+          full size it came within 4px of the buttons at 360–390px. It shrinks toward
+          the inline end (`origin-right`, mirrored under rtl), so it stays
+          flush with that edge and its centre stays on the boundary. The slot
+          may render nothing (no live promotion) — `empty:hidden` then drops
+          the wrapper. */}
+      {promo && (
+        <div className="absolute end-4 bottom-0 translate-y-1/2 scale-[0.78] origin-right empty:hidden rtl:origin-left sm:end-6 md:static md:shrink-0 md:translate-y-0 md:scale-100 md:self-center">
+          {promo}
+        </div>
+      )}
     </section>
   );
 }
@@ -117,8 +131,9 @@ export default function Hero({ promo, slides = [] }: HeroProps) {
     return (
       // Banner variant: the carousel, then the brand intro, whose headline is
       // the page's visible <h1> — slide titles are <h2>. The seal sits in the
-      // band, never over the carousel.
-      <div className="w-full bg-white px-4 pt-4 pb-10 sm:px-6 md:px-10 md:pt-6 md:pb-14 lg:px-14">
+      // band, never over the carousel. `relative z-10`: the phone seal is
+      // positioned against this block and must paint over the next section.
+      <div className="relative z-10 w-full bg-white px-4 pt-4 pb-10 sm:px-6 md:px-10 md:pt-6 md:pb-14 lg:px-14">
         <HeroCarousel slides={slides} />
         <BrandIntro promo={promo} />
       </div>
