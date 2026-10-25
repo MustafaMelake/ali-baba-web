@@ -2,11 +2,17 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import useEmblaCarousel from "embla-carousel-react";
+import Fade from "embla-carousel-fade";
 import Image, { getImageProps } from "next/image";
 import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
 import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
-import { HERO_AUTOPLAY_MS, HERO_COPY, type HeroSlideView } from "@/lib/hero-slides";
+import {
+  HERO_AUTOPLAY_MS,
+  HERO_COPY,
+  HERO_RESUME_AFTER_MS,
+  type HeroSlideView,
+} from "@/lib/hero-slides";
 import { useSeasonalIntro } from "@/lib/seasonal-intro-store";
 import { cn, formatMoney } from "@/lib/utils";
 
@@ -33,10 +39,36 @@ function subscribeVisibility(onChange: () => void) {
 const isTabHidden = () => document.visibilityState === "hidden";
 const serverTabHidden = () => false;
 
+// "Has this tree hydrated?" — false in the server HTML, true from the first
+// client render, with no effect + setState round-trip.
+const noSubscribe = () => () => {};
+const onClient = () => true;
+const onServer = () => false;
+
 /** Add `indexes` to a set, returning the SAME set when nothing is new (no re-render). */
 function withIndexes(set: ReadonlySet<number>, indexes: number[]): ReadonlySet<number> {
   if (indexes.every((i) => set.has(i))) return set;
   return new Set([...set, ...indexes]);
+}
+
+/** Slide `i`, the one after it and the one before it (the loop wraps). */
+function neighboursOf(i: number, count: number): number[] {
+  return [i, (i + 1) % count, (i - 1 + count) % count];
+}
+
+/**
+ * Did focus arrive from the keyboard? Autoplay pauses for keyboard focus only;
+ * a tapped dot or arrow keeps (pointer) focus without matching :focus-visible.
+ * An engine that can't evaluate the selector counts as keyboard (pausing is
+ * the safe side).
+ */
+function isKeyboardFocus(target: EventTarget): boolean {
+  if (!(target instanceof Element)) return false;
+  try {
+    return target.matches(":focus-visible");
+  } catch {
+    return true;
+  }
 }
 
 // ── Media ────────────────────────────────────────────────────────────────────
@@ -47,30 +79,46 @@ function withIndexes(set: ReadonlySet<number>, indexes: number[]): ReadonlySet<n
  * viewport, so it's fetched eagerly at high priority instead (Next's docs: no
  * `preload` when the LCP candidate depends on the viewport). Every other slide
  * stays lazy until the carousel `requested` it — see HeroCarousel.
+ *
+ * `onSettled(index)` fires once the image has loaded OR failed. A failed image
+ * must not freeze autoplay; its frame shows the stone background instead. The
+ * ref covers an image that was already complete (HTTP cache) before hydration
+ * attached `onLoad`: that load event never reaches React, and waiting for it
+ * was what kept the carousel from ever starting on a cached second visit.
  */
 function SlideMedia({
   slide,
-  isFirst,
+  index,
   requested,
-  onLoaded,
+  onSettled,
 }: {
   slide: HeroSlideView;
-  isFirst: boolean;
+  index: number;
   requested: boolean;
-  onLoaded: () => void;
+  onSettled: (index: number) => void;
 }) {
+  const isFirst = index === 0;
   const loading: "eager" | "lazy" = isFirst || requested ? "eager" : "lazy";
+  const settle = useCallback(() => onSettled(index), [onSettled, index]);
+  const settleIfComplete = useCallback(
+    (img: HTMLImageElement | null) => {
+      if (img?.complete && img.naturalWidth > 0) settle();
+    },
+    [settle],
+  );
 
   if (!slide.imageMobile) {
     return (
       <Image
+        ref={settleIfComplete}
         src={slide.imageDesktop}
         alt={slide.imageAlt}
         fill
         sizes={SIZES}
         className="object-cover"
         {...(isFirst ? { preload: true } : { loading })}
-        onLoad={onLoaded}
+        onLoad={settle}
+        onError={settle}
       />
     );
   }
@@ -93,11 +141,9 @@ function SlideMedia({
         {...desktop}
         alt={slide.imageAlt}
         className="object-cover"
-        onLoad={onLoaded}
-        // A cached image can finish before hydration attaches onLoad.
-        ref={(img) => {
-          if (img?.complete && img.naturalWidth > 0) onLoaded();
-        }}
+        onLoad={settle}
+        onError={settle}
+        ref={settleIfComplete}
       />
     </picture>
   );
@@ -244,15 +290,22 @@ const controlButton =
  *
  * Accessibility (WAI carousel pattern): a labelled region, each slide a
  * "slide" group ("2 of 4"), off-screen slides `inert`, prev/next + dots +
- * ←/→ keys, and a visible pause/play button (WCAG 2.2.2). Autoplay is OFF
- * under prefers-reduced-motion, pauses on hover, focus, a background tab and
- * while the seasonal intro plays, and stops for good once the visitor
- * navigates. Live-region politeness follows it: "off" while rotating.
+ * ←/→ keys, and a visible pause/play button (WCAG 2.2.2). Live-region
+ * politeness follows autoplay: "off" while rotating.
  *
- * Image requests: slide 0 is eager/high priority; the next slide is requested
- * once slide 0 has painted, and each newly selected slide requests its
- * neighbours. Autoplay only advances to a slide whose image has LOADED, so a
- * transition never lands on a blank frame.
+ * Autoplay is ON by default, every HERO_AUTOPLAY_MS, as a crossfade (the Embla
+ * fade plugin). Under prefers-reduced-motion it keeps rotating but each change
+ * is instant (`jump`), with no fade. It waits while keyboard focus is inside,
+ * the tab is hidden or the seasonal intro plays. A swipe, arrow or dot holds
+ * it only until HERO_RESUME_AFTER_MS without input. Only the Pause button
+ * stops it until Play. Hover never pauses: on touch screens `mouseenter` fires
+ * on a tap and `mouseleave` never does, which used to stop rotation for good.
+ *
+ * Image requests: slide 0 is eager/high priority (the LCP element) and its
+ * neighbours are requested on hydration, then each newly selected slide
+ * requests its own.
+ * Autoplay only advances to a slide whose image has settled, so a transition
+ * never lands on a blank frame.
  */
 export default function HeroCarousel({
   slides,
@@ -265,76 +318,84 @@ export default function HeroCarousel({
   const count = slides.length;
   const isCarousel = count > 1;
 
-  const [emblaRef, emblaApi] = useEmblaCarousel({
-    loop: isCarousel,
-    direction,
-    active: isCarousel,
-  });
+  // Stable plugin list: a new array each render would re-init Embla. (An
+  // inactive Embla — one slide — never initialises its plugins.)
+  const [plugins] = useState(() => [Fade()]);
+  const [emblaRef, emblaApi] = useEmblaCarousel(
+    { loop: isCarousel, direction, active: isCarousel },
+    plugins,
+  );
 
   const [selected, setSelected] = useState(0);
   const [requested, setRequested] = useState<ReadonlySet<number>>(() => new Set([0]));
   const [loaded, setLoaded] = useState<ReadonlySet<number>>(() => new Set());
+  // Slide 0's neighbours are requested as soon as the carousel hydrates, never
+  // "after slide 0's onLoad" (which a cached image never delivers). Not in the
+  // server HTML: eager neighbours there would compete with the LCP image.
+  const hydrated = useSyncExternalStore(noSubscribe, onClient, onServer);
+  const isRequested = (i: number) =>
+    requested.has(i) || (hydrated && neighboursOf(0, count).includes(i));
 
-  // Autoplay inputs. `choice` is the visitor's explicit pause/play (null until
-  // they touch anything — then the default is "on unless reduced motion").
-  const reducedMotion = useReducedMotion();
-  const [choice, setChoice] = useState<boolean | null>(null);
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
+  // Autoplay inputs.
+  const reducedMotion = useReducedMotion() ?? false;
+  const [paused, setPaused] = useState(false); // the Pause button — until Play
+  const [holdToken, setHoldToken] = useState(0); // 0 = no manual hold
+  const [keyboardFocus, setKeyboardFocus] = useState(false);
   const tabHidden = useSyncExternalStore(subscribeVisibility, isTabHidden, serverTabHidden);
   const introPlaying = useSeasonalIntro((s) => s.season !== null);
 
-  const autoplayOn = isCarousel && (choice ?? !reducedMotion);
-  const rotating = autoplayOn && !hovered && !focused && !tabHidden && !introPlaying;
+  const held = holdToken !== 0;
+  const rotating =
+    isCarousel && !paused && !held && !keyboardFocus && !tabHidden && !introPlaying;
 
-  const neighbours = useCallback(
-    (i: number) => [i, (i + 1) % count, (i - 1 + count) % count],
-    [count],
+  /** A manual navigation: hold autoplay, restarting the idle countdown. */
+  const holdForIdle = useCallback(() => setHoldToken((n) => n + 1), []);
+
+  // Release the hold once the visitor has been idle long enough.
+  useEffect(() => {
+    if (!holdToken) return;
+    const timer = window.setTimeout(() => setHoldToken(0), HERO_RESUME_AFTER_MS);
+    return () => window.clearTimeout(timer);
+  }, [holdToken]);
+
+  const markSettled = useCallback(
+    (i: number) => setLoaded((prev) => withIndexes(prev, [i])),
+    [],
   );
 
-  const markLoaded = useCallback(
-    (i: number) => {
-      setLoaded((prev) => withIndexes(prev, [i]));
-      // Slide 0 has painted → request the next one (and the loop's previous).
-      if (i === 0) setRequested((prev) => withIndexes(prev, neighbours(0)));
-    },
-    [neighbours],
-  );
-
-  // Track the selected slide; any drag/swipe is a manual navigation.
+  // Track the selected slide; a drag/swipe is a manual navigation.
   useEffect(() => {
     if (!emblaApi) return;
     const onSelect = () => {
       const i = emblaApi.selectedScrollSnap();
       setSelected(i);
-      setRequested((prev) => withIndexes(prev, neighbours(i)));
+      setRequested((prev) => withIndexes(prev, neighboursOf(i, count)));
     };
-    const onPointerDown = () => setChoice(false);
-    emblaApi.on("select", onSelect).on("pointerDown", onPointerDown);
+    emblaApi.on("select", onSelect).on("pointerDown", holdForIdle);
     return () => {
-      emblaApi.off("select", onSelect).off("pointerDown", onPointerDown);
+      emblaApi.off("select", onSelect).off("pointerDown", holdForIdle);
     };
-  }, [emblaApi, neighbours]);
+  }, [emblaApi, count, holdForIdle]);
 
-  // One timeout per shown slide, armed only once the NEXT image has loaded.
+  // One timeout per shown slide, armed only once the NEXT image has settled.
   const nextReady = loaded.has((selected + 1) % count);
   useEffect(() => {
     if (!emblaApi || !rotating || !nextReady) return;
-    const timer = window.setTimeout(() => emblaApi.scrollNext(), HERO_AUTOPLAY_MS);
+    const timer = window.setTimeout(() => emblaApi.scrollNext(reducedMotion), HERO_AUTOPLAY_MS);
     return () => window.clearTimeout(timer);
-  }, [emblaApi, rotating, nextReady, selected]);
+  }, [emblaApi, rotating, nextReady, selected, reducedMotion]);
 
   const goPrev = () => {
-    setChoice(false);
-    emblaApi?.scrollPrev();
+    holdForIdle();
+    emblaApi?.scrollPrev(reducedMotion);
   };
   const goNext = () => {
-    setChoice(false);
-    emblaApi?.scrollNext();
+    holdForIdle();
+    emblaApi?.scrollNext(reducedMotion);
   };
   const goTo = (i: number) => {
-    setChoice(false);
-    emblaApi?.scrollTo(i);
+    holdForIdle();
+    emblaApi?.scrollTo(i, reducedMotion);
   };
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -360,11 +421,11 @@ export default function HeroCarousel({
       animate={{ y: 0, scale: 1 }}
       transition={{ duration: 1, ease: EASE, delay: 0.1 }}
       onKeyDown={onKeyDown}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onFocus={() => setFocused(true)}
+      onFocus={(e) => {
+        if (isKeyboardFocus(e.target)) setKeyboardFocus(true);
+      }}
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setKeyboardFocus(false);
       }}
     >
       <div ref={emblaRef} className="overflow-hidden rounded-[1.75rem] md:rounded-[2.5rem]">
@@ -387,9 +448,9 @@ export default function HeroCarousel({
                 media={
                   <SlideMedia
                     slide={slide}
-                    isFirst={i === 0}
-                    requested={requested.has(i)}
-                    onLoaded={() => markLoaded(i)}
+                    index={i}
+                    requested={isRequested(i)}
+                    onSettled={markSettled}
                   />
                 }
               />
@@ -424,11 +485,11 @@ export default function HeroCarousel({
             </button>
             <button
               type="button"
-              onClick={() => setChoice(!autoplayOn)}
-              aria-label={autoplayOn ? HERO_COPY.pause : HERO_COPY.play}
+              onClick={() => setPaused((p) => !p)}
+              aria-label={paused ? HERO_COPY.play : HERO_COPY.pause}
               className={controlButton}
             >
-              {autoplayOn ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              {paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
             </button>
             <button type="button" onClick={goNext} aria-label={HERO_COPY.next} className={controlButton}>
               <ChevronRight className="h-4 w-4 rtl:-scale-x-100" />

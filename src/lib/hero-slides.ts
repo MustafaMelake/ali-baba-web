@@ -30,8 +30,14 @@ import { LISTABLE_PRODUCT } from "@/lib/catalog";
 /** Hard bound on slides the storefront renders (the read's `take`). */
 export const HERO_MAX_LIVE_SLIDES = 5;
 
-/** Autoplay interval — off under prefers-reduced-motion; see HeroCarousel. */
-export const HERO_AUTOPLAY_MS = 6000;
+/**
+ * Autoplay interval. Always on (reduced motion only removes the crossfade);
+ * the visible Pause button is the WCAG 2.2.2 control. See HeroCarousel.
+ */
+export const HERO_AUTOPLAY_MS = 3000;
+
+/** A swipe / arrow / dot pauses autoplay only until this long without input. */
+export const HERO_RESUME_AFTER_MS = 8000;
 
 /**
  * Recommended upload sizes, matching the frame's aspect ratios: desktop
