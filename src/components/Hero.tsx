@@ -96,14 +96,14 @@ function BrandIntro({ promo }: { promo?: React.ReactNode }) {
           edge — half over the band, half over the top of the category
           section, whose heading starts well below (its own top padding).
           Its containing block is Hero's banner wrapper (`relative z-10`), so
-          it paints above that next section. Scaled to ~56px on phones: at
+          it paints above that next section. Scaled to 58px on phones (72px × 0.806): at
           full size it came within 4px of the buttons at 360–390px. It shrinks toward
           the inline end (`origin-right`, mirrored under rtl), so it stays
           flush with that edge and its centre stays on the boundary. The slot
           may render nothing (no live promotion) — `empty:hidden` then drops
           the wrapper. */}
       {promo && (
-        <div className="absolute end-4 bottom-0 translate-y-1/2 scale-[0.78] origin-right empty:hidden rtl:origin-left sm:end-6 md:static md:shrink-0 md:translate-y-0 md:scale-100 md:self-center">
+        <div className="absolute end-4 bottom-0 translate-y-1/2 scale-[0.806] origin-right empty:hidden rtl:origin-left sm:end-6 md:static md:shrink-0 md:translate-y-0 md:scale-100 md:self-center">
           {promo}
         </div>
       )}

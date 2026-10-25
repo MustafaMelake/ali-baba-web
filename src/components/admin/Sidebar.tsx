@@ -220,7 +220,10 @@ export default function Sidebar({ role }: { role: string }) {
                   <X className="h-5 w-5" />
                 </button>
               </div>
-              <div className="mt-8 flex flex-1 flex-col">
+              {/* The links scroll under the pinned brand row — on a short phone
+                  screen they don't all fit. A thin, visible scrollbar shows
+                  there's more; overscroll-contain keeps the page behind still. */}
+              <div className="-me-2 mt-8 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pe-2 [scrollbar-color:var(--color-stone-300)_transparent] [scrollbar-width:thin]">
                 <NavLinks role={role} onNavigate={closeMobileNav} />
                 <div className="mt-auto border-t border-stone-200/70 pt-3">
                   <BackToStore onNavigate={closeMobileNav} />
