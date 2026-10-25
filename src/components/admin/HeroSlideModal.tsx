@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Check,
+  ChevronDown,
   GalleryHorizontal,
   ImagePlus,
   Link2,
@@ -34,7 +35,28 @@ const inputClasses =
 const DEFAULT_CTA = "Order now";
 const PICKER_LIMIT = 6;
 
+/**
+ * The width the desktop preview lays out at before it's scaled down to fit:
+ * the modal is narrower than the frame's `@2xl` breakpoint, so an unscaled
+ * frame would render the PHONE layout.
+ */
+const DESKTOP_PREVIEW_WIDTH = 1200;
+
 type Destination = "product" | "link";
+
+/** The collapsible groups of optional fields — all closed when the modal opens. */
+type SectionKey = "text" | "price" | "schedule" | "advanced";
+
+/** Which section holds each field, so a failed submit opens the one with the error. */
+const SECTION_OF: Partial<Record<string, SectionKey>> = {
+  eyebrow: "text",
+  title: "text",
+  subtitle: "text",
+  ctaLabel: "text",
+  startsOn: "schedule",
+  endsOn: "schedule",
+  imageAlt: "advanced",
+};
 
 // ── Small building blocks ────────────────────────────────────────────────────
 
@@ -71,6 +93,72 @@ function Switch({
         )}
       />
     </button>
+  );
+}
+
+/**
+ * A collapsible group of optional fields (native <details>, so the summary is
+ * a real button for keyboards and screen readers). Controlled, so a failed
+ * submit can open the group holding the error. `status` is a short note shown
+ * while closed ("Added", "On"…), so nothing set inside is hidden from view.
+ */
+function Disclosure({
+  title,
+  status,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  status?: string;
+  open: boolean;
+  onToggle: (open: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <details
+      open={open}
+      onToggle={(e) => onToggle(e.currentTarget.open)}
+      className="group rounded-xl border border-stone-200"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-4 py-3 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 [&::-webkit-details-marker]:hidden">
+        <span>
+          {title}
+          {status && <span className="ms-2 text-xs font-normal text-primary">{status}</span>}
+        </span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-stone-400 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="space-y-4 border-t border-stone-100 px-4 py-4">{children}</div>
+    </details>
+  );
+}
+
+/**
+ * Lays its child out at a fixed `width` and scales it down to the space it
+ * has, keeping the hero frame's aspect — how the desktop rendering fits in a
+ * narrow modal. Hidden until measured, so it never flashes at full size.
+ */
+function ScaledToFit({ width, children }: { width: number; children: React.ReactNode }) {
+  const [scale, setScale] = useState(0);
+  const measure = useCallback(
+    (el: HTMLDivElement | null) => {
+      if (!el) return;
+      const observer = new ResizeObserver(([entry]) => setScale(entry.contentRect.width / width));
+      observer.observe(el);
+      return () => observer.disconnect();
+    },
+    [width],
+  );
+
+  return (
+    <div ref={measure} className={cn("relative w-full overflow-hidden rounded-xl", HERO_FRAME_ASPECT)}>
+      <div
+        className="absolute start-0 top-0 origin-top-left rtl:origin-top-right"
+        style={{ width, transform: `scale(${scale})`, visibility: scale ? "visible" : "hidden" }}
+      >
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -140,11 +228,14 @@ function ImageField({
 // ── Modal ────────────────────────────────────────────────────────────────────
 
 /**
- * One controlled modal for BOTH create and edit (pass `slide` to edit). The
- * form re-parses the shared `heroSlideSchema` for instant feedback — the
- * server re-parses it regardless — and a live preview renders the slide with
- * the storefront's own frame at desktop and phone widths. On success it closes
- * and `router.refresh()`es the list.
+ * One controlled modal for BOTH create and edit (pass `slide` to edit). Built
+ * for a non-technical admin: the image, where the banner leads and the Active
+ * switch are always visible; everything optional (banner text, price,
+ * schedule, screen-reader text) sits in collapsed sections. The form re-parses
+ * the shared `heroSlideSchema` for instant feedback — the server re-parses it
+ * regardless — and a live preview renders the slide with the storefront's own
+ * frame, desktop (scaled to fit) and phone. On success it closes and
+ * `router.refresh()`es the list.
  */
 export default function HeroSlideModal({
   slide,
@@ -168,6 +259,8 @@ export default function HeroSlideModal({
   const [productQuery, setProductQuery] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
   const [showPrice, setShowPrice] = useState(true);
+  // No longer in the form (the column stays): an existing eyebrow is sent back
+  // unchanged, like the retired phone crop below.
   const [eyebrow, setEyebrow] = useState("");
   const [title, setTitle] = useState("");
   const [subtitle, setSubtitle] = useState("");
@@ -181,6 +274,16 @@ export default function HeroSlideModal({
   const [endsOn, setEndsOn] = useState("");
   const [isActive, setIsActive] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [openSections, setOpenSections] = useState<ReadonlySet<SectionKey>>(() => new Set());
+
+  const toggleSection = (key: SectionKey) => (open: boolean) =>
+    setOpenSections((prev) => {
+      if (prev.has(key) === open) return prev;
+      const next = new Set(prev);
+      if (open) next.add(key);
+      else next.delete(key);
+      return next;
+    });
 
   // Sync the form to the row each time the modal opens.
   useEffect(() => {
@@ -203,6 +306,7 @@ export default function HeroSlideModal({
     // A new slide is created inactive — published deliberately.
     setIsActive(slide?.isActive ?? false);
     setSubmitted(false);
+    setOpenSections(new Set());
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [isOpen, slide]);
 
@@ -258,13 +362,26 @@ export default function HeroSlideModal({
     imageAlt,
     price: null,
   };
+  // "Show price" means something only once a product is picked.
+  const productPicked = destination === "product" && Boolean(productId);
   const pricePlaceholder =
-    destination === "product" && showPrice ? `${HERO_COPY.priceFrom} ··· ${HERO_COPY.currency}` : undefined;
+    productPicked && showPrice ? `${HERO_COPY.priceFrom} ··· ${HERO_COPY.currency}` : undefined;
+  const previewMedia = imageDesktop && (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={imageDesktop} alt="" className="absolute inset-0 h-full w-full object-cover" />
+  );
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitted(true);
-    if (!parsed.success) return;
+    if (!parsed.success) {
+      // Open every collapsed section that holds an error, so it can be seen.
+      const withErrors = Object.keys(fieldErrors(parsed.error))
+        .map((field) => SECTION_OF[field])
+        .filter((key): key is SectionKey => Boolean(key));
+      if (withErrors.length) setOpenSections((prev) => new Set([...prev, ...withErrors]));
+      return;
+    }
 
     startTransition(async () => {
       const result =
@@ -336,44 +453,18 @@ export default function HeroSlideModal({
 
               {/* Body */}
               <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-5">
-                {/* Live preview — the storefront frame at both widths */}
-                <div className="space-y-3 rounded-2xl bg-stone-50 p-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-400">
-                    Live preview
-                  </p>
-                  <HeroSlideFrame
-                    slide={preview}
-                    linked={false}
-                    pricePlaceholder={pricePlaceholder}
-                    className="aspect-[47/20] rounded-2xl"
-                    media={
-                      imageDesktop && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={imageDesktop} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                      )
-                    }
+                {/* ── Always visible: image, destination, Active ── */}
+                <div className="space-y-1">
+                  <ImageField
+                    label="Image"
+                    value={imageDesktop}
+                    onChange={setImageDesktop}
+                    aspect={HERO_FRAME_ASPECT}
+                    hint={`${HERO_IMAGE_SIZE.width} × ${HERO_IMAGE_SIZE.height} px — the same image is used on phones, so keep text large and away from the edges.`}
                   />
-                  <div className="flex items-end gap-4">
-                    <HeroSlideFrame
-                      slide={preview}
-                      linked={false}
-                      pricePlaceholder={pricePlaceholder}
-                      className={cn(HERO_FRAME_ASPECT, "w-[min(100%,18rem)] shrink-0 rounded-xl")}
-                      media={
-                        imageDesktop && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={imageDesktop} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                        )
-                      }
-                    />
-                    <p className="hidden pb-1 text-xs leading-relaxed text-stone-400 sm:block">
-                      Desktop above, phone here — the same image, with only the button on top.
-                      {pricePlaceholder && " The price pill shows the product's live starting price on the storefront."}
-                    </p>
-                  </div>
+                  <FieldError message={errors.imageDesktop} />
                 </div>
 
-                {/* Destination */}
                 <fieldset className="space-y-3">
                   <legend className="text-sm font-medium text-stone-700">Where does it lead?</legend>
                   <div className="inline-flex rounded-full bg-stone-100 p-1">
@@ -473,16 +564,6 @@ export default function HeroSlideModal({
                         </>
                       )}
                       <FieldError message={errors.productId} />
-
-                      <div className="flex items-center justify-between rounded-xl border border-stone-200 px-4 py-3">
-                        <div>
-                          <p className="text-sm font-medium text-stone-700">Show price</p>
-                          <p className="text-xs text-stone-400">
-                            The product&apos;s live starting price, discounts included.
-                          </p>
-                        </div>
-                        <Switch checked={showPrice} onChange={setShowPrice} label="Toggle price" />
-                      </div>
                     </div>
                   ) : (
                     <div className="space-y-1.5">
@@ -505,135 +586,6 @@ export default function HeroSlideModal({
                   )}
                 </fieldset>
 
-                {/* Overlay copy — all optional */}
-                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <label htmlFor="hero-eyebrow" className="text-sm font-medium text-stone-700">
-                      Eyebrow <span className="font-normal text-stone-400">(optional)</span>
-                    </label>
-                    <input
-                      id="hero-eyebrow"
-                      value={eyebrow}
-                      onChange={(e) => setEyebrow(e.target.value)}
-                      placeholder="New arrival"
-                      className={inputClasses}
-                      maxLength={40}
-                      autoFocus
-                    />
-                    <FieldError message={errors.eyebrow} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label htmlFor="hero-cta" className="text-sm font-medium text-stone-700">
-                      Button label
-                    </label>
-                    <input
-                      id="hero-cta"
-                      value={ctaLabel}
-                      onChange={(e) => setCtaLabel(e.target.value)}
-                      className={inputClasses}
-                      maxLength={30}
-                    />
-                    <FieldError message={errors.ctaLabel} />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label htmlFor="hero-title" className="text-sm font-medium text-stone-700">
-                    Headline <span className="font-normal text-stone-400">(optional)</span>
-                  </label>
-                  <input
-                    id="hero-title"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="Pistachio Kunafa is here"
-                    className={inputClasses}
-                    maxLength={90}
-                  />
-                  <FieldError message={errors.title} />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label htmlFor="hero-subtitle" className="text-sm font-medium text-stone-700">
-                    Subtitle <span className="font-normal text-stone-400">(optional)</span>
-                  </label>
-                  <input
-                    id="hero-subtitle"
-                    value={subtitle}
-                    onChange={(e) => setSubtitle(e.target.value)}
-                    className={inputClasses}
-                    maxLength={200}
-                  />
-                  <FieldError message={errors.subtitle} />
-                  <p className="text-xs text-stone-400">
-                    Leave the text empty when the design already carries its own words.
-                  </p>
-                </div>
-
-                {/* Image — one wide banner for every screen size */}
-                <div className="space-y-1">
-                  <ImageField
-                    label="Image"
-                    value={imageDesktop}
-                    onChange={setImageDesktop}
-                    aspect={HERO_FRAME_ASPECT}
-                    hint={`${HERO_IMAGE_SIZE.width} × ${HERO_IMAGE_SIZE.height} px — the same image is used on phones, so keep text large and away from the edges.`}
-                  />
-                  <FieldError message={errors.imageDesktop} />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label htmlFor="hero-alt" className="text-sm font-medium text-stone-700">
-                    Image description
-                  </label>
-                  <textarea
-                    id="hero-alt"
-                    value={imageAlt}
-                    onChange={(e) => setImageAlt(e.target.value)}
-                    rows={2}
-                    maxLength={300}
-                    placeholder="A tray of pistachio kunafa with the words “New: Pistachio Kunafa”"
-                    className={cn(inputClasses, "resize-y leading-relaxed")}
-                  />
-                  <FieldError message={errors.imageAlt} />
-                  <p className="text-xs text-stone-400">
-                    Read aloud to visitors who can&apos;t see the image — include any text written on it.
-                  </p>
-                </div>
-
-                {/* Schedule */}
-                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <label htmlFor="hero-starts" className="text-sm font-medium text-stone-700">
-                      Starts <span className="font-normal text-stone-400">(optional)</span>
-                    </label>
-                    <input
-                      id="hero-starts"
-                      type="date"
-                      value={startsOn}
-                      onChange={(e) => setStartsOn(e.target.value)}
-                      className={inputClasses}
-                    />
-                    <FieldError message={errors.startsOn} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label htmlFor="hero-ends" className="text-sm font-medium text-stone-700">
-                      Ends <span className="font-normal text-stone-400">(optional)</span>
-                    </label>
-                    <input
-                      id="hero-ends"
-                      type="date"
-                      value={endsOn}
-                      onChange={(e) => setEndsOn(e.target.value)}
-                      className={inputClasses}
-                    />
-                    <FieldError message={errors.endsOn} />
-                  </div>
-                  <p className="text-xs text-stone-400 sm:col-span-2">
-                    Cairo calendar days — a slide runs from the start of its first day to the end
-                    of its last. Leave both empty to run until you switch it off.
-                  </p>
-                </div>
-
                 <div className="flex items-center justify-between rounded-xl border border-stone-200 px-4 py-3">
                   <div>
                     <p className="text-sm font-medium text-stone-700">Active</p>
@@ -642,6 +594,178 @@ export default function HeroSlideModal({
                     </p>
                   </div>
                   <Switch checked={isActive} onChange={setIsActive} label="Toggle active" />
+                </div>
+
+                {/* ── Live preview — the storefront frame, desktop and phone ── */}
+                <div className="space-y-3 rounded-2xl bg-stone-50 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-400">
+                    Live preview
+                  </p>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-stone-500">Desktop</p>
+                    <ScaledToFit width={DESKTOP_PREVIEW_WIDTH}>
+                      <HeroSlideFrame
+                        slide={preview}
+                        linked={false}
+                        pricePlaceholder={pricePlaceholder}
+                        className={HERO_FRAME_ASPECT}
+                        media={previewMedia}
+                      />
+                    </ScaledToFit>
+                  </div>
+                  <div className="flex items-end gap-4">
+                    <div className="w-[min(100%,21.5rem)] shrink-0 space-y-1.5">
+                      <p className="text-xs font-medium text-stone-500">Phone</p>
+                      <HeroSlideFrame
+                        slide={preview}
+                        linked={false}
+                        pricePlaceholder={pricePlaceholder}
+                        className={cn(HERO_FRAME_ASPECT, "rounded-xl")}
+                        media={previewMedia}
+                      />
+                    </div>
+                    <p className="hidden pb-1 text-xs leading-relaxed text-stone-400 sm:block">
+                      On phones only the button sits on the image.
+                      {pricePlaceholder && " The price pill shows the product's live starting price on the storefront."}
+                    </p>
+                  </div>
+                </div>
+
+                {/* ── Optional — collapsed until opened ── */}
+                <div className="space-y-3">
+                  <Disclosure
+                    title="Text on the banner (optional)"
+                    status={title.trim() || subtitle.trim() || ctaLabel.trim() !== DEFAULT_CTA ? "Added" : undefined}
+                    open={openSections.has("text")}
+                    onToggle={toggleSection("text")}
+                  >
+                    <p className="text-xs text-stone-400">
+                      Leave empty if the image already has its own text. On phones only the button is shown.
+                    </p>
+                    <div className="space-y-1.5">
+                      <label htmlFor="hero-title" className="text-sm font-medium text-stone-700">
+                        Headline
+                      </label>
+                      <input
+                        id="hero-title"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        placeholder="Pistachio Kunafa is here"
+                        className={inputClasses}
+                        maxLength={90}
+                      />
+                      <FieldError message={errors.title} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label htmlFor="hero-subtitle" className="text-sm font-medium text-stone-700">
+                        Subtitle
+                      </label>
+                      <input
+                        id="hero-subtitle"
+                        value={subtitle}
+                        onChange={(e) => setSubtitle(e.target.value)}
+                        className={inputClasses}
+                        maxLength={200}
+                      />
+                      <FieldError message={errors.subtitle} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label htmlFor="hero-cta" className="text-sm font-medium text-stone-700">
+                        Button label
+                      </label>
+                      <input
+                        id="hero-cta"
+                        value={ctaLabel}
+                        onChange={(e) => setCtaLabel(e.target.value)}
+                        className={inputClasses}
+                        maxLength={30}
+                      />
+                      <FieldError message={errors.ctaLabel} />
+                    </div>
+                  </Disclosure>
+
+                  {productPicked && (
+                    <Disclosure
+                      title="Show price"
+                      status={showPrice ? "On" : "Off"}
+                      open={openSections.has("price")}
+                      onToggle={toggleSection("price")}
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <p className="text-xs text-stone-400">
+                          The product&apos;s live starting price, discounts included — on the desktop banner.
+                        </p>
+                        <Switch checked={showPrice} onChange={setShowPrice} label="Toggle price" />
+                      </div>
+                    </Disclosure>
+                  )}
+
+                  <Disclosure
+                    title="Schedule (optional)"
+                    status={startsOn || endsOn ? "Scheduled" : undefined}
+                    open={openSections.has("schedule")}
+                    onToggle={toggleSection("schedule")}
+                  >
+                    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <label htmlFor="hero-starts" className="text-sm font-medium text-stone-700">
+                          Starts
+                        </label>
+                        <input
+                          id="hero-starts"
+                          type="date"
+                          value={startsOn}
+                          onChange={(e) => setStartsOn(e.target.value)}
+                          className={inputClasses}
+                        />
+                        <FieldError message={errors.startsOn} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label htmlFor="hero-ends" className="text-sm font-medium text-stone-700">
+                          Ends
+                        </label>
+                        <input
+                          id="hero-ends"
+                          type="date"
+                          value={endsOn}
+                          onChange={(e) => setEndsOn(e.target.value)}
+                          className={inputClasses}
+                        />
+                        <FieldError message={errors.endsOn} />
+                      </div>
+                    </div>
+                    <p className="text-xs text-stone-400">
+                      Cairo calendar days — a slide runs from the start of its first day to the end
+                      of its last. Leave both empty to run until you switch it off.
+                    </p>
+                  </Disclosure>
+
+                  <Disclosure
+                    title="Advanced"
+                    status={imageAlt.trim() ? "Added" : undefined}
+                    open={openSections.has("advanced")}
+                    onToggle={toggleSection("advanced")}
+                  >
+                    <div className="space-y-1.5">
+                      <label htmlFor="hero-alt" className="text-sm font-medium text-stone-700">
+                        Screen-reader text (not shown on the banner)
+                      </label>
+                      <textarea
+                        id="hero-alt"
+                        value={imageAlt}
+                        onChange={(e) => setImageAlt(e.target.value)}
+                        rows={2}
+                        maxLength={300}
+                        placeholder="A tray of pistachio kunafa with the words “New: Pistachio Kunafa”"
+                        className={cn(inputClasses, "resize-y leading-relaxed")}
+                      />
+                      <FieldError message={errors.imageAlt} />
+                      <p className="text-xs text-stone-400">
+                        Read aloud to visitors who can&apos;t see the image — include any words written on it.
+                        Leave empty to use the headline, or else the product&apos;s name.
+                      </p>
+                    </div>
+                  </Disclosure>
                 </div>
               </div>
 

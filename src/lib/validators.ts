@@ -557,7 +557,10 @@ export const HERO_MAX_SLIDES = 12;
 /**
  * One homepage hero slide, shared by the admin modal (instant feedback) and the
  * hero-slides actions (the authoritative re-parse). Overlay copy is all
- * optional — a designed image may carry its own text. Exactly ONE destination:
+ * optional — a designed image may carry its own text — and so is the
+ * screen-reader text (the action fills a blank one). `eyebrow` and
+ * `imageMobile` are no longer edited in the form; it sends existing values
+ * back unchanged. Exactly ONE destination:
  * a product (CTA → its page, optional display-only price) or a whitelisted
  * link. `showPrice` only means something on a product slide; the renderer
  * ignores it otherwise. Dates are Cairo calendar days, resolved to instants by
@@ -575,9 +578,9 @@ export const heroSlideSchema = z
       .max(30, "Button label is too long (max 30 characters)."),
     showPrice: z.boolean(),
     imageDesktop: z
-      .string({ error: "Upload a desktop image." })
+      .string({ error: "Upload the banner image." })
       .trim()
-      .min(1, "Upload a desktop image.")
+      .min(1, "Upload the banner image.")
       .refine(isHostedImageUrl, HOSTED_IMAGE_ERROR),
     imageMobile: z
       .string()
@@ -585,11 +588,14 @@ export const heroSlideSchema = z
       .refine((url) => url === "" || isHostedImageUrl(url), HOSTED_IMAGE_ERROR)
       .nullish()
       .transform((value) => value || null),
+    // Optional in the form: the action fills a blank one (headline → product
+    // name → HERO_DEFAULT_ALT), since the column is NOT NULL.
     imageAlt: z
       .string()
       .trim()
-      .min(2, "Describe the image (including any text written on it).")
-      .max(300, "Image description is too long (max 300 characters)."),
+      .max(300, "Screen-reader text is too long (max 300 characters).")
+      .nullish()
+      .transform((value) => value || null),
     productId: z
       .string()
       .trim()

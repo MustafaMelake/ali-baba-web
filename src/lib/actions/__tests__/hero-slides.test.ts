@@ -40,6 +40,7 @@ import { requireAdmin } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { deleteUploadedFiles } from "@/lib/uploadthing-server";
 import { HERO_MAX_SLIDES } from "@/lib/validators";
+import { HERO_DEFAULT_ALT } from "@/lib/hero-slides";
 
 const mockPrisma = prisma as unknown as DeepMockProxy<PrismaClient>;
 const mockedRequireAdmin = vi.mocked(requireAdmin);
@@ -180,6 +181,32 @@ describe("createHeroSlide", () => {
     expect(mockedRevalidate).not.toHaveBeenCalled();
   });
 
+  it("fills blank screen-reader text: headline → product name → the default", async () => {
+    mockPrisma.product.findUnique.mockResolvedValue({ name: "Pistachio Kunafa Tray" } as never);
+    const writtenAlt = () =>
+      (mockPrisma.heroSlide.create.mock.calls.at(-1)![0] as { data: { imageAlt: string } }).data.imageAlt;
+
+    await createHeroSlide(input({ imageAlt: "Kunafa on a tray" }));
+    expect(writtenAlt()).toBe("Kunafa on a tray");
+
+    await createHeroSlide(input({ imageAlt: "", title: "New: Pistachio Kunafa" }));
+    expect(writtenAlt()).toBe("New: Pistachio Kunafa");
+    // Description or headline present → the product is never read.
+    expect(mockPrisma.product.findUnique).not.toHaveBeenCalled();
+
+    await createHeroSlide(input({ imageAlt: "", title: "" }));
+    expect(writtenAlt()).toBe("Pistachio Kunafa Tray");
+    expect(mockPrisma.product.findUnique).toHaveBeenCalledWith({
+      where: { id: "prod_1" },
+      select: { name: true },
+    });
+
+    await createHeroSlide(
+      input({ imageAlt: "", title: "", productId: null, linkUrl: "/new-arrivals" }),
+    );
+    expect(writtenAlt()).toBe(HERO_DEFAULT_ALT);
+  });
+
   it("translates P2003 (product deleted mid-edit)", async () => {
     mockPrisma.heroSlide.create.mockRejectedValue(prismaError("P2003"));
     const res = await createHeroSlide(input());
@@ -203,6 +230,13 @@ describe("updateHeroSlide", () => {
       mockedPurge.mock.invocationCallOrder[0],
     );
     expectRevalidated();
+  });
+
+  it("fills blank screen-reader text on update too", async () => {
+    await updateHeroSlide("slide_1", input({ imageAlt: "", title: "Eid boxes" }));
+    expect(mockPrisma.heroSlide.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ imageAlt: "Eid boxes" }) }),
+    );
   });
 
   it("purges the phone image when it is cleared", async () => {

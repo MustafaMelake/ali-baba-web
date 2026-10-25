@@ -197,9 +197,19 @@ describe("heroSlideSchema", () => {
     ).toBe(false);
   });
 
-  it("requires alt text and a button label", () => {
-    expect(heroSlideSchema.safeParse({ ...productSlide, imageAlt: " " }).success).toBe(false);
+  it("requires a button label", () => {
     expect(heroSlideSchema.safeParse({ ...productSlide, ctaLabel: "" }).success).toBe(false);
+  });
+
+  it("screen-reader text is optional — blank normalizes to null (the action fills it)", () => {
+    for (const imageAlt of ["", " ", null, undefined]) {
+      const parsed = heroSlideSchema.safeParse({ ...productSlide, imageAlt });
+      expect(parsed.success).toBe(true);
+      expect(parsed.success && parsed.data.imageAlt).toBe(null);
+    }
+    const kept = heroSlideSchema.safeParse({ ...productSlide, imageAlt: "  Kunafa tray  " });
+    expect(kept.success && kept.data.imageAlt).toBe("Kunafa tray");
+    expect(heroSlideSchema.safeParse({ ...productSlide, imageAlt: "x".repeat(301) }).success).toBe(false);
   });
 
   it("accepts a same-day window and refuses an end before the start", () => {

@@ -46,6 +46,22 @@ export const HERO_RESUME_AFTER_MS = 8000;
  */
 export const HERO_IMAGE_SIZE = { width: 2400, height: 1020 } as const;
 
+/** Screen-reader text stored when a slide has no description, headline or product. */
+export const HERO_DEFAULT_ALT = "Ali Baba banner";
+
+/**
+ * The screen-reader text a slide is saved with: the admin's own description,
+ * else the headline, else the linked product's name, else HERO_DEFAULT_ALT.
+ * (`HeroSlide.imageAlt` is NOT NULL; the form leaves it optional.)
+ */
+export function heroImageAlt(slide: {
+  imageAlt: string | null;
+  title: string | null;
+  productName: string | null;
+}): string {
+  return slide.imageAlt || slide.title || slide.productName || HERO_DEFAULT_ALT;
+}
+
 /** Overlay + control strings for the carousel (English for now). */
 export const HERO_COPY = {
   regionLabel: "Featured",

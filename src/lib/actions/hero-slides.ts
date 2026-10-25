@@ -27,6 +27,7 @@ import { requireAdmin } from "@/lib/session";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
 import { deleteUploadedFiles } from "@/lib/uploadthing-server";
 import { storeDateEnd, storeDateStart } from "@/lib/timezone";
+import { heroImageAlt } from "@/lib/hero-slides";
 import {
   HERO_MAX_SLIDES,
   heroSlideReorderSchema,
@@ -83,8 +84,26 @@ function revalidateHeroSlides() {
   revalidatePath("/admin/hero");
 }
 
+/**
+ * The screen-reader text to store (the column is NOT NULL, the form field is
+ * optional): the admin's text, else the headline, else the product's name —
+ * read only when both are blank — else HERO_DEFAULT_ALT.
+ */
+async function resolveImageAlt(data: HeroSlideData): Promise<string> {
+  const productName =
+    !data.imageAlt && !data.title && data.productId
+      ? ((
+          await prisma.product.findUnique({
+            where: { id: data.productId },
+            select: { name: true },
+          })
+        )?.name ?? null)
+      : null;
+  return heroImageAlt({ imageAlt: data.imageAlt, title: data.title, productName });
+}
+
 /** Parsed form data → the columns written. Cairo day keys become exact instants. */
-function toColumns(data: HeroSlideData) {
+function toColumns(data: HeroSlideData, imageAlt: string) {
   return {
     eyebrow: data.eyebrow,
     title: data.title,
@@ -93,7 +112,7 @@ function toColumns(data: HeroSlideData) {
     showPrice: data.showPrice,
     imageDesktop: data.imageDesktop,
     imageMobile: data.imageMobile,
-    imageAlt: data.imageAlt,
+    imageAlt,
     productId: data.productId,
     linkUrl: data.linkUrl,
     isActive: data.isActive,
@@ -179,6 +198,8 @@ export async function createHeroSlide(input: unknown): Promise<CreateHeroSlideRe
   if (!parsed.success) return { success: false, error: firstIssue(parsed.error) };
 
   try {
+    const columns = toColumns(parsed.data, await resolveImageAlt(parsed.data));
+
     // 3 statements: the soft cap, the next position, the insert. The cap is
     // advisory — two racing creates can land a 13th row, which is harmless
     // (the storefront's `take` is the hard bound).
@@ -190,7 +211,7 @@ export async function createHeroSlide(input: unknown): Promise<CreateHeroSlideRe
       const last = await tx.heroSlide.aggregate({ _max: { order: true } });
       const created = await tx.heroSlide.create({
         // `isActive` is always explicit — the column defaults to false.
-        data: { ...toColumns(parsed.data), order: (last._max.order ?? 0) + 1 },
+        data: { ...columns, order: (last._max.order ?? 0) + 1 },
         select: { id: true },
       });
       return created.id;
@@ -225,9 +246,10 @@ export async function updateHeroSlide(
 
   const parsed = heroSlideSchema.safeParse(input);
   if (!parsed.success) return { success: false, error: firstIssue(parsed.error) };
-  const columns = toColumns(parsed.data);
 
   try {
+    const columns = toColumns(parsed.data, await resolveImageAlt(parsed.data));
+
     // Images captured BEFORE the write, so a replaced/cleared file can be
     // purged from the bucket once the update commits.
     const before = await prisma.heroSlide.findUnique({
