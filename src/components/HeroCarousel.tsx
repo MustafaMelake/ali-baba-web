@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import useEmblaCarousel from "embla-carousel-react";
 import Fade from "embla-carousel-fade";
-import Image, { getImageProps } from "next/image";
+import Image from "next/image";
 import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
 import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
@@ -22,13 +22,9 @@ const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 /** The frame spans the content width (the same gutters as the classic hero image). */
 const SIZES = "(max-width: 640px) 92vw, (max-width: 1024px) 94vw, 96vw";
 
-/**
- * The frame's layout switches on its OWN width (container queries, `@2xl` =
- * 672px), not the viewport's, so the admin preview can render the phone layout
- * inside a desktop window. The phone crop's media query must agree: the frame
- * reaches 672px at a 720px viewport (720 − 2 × 24px `sm:` gutters).
- */
-const MOBILE_MEDIA = "(max-width: 719px)";
+// The frame's overlay switches on its OWN width (container queries, `@2xl` =
+// 672px), not the viewport's, so the admin preview can render the phone layout
+// inside a desktop window.
 
 // ── Tab visibility (autoplay pauses in a background tab) ─────────────────────
 
@@ -74,11 +70,10 @@ function isKeyboardFocus(target: EventTarget): boolean {
 // ── Media ────────────────────────────────────────────────────────────────────
 
 /**
- * One slide's image. Slide 0 is the LCP element: preloaded when there's a
- * single crop; with an art-directed phone crop the LCP image differs per
- * viewport, so it's fetched eagerly at high priority instead (Next's docs: no
- * `preload` when the LCP candidate depends on the viewport). Every other slide
- * stays lazy until the carousel `requested` it — see HeroCarousel.
+ * One slide's image — the same wide image on every screen size (the designed
+ * banner carries its own text; `HeroSlide.imageMobile` is no longer used).
+ * Slide 0 is the LCP element and is preloaded. Every other slide stays lazy
+ * until the carousel `requested` it — see HeroCarousel.
  *
  * `onSettled(index)` fires once the image has loaded OR failed. A failed image
  * must not freeze autoplay; its frame shows the stone background instead. The
@@ -107,45 +102,18 @@ function SlideMedia({
     [settle],
   );
 
-  if (!slide.imageMobile) {
-    return (
-      <Image
-        ref={settleIfComplete}
-        src={slide.imageDesktop}
-        alt={slide.imageAlt}
-        fill
-        sizes={SIZES}
-        className="object-cover"
-        {...(isFirst ? { preload: true } : { loading })}
-        onLoad={settle}
-        onError={settle}
-      />
-    );
-  }
-
-  const common = {
-    alt: slide.imageAlt,
-    fill: true,
-    sizes: SIZES,
-    loading,
-    fetchPriority: isFirst ? ("high" as const) : undefined,
-  };
-  const { props: mobile } = getImageProps({ ...common, src: slide.imageMobile });
-  const { props: desktop } = getImageProps({ ...common, src: slide.imageDesktop });
-
   return (
-    <picture>
-      <source media={MOBILE_MEDIA} srcSet={mobile.srcSet} sizes={mobile.sizes} />
-      {/* Art direction: getImageProps feeds a plain <img> inside the <picture>. */}
-      <img
-        {...desktop}
-        alt={slide.imageAlt}
-        className="object-cover"
-        onLoad={settle}
-        onError={settle}
-        ref={settleIfComplete}
-      />
-    </picture>
+    <Image
+      ref={settleIfComplete}
+      src={slide.imageDesktop}
+      alt={slide.imageAlt}
+      fill
+      sizes={SIZES}
+      className="object-cover"
+      {...(isFirst ? { preload: true } : { loading })}
+      onLoad={settle}
+      onError={settle}
+    />
   );
 }
 
@@ -157,6 +125,10 @@ function SlideMedia({
  * slide: the CTA, stretched over the whole frame so the banner is clickable
  * without a second, duplicate link. Logical properties only (start/end, ps/pe,
  * text-start) — RTL later is a `dir` flip, not a rewrite.
+ *
+ * Below `@2xl` (a phone) only a small CTA shows, at the bottom start corner:
+ * the wide banner is ~150px tall there, and its designed image carries the
+ * words, so the copy, the price pill and the scrim are desktop-only.
  */
 function SlideOverlay({
   slide,
@@ -173,42 +145,43 @@ function SlideOverlay({
   const name = slide.title ?? slide.imageAlt;
 
   const ctaClass = cn(
-    "group mt-6 inline-flex items-center gap-3 rounded-full bg-white px-6 py-3 text-xs font-semibold uppercase tracking-widest text-stone-900 shadow-sm transition-colors duration-200 hover:bg-stone-100 @2xl:mt-8 @2xl:px-7 @2xl:py-3.5 @2xl:text-sm",
+    "group inline-flex max-w-[60%] items-center gap-1.5 rounded-full bg-white px-3.5 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-stone-900 shadow-sm transition-colors duration-200 hover:bg-stone-100",
+    "@2xl:mt-8 @2xl:max-w-none @2xl:gap-3 @2xl:px-7 @2xl:py-3.5 @2xl:text-sm",
     "focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white",
   );
   const ctaContent = (
     <>
-      {slide.ctaLabel}
-      <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1 rtl:-scale-x-100 rtl:group-hover:-translate-x-1" />
+      <span className="truncate">{slide.ctaLabel}</span>
+      <ArrowRight className="h-3 w-3 shrink-0 transition-transform duration-200 group-hover:translate-x-1 rtl:-scale-x-100 rtl:group-hover:-translate-x-1 @2xl:h-4 @2xl:w-4" />
     </>
   );
 
   return (
     <>
       {hasCopy && (
-        // Subtle scrim on the start side (bottom on phones) for legibility.
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent @2xl:bg-gradient-to-r @2xl:from-black/55 @2xl:via-black/15 rtl:@2xl:bg-gradient-to-l" />
+        // Subtle scrim on the start side for legibility — desktop only.
+        <div className="pointer-events-none absolute inset-0 hidden bg-gradient-to-r from-black/55 via-black/15 to-transparent @2xl:block rtl:bg-gradient-to-l" />
       )}
 
-      <div className="absolute inset-0 flex flex-col items-start justify-end ps-6 pe-6 pb-20 text-start @2xl:max-w-[58%] @2xl:justify-center @2xl:ps-14 @2xl:pe-0 @2xl:pb-0 @5xl:ps-20">
+      <div className="absolute inset-0 flex flex-col items-start justify-end ps-4 pb-3 text-start @2xl:max-w-[58%] @2xl:justify-center @2xl:ps-14 @2xl:pe-0 @2xl:pb-0 @5xl:ps-20">
         {slide.eyebrow && (
-          <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.3em] text-white/80 @2xl:mb-4">
+          <p className="mb-4 hidden text-[11px] font-semibold uppercase tracking-[0.3em] text-white/80 @2xl:block">
             {slide.eyebrow}
           </p>
         )}
         {slide.title && (
-          <h2 className="font-serif text-[clamp(1.75rem,5.2cqw,4.5rem)] font-medium leading-[1.05] tracking-tight text-white">
+          <h2 className="hidden font-serif text-[clamp(1.75rem,5.2cqw,4.5rem)] font-medium leading-[1.05] tracking-tight text-white @2xl:block">
             {slide.title}
           </h2>
         )}
         {slide.subtitle && (
-          <p className="mt-3 max-w-md text-sm leading-relaxed text-white/85 @2xl:mt-5 @2xl:text-base">
+          <p className="mt-5 hidden max-w-md text-base leading-relaxed text-white/85 @2xl:block">
             {slide.subtitle}
           </p>
         )}
 
         {slide.price && (
-          <p className="mt-5 inline-flex items-baseline gap-2 rounded-full bg-white/95 px-4 py-1.5 text-sm text-stone-900 shadow-sm @2xl:mt-6">
+          <p className="mt-6 hidden items-baseline gap-2 rounded-full bg-white/95 px-4 py-1.5 text-sm text-stone-900 shadow-sm @2xl:inline-flex">
             {slide.price.isFrom && <span className="text-stone-500">{HERO_COPY.priceFrom}</span>}
             {/* Storefront money: the bare figure + the mark as its own element,
                 like every other storefront price (formatEGP is the admin format). */}
@@ -224,7 +197,7 @@ function SlideOverlay({
           </p>
         )}
         {!slide.price && pricePlaceholder && (
-          <p className="mt-5 inline-flex items-baseline gap-2 rounded-full bg-white/95 px-4 py-1.5 text-sm text-stone-500 shadow-sm @2xl:mt-6">
+          <p className="mt-6 hidden items-baseline gap-2 rounded-full bg-white/95 px-4 py-1.5 text-sm text-stone-500 shadow-sm @2xl:inline-flex">
             {pricePlaceholder}
           </p>
         )}
@@ -275,11 +248,13 @@ export function HeroSlideFrame({
   );
 }
 
-/** 4:5 on phones, ≈2.35:1 (47:20) once the carousel container reaches `@2xl`. */
-const FRAME_ASPECT = "aspect-[4/5] @2xl:aspect-[47/20]";
+/** One wide banner on every screen size: ≈2.35:1 (47:20), like the upload. */
+export const HERO_FRAME_ASPECT = "aspect-[47/20]";
 
 const controlButton =
-  "pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/85 text-stone-800 shadow-sm backdrop-blur transition-colors hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white";
+  "pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/85 text-stone-800 shadow-sm backdrop-blur transition-colors hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white @2xl:h-9 @2xl:w-9";
+/** Prev/next are desktop-only — a phone swipes or taps a dot. */
+const arrowButton = cn(controlButton, "hidden @2xl:inline-flex");
 
 // ── Carousel ─────────────────────────────────────────────────────────────────
 
@@ -428,7 +403,7 @@ export default function HeroCarousel({
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setKeyboardFocus(false);
       }}
     >
-      <div ref={emblaRef} className="overflow-hidden rounded-[1.75rem] md:rounded-[2.5rem]">
+      <div ref={emblaRef} className="overflow-hidden rounded-2xl @2xl:rounded-[2.5rem]">
         <div
           className="flex touch-pan-y"
           aria-live={isCarousel ? (rotating ? "off" : "polite") : undefined}
@@ -444,7 +419,7 @@ export default function HeroCarousel({
             >
               <HeroSlideFrame
                 slide={slide}
-                className={FRAME_ASPECT}
+                className={HERO_FRAME_ASPECT}
                 media={
                   <SlideMedia
                     slide={slide}
@@ -461,8 +436,9 @@ export default function HeroCarousel({
 
       {isCarousel && (
         <>
-          {/* Dots — centered at the bottom. */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-5 z-10 flex justify-center gap-2">
+          {/* Dots — centered on desktop; on a phone they sit at the bottom
+              end, beside Pause, so the start corner stays the CTA's. */}
+          <div className="pointer-events-none absolute end-12 bottom-[1.375rem] z-10 flex gap-1.5 @2xl:inset-x-0 @2xl:bottom-5 @2xl:justify-center @2xl:gap-2">
             {slides.map((slide, i) => (
               <button
                 key={slide.id}
@@ -471,16 +447,17 @@ export default function HeroCarousel({
                 aria-label={HERO_COPY.goToSlide(i + 1)}
                 aria-current={i === selected ? "true" : undefined}
                 className={cn(
-                  "pointer-events-auto h-2 rounded-full transition-all duration-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white",
-                  i === selected ? "w-6 bg-white" : "w-2 bg-white/55 hover:bg-white/80",
+                  // A faint dark ring keeps white dots readable on a bright photo.
+                  "pointer-events-auto h-1.5 rounded-full ring-1 ring-black/15 transition-all duration-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white @2xl:h-2",
+                  i === selected ? "w-4 bg-white @2xl:w-6" : "w-1.5 bg-white/70 hover:bg-white/90 @2xl:w-2",
                 )}
               />
             ))}
           </div>
 
-          {/* Prev · pause/play · next — the bottom end corner. */}
-          <div className="pointer-events-none absolute bottom-3 end-3 z-10 flex gap-1.5 md:bottom-4 md:end-5">
-            <button type="button" onClick={goPrev} aria-label={HERO_COPY.previous} className={controlButton}>
+          {/* Prev · pause/play · next — the bottom end corner (Pause only on a phone). */}
+          <div className="pointer-events-none absolute bottom-3 end-3 z-10 flex gap-1.5 @2xl:bottom-4 @2xl:end-5">
+            <button type="button" onClick={goPrev} aria-label={HERO_COPY.previous} className={arrowButton}>
               <ChevronLeft className="h-4 w-4 rtl:-scale-x-100" />
             </button>
             <button
@@ -489,9 +466,9 @@ export default function HeroCarousel({
               aria-label={paused ? HERO_COPY.play : HERO_COPY.pause}
               className={controlButton}
             >
-              {paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+              {paused ? <Play className="h-3.5 w-3.5 @2xl:h-4 @2xl:w-4" /> : <Pause className="h-3.5 w-3.5 @2xl:h-4 @2xl:w-4" />}
             </button>
-            <button type="button" onClick={goNext} aria-label={HERO_COPY.next} className={controlButton}>
+            <button type="button" onClick={goNext} aria-label={HERO_COPY.next} className={arrowButton}>
               <ChevronRight className="h-4 w-4 rtl:-scale-x-100" />
             </button>
           </div>

@@ -40,13 +40,11 @@ export const HERO_AUTOPLAY_MS = 3000;
 export const HERO_RESUME_AFTER_MS = 8000;
 
 /**
- * Recommended upload sizes, matching the frame's aspect ratios: desktop
- * ≈ 2.35:1, mobile 4:5. Shown under each admin dropzone.
+ * The recommended upload, matching the frame's one aspect ratio (≈ 2.35:1, on
+ * every screen size). Shown under the admin dropzone. (`HeroSlide.imageMobile`
+ * — the old 4:5 phone crop — is kept in the schema but no longer read.)
  */
-export const HERO_IMAGE_SIZES = {
-  desktop: { width: 2400, height: 1020 },
-  mobile: { width: 1080, height: 1350 },
-} as const;
+export const HERO_IMAGE_SIZE = { width: 2400, height: 1020 } as const;
 
 /** Overlay + control strings for the carousel (English for now). */
 export const HERO_COPY = {
@@ -153,7 +151,6 @@ export function heroSlideStorefrontSelect(now: Date) {
     ctaLabel: true,
     showPrice: true,
     imageDesktop: true,
-    imageMobile: true,
     imageAlt: true,
     linkUrl: true,
     productId: true,
@@ -216,8 +213,8 @@ export type HeroSlideView = {
   subtitle: string | null;
   ctaLabel: string;
   href: string;
+  /** The one banner image, used on every screen size. */
   imageDesktop: string;
-  imageMobile: string | null;
   imageAlt: string;
   price: HeroSlidePrice | null;
 };
@@ -269,7 +266,6 @@ export function toHeroSlideView(
     ctaLabel: row.ctaLabel,
     href,
     imageDesktop: row.imageDesktop,
-    imageMobile: row.imageMobile,
     imageAlt: row.imageAlt,
     price,
   };

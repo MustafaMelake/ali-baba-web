@@ -20,12 +20,12 @@ import {
   updateHeroSlide,
   type HeroProductOption,
 } from "@/lib/actions/hero-slides";
-import { HERO_COPY, HERO_IMAGE_SIZES, type HeroSlideView } from "@/lib/hero-slides";
+import { HERO_COPY, HERO_IMAGE_SIZE, type HeroSlideView } from "@/lib/hero-slides";
 import { fieldErrors, heroSlideSchema, type HeroSlideInput } from "@/lib/validators";
 import { useDialogFocus } from "@/lib/use-dialog-focus";
 import { UploadDropzone } from "@/lib/uploadthing";
 import { cn } from "@/lib/utils";
-import { HeroSlideFrame } from "@/components/HeroCarousel";
+import { HERO_FRAME_ASPECT, HeroSlideFrame } from "@/components/HeroCarousel";
 import type { HeroSlideAdminView } from "./HeroSlidesManager";
 
 const inputClasses =
@@ -173,6 +173,8 @@ export default function HeroSlideModal({
   const [subtitle, setSubtitle] = useState("");
   const [ctaLabel, setCtaLabel] = useState(DEFAULT_CTA);
   const [imageDesktop, setImageDesktop] = useState("");
+  // The retired 4:5 phone crop: no longer uploaded or shown, but an existing
+  // value is sent back unchanged so saving neither clears it nor purges it.
   const [imageMobile, setImageMobile] = useState("");
   const [imageAlt, setImageAlt] = useState("");
   const [startsOn, setStartsOn] = useState("");
@@ -253,7 +255,6 @@ export default function HeroSlideModal({
     ctaLabel: ctaLabel.trim() || DEFAULT_CTA,
     href: "#",
     imageDesktop,
-    imageMobile: imageMobile || null,
     imageAlt,
     price: null,
   };
@@ -282,8 +283,6 @@ export default function HeroSlideModal({
     });
   }
 
-  const desktop = HERO_IMAGE_SIZES.desktop;
-  const mobile = HERO_IMAGE_SIZES.mobile;
 
   return (
     <AnimatePresence>
@@ -359,21 +358,16 @@ export default function HeroSlideModal({
                       slide={preview}
                       linked={false}
                       pricePlaceholder={pricePlaceholder}
-                      className="aspect-[4/5] w-[min(100%,18rem)] shrink-0 rounded-2xl"
+                      className={cn(HERO_FRAME_ASPECT, "w-[min(100%,18rem)] shrink-0 rounded-xl")}
                       media={
-                        (imageMobile || imageDesktop) && (
+                        imageDesktop && (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={imageMobile || imageDesktop}
-                            alt=""
-                            className="absolute inset-0 h-full w-full object-cover"
-                          />
+                          <img src={imageDesktop} alt="" className="absolute inset-0 h-full w-full object-cover" />
                         )
                       }
                     />
                     <p className="hidden pb-1 text-xs leading-relaxed text-stone-400 sm:block">
-                      Desktop above, phone here.
-                      {!imageMobile && imageDesktop && " No phone image yet — the desktop image is cropped to fit."}
+                      Desktop above, phone here — the same image, with only the button on top.
                       {pricePlaceholder && " The price pill shows the product's live starting price on the storefront."}
                     </p>
                   </div>
@@ -575,28 +569,16 @@ export default function HeroSlideModal({
                   </p>
                 </div>
 
-                {/* Images */}
-                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-                  <div className="space-y-1">
-                    <ImageField
-                      label="Desktop image"
-                      value={imageDesktop}
-                      onChange={setImageDesktop}
-                      aspect="aspect-[47/20]"
-                      hint={`Recommended ${desktop.width} × ${desktop.height} px (max 8MB). Keep text and important details away from the edges.`}
-                    />
-                    <FieldError message={errors.imageDesktop} />
-                  </div>
-                  <div className="space-y-1">
-                    <ImageField
-                      label="Phone image (optional)"
-                      value={imageMobile}
-                      onChange={setImageMobile}
-                      aspect="aspect-[4/5]"
-                      hint={`Recommended ${mobile.width} × ${mobile.height} px (max 8MB). Keep text and important details away from the edges.`}
-                    />
-                    <FieldError message={errors.imageMobile} />
-                  </div>
+                {/* Image — one wide banner for every screen size */}
+                <div className="space-y-1">
+                  <ImageField
+                    label="Image"
+                    value={imageDesktop}
+                    onChange={setImageDesktop}
+                    aspect={HERO_FRAME_ASPECT}
+                    hint={`${HERO_IMAGE_SIZE.width} × ${HERO_IMAGE_SIZE.height} px — the same image is used on phones, so keep text large and away from the edges.`}
+                  />
+                  <FieldError message={errors.imageDesktop} />
                 </div>
 
                 <div className="space-y-1.5">

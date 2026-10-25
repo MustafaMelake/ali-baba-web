@@ -104,7 +104,6 @@ const slide = (n: number): HeroSlideView => ({
   ctaLabel: "Order now",
   href: `/product/p${n}`,
   imageDesktop: `/hero-${n}.jpeg`,
-  imageMobile: null,
   imageAlt: `Banner ${n}`,
   price: null,
 });
