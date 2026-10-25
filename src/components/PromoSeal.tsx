@@ -20,7 +20,8 @@ export interface PromoSealProps {
 
 /**
  * Display-only client leaf under the server-side <PromoWidget />: a circular
- * crimson seal the Hero pins to the top-left of its typography block. It
+ * crimson seal the Hero pins to the top-left of its typography block (or, when
+ * hero slides are live, beside the brand-intro band under the carousel). It
  * exists purely for the framer-motion entrance — all data is fetched, priced
  * and serialized by its Server Component parent. The seal is advisory
  * marketing, not the pricing contract: actual prices are still resolved

@@ -145,15 +145,12 @@ export default async function ShopHomePage() {
           cached HTML stays identical for every visitor. */}
       <SeasonalOverlay />
 
-      {/* Live slides → the banner carousel IS the hero. None → the classic
-          hero, with the strongest live promotion as its top-left seal (a
-          self-contained Server Component handed in as a slot; renders nothing
-          when no promotion is live). The seal is skipped — not just hidden —
-          over the carousel, so its query doesn't run for nothing. */}
-      <Hero
-        slides={heroSlides}
-        promo={heroSlides.length === 0 ? <PromoWidget /> : undefined}
-      />
+      {/* Live slides → the banner carousel, then a compact brand-intro band
+          beneath it. None → the classic hero. Either way the strongest live
+          promotion is the seal (a self-contained Server Component handed in
+          as a slot; renders nothing when no promotion is live): top-left of
+          the classic hero, beside the band's headline under the carousel. */}
+      <Hero slides={heroSlides} promo={<PromoWidget />} />
 
       <CategorySlider categories={sliderCategories} />
 
