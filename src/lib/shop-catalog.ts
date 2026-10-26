@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import type { Prisma } from "@/generated/prisma/client";
 import type { ShopProduct } from "@/components/ProductCard";
 import { prisma } from "@/lib/prisma";
@@ -103,3 +104,13 @@ export async function getShopFacets(): Promise<ShopFacets> {
   ]);
   return { categories, collections };
 }
+
+/**
+ * `getShopFacets` behind a 60s cache, for the public count action: it runs on
+ * every pause in the sheet, from anyone, so it shouldn't add two queries per
+ * call. The facets only drop unknown slugs, and 60s is the staleness the ISR
+ * listings that open the sheet already carry. The /shop page reads uncached.
+ */
+export const getCachedShopFacets = unstable_cache(getShopFacets, ["shop-facets"], {
+  revalidate: 60,
+});

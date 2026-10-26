@@ -1,6 +1,6 @@
 "use server";
 
-import { countShopListing, getShopFacets } from "@/lib/shop-catalog";
+import { countShopListing, getCachedShopFacets } from "@/lib/shop-catalog";
 import { parseShopFilters, resolveShopFilters } from "@/lib/shop-filters";
 
 /**
@@ -13,6 +13,11 @@ import { parseShopFilters, resolveShopFilters } from "@/lib/shop-filters";
  * is the one /shop reads (`toShopQuery`), parsed by the same soft schema and
  * counted by the same engine against ONE `now`, so the count always equals
  * the grid the sheet's Apply lands on. Nothing here writes or revalidates.
+ *
+ * Cost: a price-dependent query (sale / min / max / price sort) prices every
+ * matching listable product per call. The sheet debounces (300 ms), the facets
+ * read is cached, and the scan is bounded by the catalog size — the accepted
+ * in-memory limit in DOMAIN_MAP §3.6.
  */
 
 export type CountShopProductsResult =
@@ -22,7 +27,7 @@ export type CountShopProductsResult =
 export async function countShopProducts(query: unknown): Promise<CountShopProductsResult> {
   try {
     const now = new Date();
-    const filters = resolveShopFilters(parseShopFilters(query), await getShopFacets());
+    const filters = resolveShopFilters(parseShopFilters(query), await getCachedShopFacets());
     return { success: true, count: await countShopListing(filters, now) };
   } catch (err) {
     console.error("countShopProducts failed:", err);

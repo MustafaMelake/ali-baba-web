@@ -21,6 +21,8 @@ import { prisma } from "@/lib/prisma";
 import type { PrismaClient } from "@/generated/prisma/client";
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockDeep<PrismaClient>() }));
+// Outside Next there is no incremental cache: run the cached facets read directly.
+vi.mock("next/cache", () => ({ unstable_cache: <T>(fn: T) => fn }));
 
 import { countShopListing, getShopListing, shopProductWhere } from "@/lib/shop-catalog";
 import { countShopProducts } from "@/lib/actions/shop";

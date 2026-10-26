@@ -148,8 +148,10 @@ export default function FilterSortButton({
     setOpen(true);
   }
 
+  // Cancels a pending count and voids one already in flight.
   function close() {
     window.clearTimeout(timer.current);
+    latest.current++;
     setOpen(false);
   }
 
@@ -165,6 +167,7 @@ export default function FilterSortButton({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       window.clearTimeout(timer.current);
+      latest.current++;
       setOpen(false);
     };
     document.addEventListener("keydown", onKey);

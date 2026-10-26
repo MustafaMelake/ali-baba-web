@@ -30,7 +30,8 @@ export const DEFAULT_SHOP_FILTERS: ShopFilters = {
 /** Any input (searchParams, the sheet's query, junk) → valid filters. Never throws. */
 export function parseShopFilters(raw: unknown): ShopFilters {
   const parsed = shopFiltersSchema.safeParse(raw ?? {});
-  return parsed.success ? parsed.data : DEFAULT_SHOP_FILTERS;
+  // A fresh copy — never hand out the shared default's `category` array.
+  return parsed.success ? parsed.data : { ...DEFAULT_SHOP_FILTERS, category: [] };
 }
 
 /** A category or collection as the filter UI needs it. */
