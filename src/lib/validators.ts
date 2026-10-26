@@ -392,6 +392,67 @@ export const searchQuerySchema = z
       ),
   );
 
+// ─── /shop filters & sort ────────────────────────────────────────────────────
+
+/** The /shop orderings. `featured` (the default): featured first, then newest. */
+export const SHOP_SORTS = ["featured", "newest", "price-asc", "price-desc"] as const;
+export type ShopSort = (typeof SHOP_SORTS)[number];
+/** Highest price bound accepted (EGP) — past it, a bound filters nothing. */
+export const SHOP_PRICE_MAX = 1_000_000;
+/** Category slugs read from one URL — bounds the `in` list. */
+export const SHOP_MAX_CATEGORIES = 20;
+
+// A URL param may repeat (?sort=a&sort=b): a scalar reads the first value.
+const firstParam = (v: unknown) => (Array.isArray(v) ? v[0] : v);
+const isSlugParam = (v: unknown): v is string =>
+  typeof v === "string" && v.length <= 100 && slugRegex.test(v);
+
+// "150" or "99.5" → a non-negative EGP amount; anything else → absent.
+const shopPriceParam = z
+  .preprocess(
+    (v) => {
+      const first = firstParam(v);
+      return typeof first === "number" ? String(first) : first;
+    },
+    z
+      .string()
+      .trim()
+      .regex(/^\d{1,7}(?:\.\d{1,2})?$/)
+      .transform(Number)
+      .pipe(z.number().max(SHOP_PRICE_MAX))
+      .optional(),
+  )
+  .catch(undefined);
+
+/**
+ * The /shop query (`searchParams`, or the same record from the filter sheet's
+ * live count). Every field fails SOFT: a junk value is dropped and the rest
+ * still apply — a hand-edited URL is never a 500. Repeated `category` params
+ * are the multi-select; `min > max` is read as the swapped range. `page` is
+ * not here: it keeps the strict `parsePageParam` (malformed → 404).
+ */
+export const shopFiltersSchema = z
+  .object({
+    category: z
+      .preprocess(
+        (v) => (v === undefined ? [] : Array.isArray(v) ? v : [v]),
+        z
+          .array(z.unknown())
+          .transform((list) => [...new Set(list.filter(isSlugParam))].slice(0, SHOP_MAX_CATEGORIES)),
+      )
+      .catch([]),
+    collection: z.preprocess(firstParam, z.string().refine(isSlugParam).optional()).catch(undefined),
+    sale: z.unknown().optional().transform((v) => firstParam(v) === "1"),
+    min: shopPriceParam,
+    max: shopPriceParam,
+    sort: z.preprocess(firstParam, z.enum(SHOP_SORTS)).catch("featured"),
+  })
+  .transform((f) =>
+    f.min !== undefined && f.max !== undefined && f.min > f.max ? { ...f, min: f.max, max: f.min } : f,
+  );
+
+export type ShopFilters = z.output<typeof shopFiltersSchema>;
+
 // ─── Marketing calendar ──────────────────────────────────────────────────────
 
 /** Longest reminder accepted — past a year it's a typo, not a season. */

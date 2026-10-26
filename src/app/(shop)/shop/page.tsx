@@ -1,83 +1,73 @@
-import { prisma } from "@/lib/prisma";
-import type { ShopProduct } from "@/components/ProductCard";
-import { LISTABLE_PRODUCT } from "@/lib/catalog";
-import { productCardInclude, toProductCard } from "@/lib/product-cards";
 import { notFound } from "next/navigation";
 import Pagination from "@/components/Pagination";
 import {
   isPageOutOfRange,
   pageInfo,
-  pageSlice,
   parsePageParam,
   STOREFRONT_PAGE_SIZE,
 } from "@/lib/pagination";
-import ShopClient from "./ShopClient";
+import { getShopFacets, getShopListing } from "@/lib/shop-catalog";
+import { parseShopFilters, resolveShopFilters, toShopQuery } from "@/lib/shop-filters";
+import ShopClient, { type ShopHeading } from "./ShopClient";
 
-// No per-user data here anymore (wishlist hearts hydrate client-side from the
-// shared store), but this route still renders per-request BY DESIGN: the
-// server-side category filter reads `searchParams`, which is request-time
-// data — an ISR `revalidate` would be inert. The win over the old version is
-// the dropped session + wishlist queries on every anonymous hit.
+// No per-user data here (wishlist hearts hydrate client-side from the shared
+// store), but this route renders per-request BY DESIGN: filters & sort read
+// `searchParams`, which is request-time data — an ISR `revalidate` would be
+// inert. It is the ONE filtered surface: the ISR listings (category,
+// collection, new arrivals) link here with their context preset instead of
+// reading the query string themselves.
 
 export default async function ShopPage({
   searchParams,
 }: {
-  // Next 15 streams searchParams as a Promise — the active filter is the slug.
-  searchParams: Promise<{ category?: string; page?: string | string[] }>;
+  // Next 15+ streams searchParams as a Promise. Repeated keys arrive as arrays.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   // One instant drives every promotion filter + evaluation this request.
   const now = new Date();
+  const params = await searchParams;
 
-  // Active category slug from the URL (?category=slug). Absent ⇒ "All Products".
-  const { category: categoryParam, page: pageParam } = await searchParams;
-  // ?page= — /shop is already dynamic (it reads searchParams), so query-string
-  // pagination costs nothing here. A bad page → 404, never a silent clamp.
-  const page = parsePageParam(pageParam);
+  // ?page= stays strict: a bad page → 404, never a silent clamp. Every other
+  // param is soft — junk is ignored, never a 500.
+  const page = parsePageParam(params.page);
   if (page === null) notFound();
 
-  // Server-side category filtering: narrow by slug when one is present, so
-  // the grid only ever ships the products it renders (LCP scales with the
-  // page size, not the whole catalog).
-  const productWhere = {
-    ...LISTABLE_PRODUCT,
-    ...(categoryParam ? { category: { slug: categoryParam } } : {}),
-  };
+  // Unknown categories and missing/draft collections are dropped, so a stale
+  // link widens the result instead of emptying it.
+  const facets = await getShopFacets();
+  const filters = resolveShopFilters(parseShopFilters(params), facets);
 
-  // Run all queries concurrently.
-  const [categories, total, products] = await Promise.all([
-    prisma.category.findMany({
-      orderBy: { name: "asc" },
-      select: { name: true, slug: true },
-    }),
-    prisma.product.count({ where: productWhere }),
-    prisma.product.findMany({
-      where: productWhere,
-      // The shared card include: category name + the four-level live
-      // promotion hierarchy; [0] = the starting (lowest) available variant.
-      include: productCardInclude(now),
-      // `id` tie-break: products sharing a createdAt keep a stable page order.
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      ...pageSlice(page, STOREFRONT_PAGE_SIZE),
-    }),
-  ]);
+  // Priced through the one card chain (product-cards.ts); sale / price bounds
+  // and the price sorts run on the FINAL discounted price (shop-catalog.ts).
+  const { cards, total } = await getShopListing(filters, page, now);
 
   const info = pageInfo(page, STOREFRONT_PAGE_SIZE, total);
   if (isPageOutOfRange(info)) notFound();
 
-  // Priced through the one card chain (product-cards.ts) — the math lives
-  // only in discounts.ts.
-  const mappedProducts: ShopProduct[] = products.map((product) => toProductCard(product, now));
+  // Exactly one category, or exactly one collection → it names the page.
+  const onlyCategory =
+    filters.category.length === 1 && !filters.collection
+      ? facets.categories.find((c) => c.slug === filters.category[0])
+      : undefined;
+  const onlyCollection =
+    filters.collection && filters.category.length === 0
+      ? facets.collections.find((c) => c.slug === filters.collection)
+      : undefined;
+  const heading: ShopHeading | null = onlyCategory
+    ? { kind: "Category", name: onlyCategory.name, href: `/category/${onlyCategory.slug}` }
+    : onlyCollection
+      ? { kind: "Collection", name: onlyCollection.name, href: `/collections/${onlyCollection.slug}` }
+      : null;
 
   return (
     <ShopClient
-      categories={categories}
-      products={mappedProducts}
+      facets={facets}
+      filters={filters}
+      products={cards}
       total={total}
+      heading={heading}
       pagination={
-        <Pagination
-          info={info}
-          mode={{ kind: "query", base: "/shop", params: { category: categoryParam } }}
-        />
+        <Pagination info={info} mode={{ kind: "query", base: "/shop", params: toShopQuery(filters) }} />
       }
     />
   );

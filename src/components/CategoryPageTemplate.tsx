@@ -2,7 +2,10 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import ProductCard, { type ShopProduct } from "@/components/ProductCard";
 import GridDensityToggle from "@/components/GridDensityToggle";
+import FilterSortButton from "@/components/shop/FilterSortButton";
 import { PRODUCT_GRID_PHONE } from "@/lib/grid-density";
+import type { ShopFacets } from "@/lib/shop-filters";
+import type { ShopFilters } from "@/lib/validators";
 import { cn } from "@/lib/utils";
 
 export interface CategoryPageTemplateProps {
@@ -24,6 +27,12 @@ export interface CategoryPageTemplateProps {
   beforeGrid?: React.ReactNode;
   /** The page control for a multi-page listing (a <Pagination />), rendered under the grid. */
   pagination?: React.ReactNode;
+  /**
+   * "Filter & sort": the sheet's lists, and this page's context preset (e.g.
+   * its category). Applying navigates to /shop — this ISR page never reads
+   * the query string itself.
+   */
+  filter: { facets: ShopFacets; preset: ShopFilters };
 }
 
 /**
@@ -47,6 +56,7 @@ export default function CategoryPageTemplate({
   gridHeading,
   beforeGrid,
   pagination,
+  filter,
 }: CategoryPageTemplateProps) {
   return (
     // Navbar/Footer (and the fixed-navbar clearance) come from the (shop)
@@ -100,24 +110,23 @@ export default function CategoryPageTemplate({
         aria-label={gridHeading ?? `${title} products`}
         className="mx-auto max-w-screen-xl px-6 py-14 md:px-10 md:py-20 lg:px-14"
       >
-        {/* Grid heading + the phone grid-density switch. Without a heading the
-            row holds only the (phone-only) switch, so it hides from sm up. */}
+        {/* Grid heading + the phone grid-density switch + Filter & sort */}
         {(gridHeading || cards.length > 0) && (
-          <div
-            className={cn(
-              "mb-8 flex items-end justify-between gap-4 md:mb-10",
-              !gridHeading && "sm:hidden",
-            )}
-          >
-            {gridHeading ? (
-              <h2 className="text-start font-serif text-3xl font-medium tracking-tight text-stone-900 md:text-4xl">
-                {gridHeading}
-              </h2>
-            ) : (
-              <span />
-            )}
-            {cards.length > 0 && <GridDensityToggle className="shrink-0" />}
-          </div>
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-x-4 gap-y-3 md:mb-10">
+          {gridHeading ? (
+            <h2 className="text-start font-serif text-3xl font-medium tracking-tight text-stone-900 md:text-4xl">
+              {gridHeading}
+            </h2>
+          ) : (
+            <span />
+          )}
+          {cards.length > 0 && (
+            <div className="flex items-center gap-2">
+              <GridDensityToggle />
+              <FilterSortButton facets={filter.facets} initial={filter.preset} />
+            </div>
+          )}
+        </div>
         )}
         {cards.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">

@@ -9,6 +9,7 @@ import { useCartStore } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { formatMoney } from "@/lib/utils";
 import { percentOff } from "@/lib/discounts";
+import { isOnSale } from "@/lib/shop-filters";
 import WishlistButton from "@/components/products/WishlistButton";
 
 export interface ShopProduct {
@@ -39,9 +40,9 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
   // Detail route lives at (shop)/product/[slug] → /product/<slug>
   const href = `/product/${product.slug}`;
 
-  // A promotion is on when the "was" price is strictly above the selling price.
-  const onSale =
-    product.compareAtPrice != null && product.compareAtPrice > product.price;
+  // A promotion is on when the "was" price is strictly above the selling price
+  // — the same rule /shop's "On sale only" filter uses.
+  const onSale = isOnSale(product);
   // Rounded down — the badge never advertises more than the real markdown.
   const discountPercent = onSale ? percentOff(product.price, product.compareAtPrice!) : 0;
 

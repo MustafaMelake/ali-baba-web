@@ -8,6 +8,8 @@ import CollectionCard from "@/components/CollectionCard";
 import { LISTABLE_PRODUCT } from "@/lib/catalog";
 import { getCategoryCollectionCards } from "@/lib/collections";
 import { productCardInclude, toProductCard } from "@/lib/product-cards";
+import { getShopFacets } from "@/lib/shop-catalog";
+import { DEFAULT_SHOP_FILTERS } from "@/lib/shop-filters";
 import {
   isPageOutOfRange,
   pageHref,
@@ -66,7 +68,7 @@ export async function CategoryListing({ slug, page }: { slug: string; page: numb
   // LISTABLE before paginating, so the page count is exact.
   const where = { ...LISTABLE_PRODUCT, categoryId: category.id };
 
-  const [total, rows, collectionCards] = await Promise.all([
+  const [total, rows, collectionCards, facets] = await Promise.all([
     prisma.product.count({ where }),
     prisma.product.findMany({
       where,
@@ -77,6 +79,8 @@ export async function CategoryListing({ slug, page }: { slug: string; page: numb
     }),
     // The category's collections ride on page 1 only.
     page === 1 ? getCategoryCollectionCards(category.id) : Promise.resolve([]),
+    // The Filter & sort sheet's lists (it filters on /shop, preset to this category).
+    getShopFacets(),
   ]);
 
   const info = pageInfo(page, STOREFRONT_PAGE_SIZE, total);
@@ -113,6 +117,7 @@ export async function CategoryListing({ slug, page }: { slug: string; page: numb
       pagination={
         <Pagination info={info} mode={{ kind: "path", base: basePath(category.slug) }} />
       }
+      filter={{ facets, preset: { ...DEFAULT_SHOP_FILTERS, category: [category.slug] } }}
     />
   );
 }

@@ -96,57 +96,13 @@ Each row is mapped to the `CategorySlider` card shape: a presentational two-digi
 
 ### 1.2 Standard Categories & the Catalog Directory — `BUILT`
 
-A standard category (`isFeatured === false`) doesn't get a slider slot, but it **does** get a landing page through the same dynamic route as featured ones (§1.3). It also surfaces in the **`/shop` catalog directory** ([`page.tsx`](../src/app/(shop)/shop/page.tsx) + [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx)), which uses **Server-Side Filtering driven by `searchParams`**:
+A standard category (`isFeatured === false`) doesn't get a slider slot, but it **does** get a landing page through the same dynamic route as featured ones (§1.3). It also surfaces in the **`/shop` catalog directory** ([`page.tsx`](../src/app/(shop)/shop/page.tsx) + [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx)), which is the platform's **one filtered surface** (filters & sort, §1.7) and reads them server-side from `searchParams`.
 
-```ts
-export default async function ShopPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ category?: string }>; // ?category=slug from the URL
-}) {
-  const now = new Date();   // one instant drives every promotion filter this request
-  const { category: categoryParam } = await searchParams;
+Each request resolves the filters, reads only the products they match, and prices each card's **starting (lowest-base-price) variant through the Discount Engine** before it reaches the client (§2.5). The card already carries its discounted `price` and a struck-through `compareAtPrice`.
 
-  const [categories, products, wishlistedIds] = await Promise.all([
-    prisma.category.findMany({ orderBy: { name: "asc" }, select: { name: true, slug: true } }),
-    prisma.product.findMany({
-      where: {
-        ...LISTABLE_PRODUCT, // src/lib/catalog.ts — product AND ≥1 variant available
-        // Narrow by slug only when ?category= is present.
-        ...(categoryParam ? { category: { slug: categoryParam } } : {}),
-      },
-      include: {
-        category: { select: { name: true, promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
-        promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
-        variants: { where: { isAvailable: true }, orderBy: { price: "asc" }, include: { promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS } } },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    getWishlistedProductIds(),
-  ]);
-  // ...
-}
-```
+There is **no client-side `.filter()` over a fully-loaded product array.** `/shop` and `/shop?category=bakery` are two different server reads, so the grid only ships the rows it renders.
 
-This fetches **every** SHOP category name (for the filter pills) and **only the products matching the active filter**, in two queries, once, server-side. Each product's **starting (lowest-base-price) variant is priced through the Discount Engine** before it reaches the client — see §2.5 — so the card already carries its discounted `price` and a struck-through `compareAtPrice`.
-
-There is **no client-side `.filter()` over a fully-loaded product array.** `/shop` (no query) and `/shop?category=bakery` are two genuinely different Postgres reads, so the grid only ever ships the rows it renders.
-
-**The animated, app-like UX is preserved without a client-side filter** — [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx) wraps the navigation in `useTransition` and pushes the new URL with `scroll: false`:
-
-```ts
-const [isPending, startTransition] = useTransition();
-
-function selectCategory(slug: string | null) {
-  const params = new URLSearchParams(searchParams.toString());
-  if (slug) params.set("category", slug);
-  else params.delete("category");
-  const query = params.toString();
-  startTransition(() => {
-    router.push(query ? `/shop?${query}` : "/shop", { scroll: false });
-  });
-}
-```
+**The animated, app-like UX is preserved without a client-side filter.** Every filter change in [`ShopClient.tsx`](../src/app/(shop)/shop/ShopClient.tsx) (a category pill, a removed chip, the sheet's Apply) is one `navigate(shopHref(filters))`: `router.push(href, { scroll: false })` inside `useTransition`.
 
 - **`useTransition`** marks the navigation as non-blocking — clicking a pill doesn't freeze the UI while the server re-renders `ShopPage` with the new `searchParams`; `isPending` dims the grid for visual feedback during the round-trip instead of a hard loading state.
 - **`router.push(..., { scroll: false })`** stops Next.js from jumping the viewport back to the top on every filter click, so the sticky filter bar stays where the customer clicked it.
@@ -229,7 +185,7 @@ Both have a 1-hour safety TTL. There is **no fallback by design**: an empty tabl
 | Entry point | Source | Shows |
 |---|---|---|
 | Homepage slider | `Category.findMany({ isFeatured: true })`, `sliderOrder` asc | Every featured category, with a live category-promo badge |
-| `/shop` | `Category` (all) + `Product` (available, narrowed by `?category=slug`, `?page=`) | Discount-priced catalog, **server-filtered** per request |
+| `/shop` | `Category` (all) + active `Collection`s + `Product` (listable, narrowed by `?category=` (multi), `?collection=`, `?sale=1`, `?min=`/`?max=`, sorted by `?sort=`, `?page=`) | Discount-priced catalog, **server-filtered** per request — the only filtered surface (§1.7) |
 | `/category/[slug]` (+ `/page/[n]`) | `getCategoryBySlug(slug)` → products by `categoryId`, 24 per page | **Any** category's landing page (featured or standard), one route; its active collections on page 1 |
 | `/new-arrivals` (+ `/page/[n]`) | `Product` (every listable, newest first, 24 per page) + on page 1 `Category` (listable, each with its 4 newest products) | "Latest Arrivals" + a preview of every category (ISR 60) |
 | `/collections` (+ `/page/[n]`), `/collections/[slug]` (+ `/page/[n]`) | `Collection` (active, admin order) → members in curated order | The collections index and each collection's page (ISR 60, §1.3a) |
@@ -266,6 +222,16 @@ Every product grid (`/shop`, category, collection, `/new-arrivals`, `/wishlist`)
 - **Why no React state:** the cached ISR HTML is identical for every visitor, so the choice can't be server-rendered. It lives on `<html data-grid="1|2">`. `GRID_DENSITY_SCRIPT` ([`grid-density.ts`](../src/lib/grid-density.ts)) runs inline in the root layout's `<head>` and copies the saved choice from `localStorage` (`ali-baba-grid-density`) before the first paint. The column count comes from CSS reading that attribute, so there's no flash and no layout shift. No attribute (first visit, blocked storage) means 2-up. The toggle only calls `setGridDensity`, which sets the attribute, saves the choice (try/catch) and notifies `useSyncExternalStore` for `aria-pressed`.
 - **CSS:** two custom variants in `globals.css`, both stopping at `sm`: `grid-1up:` (the visitor chose one per row) and `grid-2up:` (a card inside a `[data-product-grid]` in the default 2-up). Each grid starts from `PRODUCT_GRID_PHONE` and adds its own `sm:`/`lg:` columns.
 - **Compact card in 2-up:** the tagline and "Discover" are hidden, the name is 16px and clamped to two lines, the sale badge is smaller, and the price stays full size with `tabular-nums`. The name link is stretched over the whole info block (`::after`), so the entire card is one tap target in every density. The 40px heart gets a 44px hit area. Measured at 360/390/430px: no overflow, no tap target under 44px, CLS 0 on load.
+
+### 1.7 Filters & sort — `BUILT` (on `/shop` only)
+
+`/shop` takes `category` (a slug; repeat it for several), `collection` (one slug), `sale=1`, `min` / `max` (EGP, on the final price) and `sort` = `featured` (default: featured first, then newest) | `newest` | `price-asc` | `price-desc`. Plus `?page=` as before.
+
+- **Why only on /shop.** The category, collection and new-arrivals listings (and their `/page/[n]`) are ISR. Reading `searchParams` there would make them dynamic, undoing the caching fix (frontend.md caching table). `/shop` is already dynamic. The listings instead carry the same **"Filter & sort" button** ([`FilterSortButton.tsx`](../src/components/shop/FilterSortButton.tsx)) as a client island that **never reads searchParams**. It opens with the page's context preset (that category / that collection / `sort=newest`), and Apply navigates to `/shop` with it, e.g. `/shop?category=oriental-sweets&sale=1`. The build table still shows them `●`.
+- **Validation** ([`validators.ts`](../src/lib/validators.ts) `shopFiltersSchema`, read through `parseShopFilters`). Every field fails *soft*: junk is dropped and the rest applies, so a hand-edited URL never returns a 500. `min > max` is read as the swapped range. Unknown category slugs and missing/draft collections are dropped by `resolveShopFilters`, so a stale link widens the result instead of emptying it. `page` stays strict (malformed or out of range → 404). Every URL builder (`shopHref`) omits defaults and **never emits `page`**, so changing any filter starts on page 1.
+- **Pricing** ([`shop-catalog.ts`](../src/lib/shop-catalog.ts) + [`shop-filters.ts`](../src/lib/shop-filters.ts)). There are two paths with one `where` and one card mapper. When nothing depends on a price (no sale/min/max, sort featured or newest), Postgres orders, counts and paginates. Otherwise every matching listable product is priced through `toProductCard` (four promotion levels, the request's **one `now`**). Sale / min / max and the price sorts then run on the **final discounted starting price**, the number the card shows (a 20%-off 120 EGP cake sorts as 96), and only then is the result sliced into pages of 24. "On sale" is the card's own strikethrough rule (`isOnSale`, shared with `ProductCard`). Ties fall back to newest. Scale limit: DOMAIN_MAP §3.6.
+- **The sheet.** A bottom sheet on phones and a side panel from `md`, with `useDialogFocus`, Escape to close and a scroll lock. It holds sort radios, an "On sale only" switch, min/max inputs, category checkboxes and a collection radio group ("Any collection"; `?collection=` is single-valued). It edits a local draft. Each edit asks the public `countShopProducts` action ([`actions/shop.ts`](../src/lib/actions/shop.ts), debounced 300 ms, a newer request supersedes an older answer) for the live count, shown on Apply ("Show 12 creations"). On `/shop` the first count is the page's own total. Clear all resets the draft.
+- **On /shop.** Active filters render as removable chips (plus "Clear all"). With exactly one category or one collection, its name becomes the heading with a "Back to <name>" link to its own page. A filtered empty result shows "Clear filters", which keeps the sort.
 
 ---
 
@@ -738,7 +704,7 @@ Note the deliberate type split: **money columns are `Decimal`** (like every pric
 | **INP** | `IntersectionObserver` for the menu scroll-spy instead of a `scroll` handler | `MenuClient.tsx` |
 | **CLS / INP** | The seasonal intro mounts client-side after hydration as a `fixed`, `pointer-events-none` layer (no layout shift, never intercepts input); its particles animate only `transform`/`opacity` with no iteration boundary while on screen — 0 main-thread style passes as it plays (§1.5) | `SeasonalOverlay.tsx`, `SeasonScene.tsx`, `globals.css` |
 | **INP** | Every mutation (wishlist toggle, add-to-cart, cart sync) runs with optimistic local state — UI responds before the round-trip; the DB cart sync is backgrounded via a record-then-confirm `pendingOps` ledger (§5.1), not awaited | wishlist, `ProductPurchasePanel`, `cart-store.ts` |
-| **INP** | `/shop` category filtering is server-side (`?category=` narrows the Prisma query); `useTransition` + `router.push(..., { scroll: false })` keep the pill click non-blocking and scroll-stable | `ShopClient.tsx` |
+| **INP** | `/shop` filtering is server-side (the URL narrows the Prisma query; price filters/sorts run on the server after pricing); `useTransition` + `router.push(..., { scroll: false })` keep a pill, chip or Apply non-blocking and scroll-stable; the sheet's live count is debounced 300 ms | `ShopClient.tsx`, `FilterSortButton.tsx` |
 | **TTFB** | React `cache()` dedupes the per-request category lookup across `generateMetadata` + page — one Postgres round-trip, not two | `/category/[slug]` |
 | **TTFB / caching** | `/menu` is ISR (`revalidate = 3600`) + `revalidatePath("/menu")` on admin edits; the footer's two queries are `unstable_cache`d behind the `"footer-links"` / `"footer-collections"` tags. The homepage is **ISR (`revalidate = 60`)** — admin mutations bust it directly (`revalidatePath("/")`, promotions via `revalidatePath("/", "layout")`), so the 60s window only bounds pure time-based promo liveness | `menu/page.tsx`, `Footer.tsx`, `(shop)/page.tsx` |
 | **Bundle size** | Embla Carousel (~6 KB) instead of a heavier carousel; Zustand (~1 KB) for cart state; the discount resolver is pure TS with no runtime deps; the footer ships zero JS (Server Component; the newsletter input is the only client island) | `CategorySlider.tsx`, `cart-store.ts`, `discounts.ts`, `Footer.tsx` |

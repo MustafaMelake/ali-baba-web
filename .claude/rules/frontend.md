@@ -61,7 +61,7 @@ page by moving it between them without a reason that outlives the diff:**
 | Surface | Mode | Why |
 |---|---|---|
 | `/` (homepage — hero slides, slider, locations, FAQs), `/category/[slug]` (+ `/page/[n]`), `/product/[slug]`, `/new-arrivals` (+ `/page/[n]`), `/collections` (+ `/page/[n]`), `/collections/[slug]` (+ `/page/[n]`), `/forgot-password`, `/cart` (shell only — the cart renders client-side) | `export const revalidate = 60` (ISR) | No per-request input, no per-user data → cacheable. This is the perf win the wishlist store exists to protect. |
-| `/shop` | **No export** — dynamic by nature | It `await`s `searchParams` for the server-side category filter, which is request-time data. A `revalidate` here would be **inert**, not wrong; don't add one to "make it consistent." |
+| `/shop` | **No export** — dynamic by nature | It `await`s `searchParams` for the server-side filters & sort, which are request-time data. A `revalidate` here would be **inert**, not wrong; don't add one to "make it consistent." |
 | `/my-orders`, `/wishlist`, `/account/change-password`, `/admin/**` | `export const dynamic = "force-dynamic"` | Genuinely per-user/per-role server-rendered data with no client-hydration path. |
 
 **A dynamic-segment ISR route also needs `generateStaticParams`.** `revalidate = 60` alone does **not** make `/product/[slug]`, `/category/[slug]`, `/collections/[slug]` or any `/page/[n]` cacheable. With no `generateStaticParams`, Next server-renders a dynamic segment on every request (`ƒ` in the build table; production showed `Cache-Control: private, no-cache, no-store` and a MISS on every hit). Each of these routes exports `generateStaticParams() { return []; }`. Nothing is pre-rendered at build, and each URL renders on its first visit, then serves from the cache (`●`). Leave `dynamicParams` at its default so unknown slugs still reach `notFound()`; that 404 is cached for the window too, which is why create actions bust their new path. `next dev` renders everything per request, so confirm a caching change with `npx next build` (the route table) — never `npm run build`, which runs `migrate deploy`.
@@ -100,6 +100,20 @@ Any Client Component reading `useSearchParams()` **must** sit under a `<Suspense
 Filters, search, and pagination live in the **URL** (`searchParams`), not client state — bookmarkable, shareable, refresh-proof, and one targeted server query per request. Drive changes with `router.push(pathname + "?" + params, { scroll: false })` inside `useTransition`. Debounce free-text search (~400ms) before it touches the URL. Validate any enum param (e.g. `status`) against the real enum server-side — never trust the raw string in a `where`.
 
 **Pagination — one helper, two URL shapes.** Every list paginates through `src/lib/pagination.ts` + the server `<Pagination>` component (24 per storefront page, 25 per admin page; plain links, `rel=prev/next`, a canonical per page). **ISR routes paginate by PATH segment** (`/category/[slug]/page/[n]`, `/new-arrivals/page/[n]`, `/collections/page/[n]`, `/collections/[slug]/page/[n]`) — `?page=` would read `searchParams` and turn them dynamic, undoing the caching table above. Already-dynamic routes use `?page=` (`/shop`, `/wishlist`, `/my-orders`, admin lists). Page 1 is only ever the bare URL (`/page/1` permanently redirects; `?page=1` is never emitted). A malformed or out-of-range page is `notFound()` — never silently clamped. Changing a filter drops `page`. The admin orders board keeps its cursor pagination.
+
+**Storefront filters & sort live on `/shop` only.** The category, collection and
+new-arrivals listings are ISR. Reading `searchParams` there (for a sort, a price range,
+"on sale") would make them dynamic and undo the caching table above, and a
+`/page/[n]`-style path segment per filter combination would multiply cached pages. `/shop`
+is already dynamic, so it is the one filtered surface (`src/lib/shop-filters.ts` +
+`shop-catalog.ts`; params parsed by the soft `shopFiltersSchema`, where junk is ignored and
+never a 500). The ISR listings carry the same "Filter & sort" button
+(`src/components/shop/FilterSortButton.tsx`) as an island that **never reads
+searchParams**: it opens with the page's context preset and Apply navigates to `/shop`
+(`shopHref`, e.g. `/shop?category=oriental-sweets&sale=1`). **Don't add a sort or filter
+param to an ISR listing.** Send the shopper to `/shop` instead. Price filters and sorts run
+on the final discounted price after pricing every match (a deliberate in-memory scan;
+scale limit in DOMAIN_MAP §3.6).
 
 ## Motion & portals
 

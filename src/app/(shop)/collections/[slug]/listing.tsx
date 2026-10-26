@@ -7,6 +7,8 @@ import Pagination from "@/components/Pagination";
 import { LISTABLE_PRODUCT } from "@/lib/catalog";
 import { ACTIVE_COLLECTION } from "@/lib/collections";
 import { productCardInclude, toProductCard } from "@/lib/product-cards";
+import { getShopFacets } from "@/lib/shop-catalog";
+import { DEFAULT_SHOP_FILTERS } from "@/lib/shop-filters";
 import {
   isPageOutOfRange,
   pageHref,
@@ -62,7 +64,7 @@ export async function CollectionListing({ slug, page }: { slug: string; page: nu
   // LISTABLE before paginating, so the page count is exact.
   const where = { collectionId: collection.id, product: LISTABLE_PRODUCT };
 
-  const [total, rows] = await Promise.all([
+  const [total, rows, facets] = await Promise.all([
     prisma.collectionProduct.count({ where }),
     prisma.collectionProduct.findMany({
       where,
@@ -71,6 +73,8 @@ export async function CollectionListing({ slug, page }: { slug: string; page: nu
       ...pageSlice(page, STOREFRONT_PAGE_SIZE),
       select: { product: { include: productCardInclude(now) } },
     }),
+    // The Filter & sort sheet's lists (it filters on /shop, preset to this collection).
+    getShopFacets(),
   ]);
 
   const info = pageInfo(page, STOREFRONT_PAGE_SIZE, total);
@@ -87,6 +91,7 @@ export async function CollectionListing({ slug, page }: { slug: string; page: nu
       pagination={
         <Pagination info={info} mode={{ kind: "path", base: basePath(collection.slug) }} />
       }
+      filter={{ facets, preset: { ...DEFAULT_SHOP_FILTERS, collection: collection.slug } }}
     />
   );
 }

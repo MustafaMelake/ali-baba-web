@@ -14,6 +14,7 @@ import {
   pageWindow,
   parsePageParam,
   STOREFRONT_PAGE_SIZE,
+  type PageHrefMode,
 } from "@/lib/pagination";
 
 describe("parsePageParam", () => {
@@ -67,6 +68,11 @@ describe("pageHref", () => {
     expect(pageHref(mode, 1)).toBe("/shop?category=cakes");
     expect(pageHref(mode, 3)).toBe("/shop?category=cakes&page=3");
     expect(pageHref({ kind: "query", base: "/wishlist" }, 1)).toBe("/wishlist");
+  });
+
+  it("query mode: an array param repeats its key (the /shop multi-category filter)", () => {
+    const mode: PageHrefMode = { kind: "query", base: "/shop", params: { category: ["cakes", "sweets"], sale: "1" } };
+    expect(pageHref(mode, 2)).toBe("/shop?category=cakes&category=sweets&sale=1&page=2");
   });
 });
 

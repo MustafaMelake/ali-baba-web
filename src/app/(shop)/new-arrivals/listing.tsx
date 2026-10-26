@@ -17,6 +17,9 @@ import { PRODUCT_GRID_PHONE } from "@/lib/grid-density";
 import { cn } from "@/lib/utils";
 import { productCardInclude, toProductCard } from "@/lib/product-cards";
 import { LISTABLE_PRODUCT } from "@/lib/catalog";
+import { getShopFacets } from "@/lib/shop-catalog";
+import { DEFAULT_SHOP_FILTERS } from "@/lib/shop-filters";
+import FilterSortButton from "@/components/shop/FilterSortButton";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // New Arrivals listing, shared by /new-arrivals (page 1) and
@@ -48,7 +51,7 @@ export async function NewArrivalsListing({ page }: { page: number }) {
   const now = new Date();
 
   // Both reads are independent — one parallel batch, no waterfall.
-  const [total, latestRows, categoryRows] = await Promise.all([
+  const [total, latestRows, categoryRows, facets] = await Promise.all([
     prisma.product.count({ where: LISTABLE_PRODUCT }),
     prisma.product.findMany({
       where: LISTABLE_PRODUCT,
@@ -83,6 +86,8 @@ prisma.category.findMany({
         _count: { select: { products: { where: LISTABLE_PRODUCT } } },
       },
     }),
+    // The Filter & sort sheet's lists (it filters on /shop, preset to newest).
+    getShopFacets(),
   ]);
 
   const info = pageInfo(page, STOREFRONT_PAGE_SIZE, total);
@@ -195,9 +200,14 @@ prisma.category.findMany({
                   </p>
                 </div>
 
-                {/* One switch drives every grid on the page (a page-wide attribute). */}
-                <div className="mb-6 flex justify-end sm:hidden">
+                {/* One density switch drives every grid on the page (a page-wide
+                    attribute); Filter & sort hands off to /shop, newest first. */}
+                <div className="mb-6 flex items-center justify-end gap-2">
                   <GridDensityToggle />
+                  <FilterSortButton
+                    facets={facets}
+                    initial={{ ...DEFAULT_SHOP_FILTERS, sort: "newest" }}
+                  />
                 </div>
 
                 <div

@@ -56,7 +56,7 @@ export function pageSlice(page: number, pageSize: number): { skip: number; take:
 
 export type PageHrefMode =
   | { kind: "path"; base: string }
-  | { kind: "query"; base: string; params?: Record<string, string | undefined> };
+  | { kind: "query"; base: string; params?: Record<string, string | string[] | undefined> };
 
 /** The URL of page `page`. Page 1 is always the bare base (one canonical URL). */
 export function pageHref(mode: PageHrefMode, page: number): string {
@@ -64,7 +64,8 @@ export function pageHref(mode: PageHrefMode, page: number): string {
 
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(mode.params ?? {})) {
-    if (value) search.set(key, value);
+    // An array repeats the key (/shop?category=a&category=b).
+    for (const v of Array.isArray(value) ? value : [value]) if (v) search.append(key, v);
   }
   if (page > 1) search.set("page", String(page));
   const qs = search.toString();
