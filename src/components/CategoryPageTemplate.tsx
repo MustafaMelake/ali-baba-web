@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import ProductCard, { type ShopProduct } from "@/components/ProductCard";
+import GridDensityToggle from "@/components/GridDensityToggle";
+import { PRODUCT_GRID_PHONE } from "@/lib/grid-density";
+import { cn } from "@/lib/utils";
 
 export interface CategoryPageTemplateProps {
   /** Display title, e.g. "Oriental Sweets" or a collection's name. */
@@ -97,10 +100,24 @@ export default function CategoryPageTemplate({
         aria-label={gridHeading ?? `${title} products`}
         className="mx-auto max-w-screen-xl px-6 py-14 md:px-10 md:py-20 lg:px-14"
       >
-        {gridHeading && (
-          <h2 className="mb-10 text-start font-serif text-3xl font-medium tracking-tight text-stone-900 md:text-4xl">
-            {gridHeading}
-          </h2>
+        {/* Grid heading + the phone grid-density switch. Without a heading the
+            row holds only the (phone-only) switch, so it hides from sm up. */}
+        {(gridHeading || cards.length > 0) && (
+          <div
+            className={cn(
+              "mb-8 flex items-end justify-between gap-4 md:mb-10",
+              !gridHeading && "sm:hidden",
+            )}
+          >
+            {gridHeading ? (
+              <h2 className="text-start font-serif text-3xl font-medium tracking-tight text-stone-900 md:text-4xl">
+                {gridHeading}
+              </h2>
+            ) : (
+              <span />
+            )}
+            {cards.length > 0 && <GridDensityToggle className="shrink-0" />}
+          </div>
         )}
         {cards.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -119,7 +136,10 @@ export default function CategoryPageTemplate({
             </Link>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div
+            data-product-grid
+            className={cn("grid sm:grid-cols-2 sm:gap-x-6 sm:gap-y-12 lg:grid-cols-3 xl:grid-cols-4", PRODUCT_GRID_PHONE)}
+          >
             {cards.map((card) => (
               <ProductCard key={card.id} product={card} />
             ))}

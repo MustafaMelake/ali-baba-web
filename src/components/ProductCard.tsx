@@ -79,17 +79,23 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
           <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-60 group-hover:opacity-90 transition-opacity duration-500" />
         </Link>
 
-        {/* Sale badge — only while a markdown of at least 1% is live */}
+        {/* Sale badge — only while a markdown of at least 1% is live (smaller in
+            the phone 2-up grid) */}
         {discountPercent > 0 && (
-          <div className="absolute top-3 left-3 z-10 rounded-full bg-gradient-to-br from-red-600 via-red-700 to-red-800 px-2.5 py-1 font-sans text-[11px] font-bold tracking-wide text-white tabular-nums shadow-[0_6px_16px_-6px_rgba(153,27,27,0.7)] ring-1 ring-red-900/20">
+          <div className="absolute top-3 start-3 z-10 rounded-full bg-gradient-to-br from-red-600 via-red-700 to-red-800 px-2.5 py-1 font-sans text-[11px] font-bold grid-2up:top-2 grid-2up:start-2 grid-2up:px-2 grid-2up:py-0.5 grid-2up:text-[10px] tracking-wide text-white tabular-nums shadow-[0_6px_16px_-6px_rgba(153,27,27,0.7)] ring-1 ring-red-900/20">
             -{discountPercent}%
           </div>
         )}
 
         {/* Wishlist heart — sibling over the image, always visible. State
             hydrates client-side from the shared wishlist store. */}
-        <div className="absolute top-3 right-3 z-10">
-          <WishlistButton variant="icon" productId={product.id} />
+        <div className="absolute top-3 end-3 z-10 grid-2up:top-2 grid-2up:end-2">
+          {/* The 40px heart gets a 44px hit area (phone tap target). */}
+          <WishlistButton
+            variant="icon"
+            productId={product.id}
+            className="relative after:absolute after:-inset-0.5"
+          />
         </div>
 
         {/* Quick-add — sibling over the image, slides up on hover */}
@@ -124,30 +130,34 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
         </button>
       </div>
 
-      {/* ─── Info ──────────────────────────────────────── */}
-      <div className="pt-4 flex flex-col flex-1">
-        <p className="font-sans text-[10px] font-semibold uppercase tracking-[0.22em] text-stone-400 mb-2">
+      {/* ─── Info ──────────────────────────────────────────
+          The name link is stretched over the whole info block (::after), so
+          the entire card is one tap target in every density. The phone 2-up
+          grid (grid-2up:) drops the tagline and "Discover" and clamps the name
+          to two lines; the price stays full size. */}
+      <div className="relative pt-4 flex flex-col flex-1 grid-2up:pt-3">
+        <p className="font-sans text-[10px] font-semibold uppercase tracking-[0.22em] text-stone-400 mb-2 grid-2up:mb-1 grid-2up:truncate">
           {product.category}
         </p>
 
-        <Link href={href} className="block">
-          <h3 className="font-serif text-xl md:text-[1.4rem] font-medium leading-snug tracking-tight text-stone-900 transition-colors duration-200 group-hover:text-primary">
+        <Link href={href} className="block after:absolute after:inset-0 grid-2up:mb-2.5">
+          <h3 className="font-serif text-xl md:text-[1.4rem] font-medium leading-snug tracking-tight text-stone-900 transition-colors duration-200 group-hover:text-primary grid-2up:text-base grid-2up:line-clamp-2">
             {product.name}
           </h3>
         </Link>
 
         {product.tagline && (
-          <p className="mt-1.5 font-sans text-[13px] text-stone-400 leading-relaxed line-clamp-1">
+          <p className="mt-1.5 font-sans text-[13px] text-stone-400 leading-relaxed line-clamp-1 grid-2up:hidden">
             {product.tagline}
           </p>
         )}
 
         {/* Price + Discover */}
-        <div className="mt-4 flex items-center justify-between border-t border-stone-100 pt-3.5">
-          <span className="flex items-baseline gap-2">
+        <div className="mt-4 flex items-center justify-between border-t border-stone-100 pt-3.5 grid-2up:mt-auto grid-2up:pt-2.5">
+          <span className="flex flex-wrap items-baseline gap-x-2">
             <span className="font-serif text-lg font-medium tabular-nums text-stone-900">
               {formatMoney(product.price)}
-              <span className="ml-1 font-sans text-xs font-normal text-stone-400">
+              <span className="ms-1 font-sans text-xs font-normal text-stone-400">
                 ج.م
               </span>
             </span>
@@ -163,7 +173,7 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
 
           <Link
             href={href}
-            className="group/disc flex items-center gap-1 font-sans text-[11px] font-semibold uppercase tracking-[0.15em] text-stone-500 hover:text-primary transition-colors"
+            className="group/disc relative z-10 -my-3.5 flex items-center gap-1 py-3.5 font-sans text-[11px] font-semibold uppercase tracking-[0.15em] text-stone-500 hover:text-primary transition-colors grid-2up:hidden"
           >
             Discover
             <ArrowUpRight className="h-3.5 w-3.5 transition-transform duration-200 group-hover/disc:translate-x-0.5 group-hover/disc:-translate-y-0.5" />

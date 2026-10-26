@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Cormorant_Garamond, Geist } from "next/font/google"; // استخدمنا خط فاخر للـ Serif
 import { Toaster } from "sonner";
+import { GRID_DENSITY_SCRIPT } from "@/lib/grid-density";
 import CartSyncProvider from "@/components/providers/CartSyncProvider";
 import PasswordChangeGate from "@/components/providers/PasswordChangeGate";
 import "./globals.css";
@@ -48,7 +49,14 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${luxuryFont.variable} ${geistSans.variable} h-full antialiased scroll-smooth`}
+      // The pre-paint script below may set data-grid before React hydrates.
+      suppressHydrationWarning
     >
+      <head>
+        {/* Phone grid density (src/lib/grid-density.ts) — inline so the saved
+            choice is on <html> before the first paint: no flash, no CLS. */}
+        <script dangerouslySetInnerHTML={{ __html: GRID_DENSITY_SCRIPT }} />
+      </head>
       <body className="min-h-full flex flex-col bg-background text-foreground font-sans">
         <CartSyncProvider>{children}</CartSyncProvider>
         {/* Holds a user with an admin-reset password on /account/change-password. */}

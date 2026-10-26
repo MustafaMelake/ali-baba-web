@@ -80,6 +80,13 @@ decision — the store's docblock calls the dynamic route "the trap this store r
 Any new personalized affordance on a cached surface follows the same shape: cached
 shell, client store keyed by user, one fetch, optimistic writes.
 
+**A per-visitor *layout* preference on a cached surface goes on `<html>`, not in React.**
+The phone grid density (2-up / 1-up, `src/lib/grid-density.ts`) is the reference. An
+inline `<head>` script in the root layout copies the saved choice from `localStorage`
+onto `<html data-grid>` before first paint, and CSS variants (`grid-1up:` / `grid-2up:`)
+read it. The toggle only writes the attribute and storage. A preference that changes
+layout must never wait for hydration, or it flashes and shifts.
+
 While the store's status is `loading` (or `useSession()` is `isPending`), render the
 neutral/empty affordance — see the pulse-skeleton rule in **Auth on the client** above;
 a logged-in user must not see a filled heart flash off.

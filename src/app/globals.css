@@ -5,6 +5,29 @@
 @custom-variant hover (&:hover);
 @custom-variant group-hover (.group:hover &);
 
+/*
+  Product-grid density on phones (src/lib/grid-density.ts). The saved choice
+  sits on <html data-grid="1|2"> before first paint; these variants read it so
+  the grid never waits on React. Both stop at `sm` (40rem) — tablet and desktop
+  grids are unchanged. `grid-1up:` styles a grid when the visitor picked one
+  per row; `grid-2up:` styles a card inside a [data-product-grid] in the
+  default 2-up (no attribute = 2-up).
+*/
+@custom-variant grid-1up {
+  @media (width < 40rem) {
+    :root[data-grid="1"] & {
+      @slot;
+    }
+  }
+}
+@custom-variant grid-2up {
+  @media (width < 40rem) {
+    :root:not([data-grid="1"]) [data-product-grid] & {
+      @slot;
+    }
+  }
+}
+
 :root {
   /* خلفية اللاتيه الدافئة الفاخرة للموقع بالكامل */
 

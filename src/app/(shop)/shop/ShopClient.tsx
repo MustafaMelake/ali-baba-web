@@ -4,6 +4,9 @@ import { useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import ProductCard, { type ShopProduct } from "@/components/ProductCard";
+import GridDensityToggle from "@/components/GridDensityToggle";
+import { PRODUCT_GRID_PHONE } from "@/lib/grid-density";
+import { cn } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
@@ -135,21 +138,25 @@ export default function ShopClient({ categories, products, total, pagination }: 
 
       {/* ─── Product grid ──────────────────────────────────── */}
       <div className="max-w-screen-xl mx-auto px-6 md:px-10 lg:px-14 py-12 md:py-16">
-        {/* Result count */}
-        <motion.p
-          key={activeName}
-          className="font-sans text-xs uppercase tracking-[0.2em] text-stone-400 mb-8"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.4 }}
-        >
-          <span className="tabular-nums">{total}</span> {total === 1 ? "Creation" : "Creations"}
-          {activeName !== ALL && ` · ${activeName}`}
-        </motion.p>
+        {/* Result count + the phone grid-density switch */}
+        <div className="mb-8 flex items-center justify-between gap-4">
+          <motion.p
+            key={activeName}
+            className="font-sans text-xs uppercase tracking-[0.2em] text-stone-400"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4 }}
+          >
+            <span className="tabular-nums">{total}</span> {total === 1 ? "Creation" : "Creations"}
+            {activeName !== ALL && ` · ${activeName}`}
+          </motion.p>
+          <GridDensityToggle className="shrink-0" />
+        </div>
 
         <motion.div
           layout
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8"
+          data-product-grid
+          className={cn("grid sm:grid-cols-2 sm:gap-8 lg:grid-cols-3 xl:grid-cols-4", PRODUCT_GRID_PHONE)}
           // Pending dim while the server refetches — purely additive (opacity 1
           // at rest, so the resting layout is byte-identical); a CSS opacity
           // transition that never touches Framer's transform-based layout anim.

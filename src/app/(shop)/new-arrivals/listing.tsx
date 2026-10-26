@@ -12,6 +12,9 @@ import {
 import { ArrowRight, ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import ProductCard from "@/components/ProductCard";
+import GridDensityToggle from "@/components/GridDensityToggle";
+import { PRODUCT_GRID_PHONE } from "@/lib/grid-density";
+import { cn } from "@/lib/utils";
 import { productCardInclude, toProductCard } from "@/lib/product-cards";
 import { LISTABLE_PRODUCT } from "@/lib/catalog";
 
@@ -192,7 +195,15 @@ prisma.category.findMany({
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-4">
+                {/* One switch drives every grid on the page (a page-wide attribute). */}
+                <div className="mb-6 flex justify-end sm:hidden">
+                  <GridDensityToggle />
+                </div>
+
+                <div
+                  data-product-grid
+                  className={cn("grid sm:grid-cols-2 sm:gap-x-6 sm:gap-y-12 lg:grid-cols-4", PRODUCT_GRID_PHONE)}
+                >
                   {latestArrivals.map((product) => (
                     <ProductCard key={product.id} product={product} />
                   ))}
@@ -242,7 +253,10 @@ prisma.category.findMany({
                   </Link>
                 </div>
 
-                <div className="grid grid-cols-1 gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-4">
+                <div
+                  data-product-grid
+                  className={cn("grid sm:grid-cols-2 sm:gap-x-6 sm:gap-y-12 lg:grid-cols-4", PRODUCT_GRID_PHONE)}
+                >
                   {section.products.map((product) => (
                     <ProductCard key={product.id} product={product} />
                   ))}

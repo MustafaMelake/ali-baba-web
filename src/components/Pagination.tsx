@@ -35,7 +35,7 @@ export default function Pagination({
   const item =
     tone === "admin"
       ? "inline-flex h-9 min-w-9 items-center justify-center rounded-lg px-2 text-sm tabular-nums"
-      : "inline-flex h-10 min-w-10 items-center justify-center rounded-full px-3 font-sans text-sm tabular-nums";
+      : "inline-flex h-11 min-w-11 items-center justify-center rounded-full px-3 font-sans text-sm tabular-nums";
   const idle = "text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900";
   const current = tone === "admin" ? "bg-stone-900 text-white" : "bg-stone-900 text-white";
   const disabled = "pointer-events-none text-stone-300";
