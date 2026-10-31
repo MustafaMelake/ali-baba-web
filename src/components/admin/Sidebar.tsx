@@ -11,6 +11,7 @@ import {
   ShoppingBag,
   Package,
   Boxes,
+  CalendarClock,
   Tags,
   Layers,
   BadgePercent,
@@ -34,6 +35,8 @@ type NavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
+  /** Shown ONLY to MANAGERs (hidden from ADMINs) — a branch-local tool. */
+  managerOnly?: boolean;
 };
 
 /**
@@ -42,6 +45,7 @@ type NavItem = {
  */
 const NAV_ITEMS: NavItem[] = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/admin/today", label: "Today", icon: CalendarClock, managerOnly: true },
   { href: "/admin/analytics", label: "Analytics", icon: LineChart },
   { href: "/admin/orders", label: "Orders", icon: ShoppingBag },
   { href: "/admin/products", label: "Products", icon: Package },
@@ -88,7 +92,12 @@ function Brand() {
 }
 
 /** Routes a MANAGER may see — everything else is ADMIN-only. */
-const MANAGER_HREFS = new Set(["/admin", "/admin/orders", "/admin/inventory"]);
+const MANAGER_HREFS = new Set([
+  "/admin",
+  "/admin/today",
+  "/admin/orders",
+  "/admin/inventory",
+]);
 
 function NavLinks({
   role,
@@ -98,10 +107,11 @@ function NavLinks({
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  // Managers are scoped to their branch's dashboard, orders + stock; admins see all.
+  // Managers are scoped to their branch's today/orders/stock; admins see all
+  // EXCEPT the manager-only branch tools (e.g. "Today").
   const items =
     role === "ADMIN"
-      ? NAV_ITEMS
+      ? NAV_ITEMS.filter((item) => !item.managerOnly)
       : NAV_ITEMS.filter((item) => MANAGER_HREFS.has(item.href));
 
   return (
