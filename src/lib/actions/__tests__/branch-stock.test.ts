@@ -28,7 +28,12 @@ vi.mock("@/lib/session", async (importOriginal) => {
 });
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { getBranchStockIssues, setBranchStock } from "@/lib/actions/branch-stock";
+import {
+  clearSoldOutToday,
+  getBranchStockIssues,
+  markSoldOutToday,
+  setBranchStock,
+} from "@/lib/actions/branch-stock";
 import { requireDashboardAccess, type DashboardScope } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { BRANCH_STOCK_MAX_VARIANTS } from "@/lib/validators";
@@ -161,11 +166,16 @@ describe("setBranchStock — writes the branch override only", () => {
     expect(mockPrisma.productVariant.updateMany).not.toHaveBeenCalled();
   });
 
-  it("restocks with the same two statements (isAvailable: true)", async () => {
+  it("restocks with the same two statements, clearing any stale sold-out-today mark", async () => {
     const res = await setBranchStock({ variantIds: ["v1"], isAvailable: true });
 
     expect(res).toEqual({ success: true, updated: 1 });
-    expect(writes().update.data).toEqual({ isAvailable: true });
+    expect(writes().update.data).toEqual({ isAvailable: true, soldOutUntil: null });
+  });
+
+  it("switching off long-term leaves soldOutUntil untouched (it's moot anyway)", async () => {
+    await setBranchStock({ variantIds: ["v1"], isAvailable: false });
+    expect(writes().update.data).toEqual({ isAvailable: false });
   });
 
   it("revalidates the inventory console", async () => {
@@ -213,6 +223,141 @@ describe("setBranchStock — payload validation", () => {
 
     expect(res).toEqual({ success: false, error });
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// markSoldOutToday / clearSoldOutToday — MANAGER-only, self-expiring, own branch
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("markSoldOutToday / clearSoldOutToday — authorization", () => {
+  it("refuses a non-staff caller and writes nothing", async () => {
+    mockedAccess.mockRejectedValue(new Error("Forbidden"));
+
+    expect(await markSoldOutToday({ productId: "p1" })).toEqual({
+      success: false,
+      error: "Unauthorized.",
+    });
+    expect(mockPrisma.productVariant.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses an ADMIN — this is a MANAGER-only action — and writes nothing", async () => {
+    mockedAccess.mockResolvedValue(ADMIN);
+
+    expect(await markSoldOutToday({ variantId: "v1" })).toEqual({
+      success: false,
+      error: "Only branch managers can set today's stock.",
+    });
+    expect(mockPrisma.productVariant.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("markSoldOutToday — the write", () => {
+  beforeEach(() => {
+    mockedAccess.mockResolvedValue(MENOUF_MANAGER);
+    mockPrisma.productVariant.findMany.mockResolvedValue([{ id: "v1" }] as never);
+  });
+
+  it("marks EVERY available size of a product, at the manager's OWN branch, until the next Cairo midnight", async () => {
+    mockPrisma.productVariant.findMany.mockResolvedValue([{ id: "v1" }, { id: "v2" }] as never);
+
+    const res = await markSoldOutToday({ productId: "p1" });
+
+    expect(res).toEqual({ success: true, updated: 2 });
+    // Resolved to the product's AVAILABLE variants only.
+    expect(mockPrisma.productVariant.findMany).toHaveBeenCalledWith({
+      where: { productId: "p1", isAvailable: true },
+      select: { id: true },
+    });
+    const { create, update } = writes();
+    // Branch is the scope's own — nothing from the payload.
+    expect(create.data).toEqual([
+      { branchId: "branch_menouf", variantId: "v1", soldOutUntil: expect.any(Date) },
+      { branchId: "branch_menouf", variantId: "v2", soldOutUntil: expect.any(Date) },
+    ]);
+    expect(create.skipDuplicates).toBe(true);
+    expect(update.where).toEqual({ branchId: "branch_menouf", variantId: { in: ["v1", "v2"] } });
+    // A real future instant (tomorrow's Cairo midnight), never isAvailable.
+    expect(update.data.soldOutUntil).toBeInstanceOf(Date);
+    expect(update.data.soldOutUntil.getTime()).toBeGreaterThan(Date.now());
+    expect(update.data).not.toHaveProperty("isAvailable");
+  });
+
+  it("marks a single named size", async () => {
+    mockPrisma.productVariant.findMany.mockResolvedValue([{ id: "v2" }] as never);
+
+    const res = await markSoldOutToday({ variantId: "v2" });
+
+    expect(res).toEqual({ success: true, updated: 1 });
+    expect(mockPrisma.productVariant.findMany).toHaveBeenCalledWith({
+      where: { id: "v2", isAvailable: true },
+      select: { id: true },
+    });
+  });
+
+  it("reports a vanished product / unavailable size instead of writing", async () => {
+    mockPrisma.productVariant.findMany.mockResolvedValue([] as never);
+
+    expect(await markSoldOutToday({ productId: "p_gone" })).toEqual({
+      success: false,
+      error: "That product no longer exists.",
+    });
+    expect(await markSoldOutToday({ variantId: "v_gone" })).toEqual({
+      success: false,
+      error: "That item is no longer available.",
+    });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the manager page and the admin inventory view", async () => {
+    await markSoldOutToday({ productId: "p1" });
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/today");
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/inventory");
+  });
+
+  it.each([
+    ["both product and size", { productId: "p1", variantId: "v1" }],
+    ["neither", {}],
+  ])("rejects a payload naming %s before any write", async (_label, input) => {
+    const res = await markSoldOutToday(input as never);
+    expect(res).toEqual({
+      success: false,
+      error: "Choose a product or a single size, not both.",
+    });
+    expect(mockPrisma.productVariant.findMany).not.toHaveBeenCalled();
+  });
+
+  it("translates a P2003 (variant or branch deleted meanwhile) into a user-facing message", async () => {
+    mockPrisma.$transaction.mockRejectedValue(Object.assign(new Error("fk"), { code: "P2003" }));
+
+    expect(await markSoldOutToday({ productId: "p1" })).toEqual({
+      success: false,
+      error: "That branch or item no longer exists. Refresh and try again.",
+    });
+  });
+});
+
+describe("clearSoldOutToday — bring it back now", () => {
+  beforeEach(() => {
+    mockedAccess.mockResolvedValue(MENOUF_MANAGER);
+    mockPrisma.productVariant.findMany.mockResolvedValue([{ id: "v1" }, { id: "v2" }] as never);
+    mockPrisma.branchVariantAvailability.updateMany.mockResolvedValue({ count: 2 } as never);
+  });
+
+  it("clears soldOutUntil for the product's sizes at the manager's branch, with ONE statement and no insert", async () => {
+    const res = await clearSoldOutToday({ productId: "p1" });
+
+    expect(res).toEqual({ success: true, updated: 2 });
+    expect(mockPrisma.branchVariantAvailability.createMany).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    const call = mockPrisma.branchVariantAvailability.updateMany.mock.calls[0][0] as any;
+    expect(call).toEqual({
+      where: { branchId: "branch_menouf", variantId: { in: ["v1", "v2"] } },
+      data: { soldOutUntil: null },
+    });
+    // Never resurrects a head-office-off size.
+    expect(call.data).not.toHaveProperty("isAvailable");
   });
 });
 

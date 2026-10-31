@@ -737,6 +737,24 @@ export const branchStockSchema = z.object({
 export type BranchStockInput = z.infer<typeof branchStockSchema>;
 
 /**
+ * "Sold out today" (and its clear) — a MANAGER marks a whole product's sizes OR
+ * a single size sold out at THEIR branch until the next Cairo midnight. The
+ * branch is NEVER in the payload: the action always uses the manager's own live
+ * branch, so there is nothing here to spoof. Exactly one of productId /
+ * variantId must be given.
+ */
+export const soldOutTodaySchema = z
+  .object({
+    productId: z.string().trim().min(1).optional(),
+    variantId: z.string().trim().min(1).optional(),
+  })
+  .refine((v) => !!v.productId !== !!v.variantId, {
+    error: "Choose a product or a single size, not both.",
+  });
+
+export type SoldOutTodayInput = z.infer<typeof soldOutTodaySchema>;
+
+/**
  * Flattens a ZodError into a `{ "path.to.field": "message" }` map. Stable across
  * Zod minor versions (reads `.issues` directly) and handles nested paths like
  * `variant.price`.
