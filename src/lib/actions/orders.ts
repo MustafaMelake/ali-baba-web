@@ -17,7 +17,12 @@ import { getStoreSettings } from "@/lib/store-settings";
 import { prismaErrorCode } from "@/lib/action-utils";
 import { checkoutSchema, PICKUP_UNAVAILABLE_ERROR } from "@/lib/validators";
 import { orderTotals } from "@/lib/cart-summary";
-import { branchOutOfStockMessage, isAvailableAtBranch } from "@/lib/catalog";
+import {
+  branchOutOfStockMessage,
+  branchSoldOutTodayMessage,
+  isAvailableAtBranch,
+  isSoldOutToday,
+} from "@/lib/catalog";
 
 // التسعير الرسمي بيتقري من قاعدة البيانات وقت الطلب (مش ثوابت في الكود):
 // رسوم التوصيل من الـ Branch المختار (أو defaultDeliveryFee لـ "مناطق أخرى")،
@@ -165,7 +170,7 @@ export async function placeOrder(
           // (`in: []`) and is judged on the global flags alone.
           branchAvailability: {
             where: { branchId: { in: branchId ? [branchId] : [] } },
-            select: { isAvailable: true },
+            select: { isAvailable: true, soldOutUntil: true },
           },
           // Promotions that target the variant itself…
           promotions: { where: livePromotionWhere(now), select: PROMOTION_SELECT_FIELDS },
@@ -217,20 +222,28 @@ export async function placeOrder(
           );
         }
 
-        // Globally live, but switched off at the fulfilling branch by its
-        // manager — same rollback, with a message that says WHERE, so the
-        // customer knows another branch (or "Other Areas") may still have it.
+        // Globally live, but unorderable at the fulfilling branch — either
+        // switched off long-term by its manager, OR sold out there for today
+        // only. Same rollback, with a message that says WHERE (and, for the
+        // sold-out case, that it returns), so the customer knows another branch
+        // (or "Other Areas") may still have it. Judged against the single `now`.
+        const override = dbVariant.branchAvailability[0];
         if (
           branch &&
-          !isAvailableAtBranch({
-            productAvailable: dbVariant.product.isAvailable,
-            variantAvailable: dbVariant.isAvailable,
-            branchAvailable: dbVariant.branchAvailability[0]?.isAvailable,
-          })
+          !isAvailableAtBranch(
+            {
+              productAvailable: dbVariant.product.isAvailable,
+              variantAvailable: dbVariant.isAvailable,
+              branchAvailable: override?.isAvailable,
+              soldOutUntil: override?.soldOutUntil,
+            },
+            now,
+          )
         ) {
-          throw new OrderLineUnavailableError(
-            branchOutOfStockMessage(dbVariant.product.name, dbVariant.name, branch.name),
-          );
+          const message = isSoldOutToday(override, now)
+            ? branchSoldOutTodayMessage(dbVariant.product.name, dbVariant.name, branch.name)
+            : branchOutOfStockMessage(dbVariant.product.name, dbVariant.name, branch.name);
+          throw new OrderLineUnavailableError(message);
         }
 
         // Apply the best live discount server-side. `resolvePrice` re-checks

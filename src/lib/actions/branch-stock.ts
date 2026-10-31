@@ -22,7 +22,11 @@ import {
   type DashboardScope,
 } from "@/lib/session";
 import { prismaErrorCode } from "@/lib/action-utils";
-import { branchOutOfStockMessage } from "@/lib/catalog";
+import {
+  branchOutOfStockMessage,
+  branchSoldOutTodayMessage,
+  isSoldOutToday,
+} from "@/lib/catalog";
 import {
   branchStockSchema,
   CHECKOUT_MAX_ITEMS,
@@ -132,6 +136,9 @@ export async function getBranchStockIssues(
   if (!branchId || ids.length === 0) return { success: true, issues: [] };
 
   try {
+    // One instant for the whole preview — the same `now` the sold-out-today
+    // filter and the per-row message decision both read.
+    const now = new Date();
     const [branch, rows] = await Promise.all([
       prisma.branch.findFirst({
         where: { id: branchId, isActive: true },
@@ -141,11 +148,15 @@ export async function getBranchStockIssues(
         where: {
           branchId,
           variantId: { in: ids },
-          isAvailable: false,
+          // Off long-term OR sold out today — either way the order would be
+          // refused, so both are surfaced here.
+          OR: [{ isAvailable: false }, { soldOutUntil: { gt: now } }],
           variant: { isAvailable: true, product: { isAvailable: true } },
         },
         select: {
           variantId: true,
+          isAvailable: true,
+          soldOutUntil: true,
           variant: { select: { name: true, product: { select: { name: true } } } },
         },
       }),
@@ -157,11 +168,20 @@ export async function getBranchStockIssues(
       success: true,
       issues: rows.map((row) => ({
         variantId: row.variantId,
-        message: branchOutOfStockMessage(
-          row.variant.product.name,
-          row.variant.name,
-          branch.name,
-        ),
+        // A row off long-term (isAvailable: false) reads as a stock-out even if
+        // it also carries a stale soldOutUntil; only a still-live row counts as
+        // "sold out today".
+        message: isSoldOutToday(row, now)
+          ? branchSoldOutTodayMessage(
+              row.variant.product.name,
+              row.variant.name,
+              branch.name,
+            )
+          : branchOutOfStockMessage(
+              row.variant.product.name,
+              row.variant.name,
+              branch.name,
+            ),
       })),
     };
   } catch (err) {

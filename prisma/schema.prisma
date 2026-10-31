@@ -70,17 +70,17 @@ enum MarketingEventType {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model User {
-  id            String   @id @default(cuid())
-  name          String
-  email         String   @unique
-  emailVerified Boolean  @default(false)
-  image         String?
-  role          UserRole @default(USER)
+  id                 String   @id @default(cuid())
+  name               String
+  email              String   @unique
+  emailVerified      Boolean  @default(false)
+  image              String?
+  role               UserRole @default(USER)
   /// Set by an ADMIN password reset (the temporary password is sent on
   /// WhatsApp); cleared only by changeTemporaryPassword. While true, the user is
   /// held on /account/change-password. Declared to Better Auth as an
   /// `input: false` additional field so it rides on every session.
-  mustChangePassword Boolean @default(false)
+  mustChangePassword Boolean  @default(false)
 
   // Branch assignment.
   // OPTIONAL at the schema level by necessity: USER/ADMIN have no branch.
@@ -303,14 +303,23 @@ model ProductVariant {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model BranchVariantAvailability {
-  id          String         @id @default(cuid())
-  branchId    String
-  branch      Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  variantId   String
+  id           String         @id @default(cuid())
+  branchId     String
+  branch       Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  variantId    String
   // Cascade: only a never-ordered variant can be hard-deleted (OrderItem's
   // Restrict guards the rest), and its overrides mean nothing without it.
-  variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  isAvailable Boolean        @default(true)
+  variant      ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  /// Head-office long-term switch: false = out at this branch until an ADMIN or
+  /// MANAGER turns it back on. The master kill-switch stays the global
+  /// Product/ProductVariant.isAvailable flags.
+  isAvailable  Boolean        @default(true)
+  /// MANAGER's "Sold out today": the UTC instant of the NEXT Cairo midnight.
+  /// The variant is un-orderable at this branch until then, after which it comes
+  /// back on its own — every reader compares it to `now`, so nothing un-sets it.
+  /// null = not sold out today. Independent of `isAvailable`: this feature never
+  /// touches the head-office switch, and `isAvailable: false` still wins.
+  soldOutUntil DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -695,17 +704,17 @@ model FooterLink {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Collection {
-  id          String  @id @default(cuid())
-  name        String
+  id           String  @id @default(cuid())
+  name         String
   /// Minted once from the name at creation, never regenerated on rename, so
   /// /collections/[slug] links never 404.
-  slug        String  @unique
-  description String?
+  slug         String  @unique
+  description  String?
   /// Card/header image — an UploadThing URL or a /public path (isHostedImageUrl).
-  image       String?
+  image        String?
   /// Ascending display position: the /collections index, the footer column and
   /// the collection cards on a category page all use this one global order.
-  order       Int     @default(0)
+  order        Int     @default(0)
   /// Draft until published: an inactive collection doesn't exist for customers
   /// (no page, no footer/search entry, and it prices nothing).
   isActive     Boolean @default(false)
@@ -771,17 +780,17 @@ model CollectionCategory {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model HeroSlide {
-  id           String    @id @default(cuid())
+  id           String  @id @default(cuid())
   /// Copy overlaid on the image — all optional: an image-led slide may carry
   /// no text at all (the CTA and `imageAlt` still describe it).
   /// Small kicker above the title, e.g. "New arrival".
   eyebrow      String?
   title        String?
   subtitle     String?
-  ctaLabel     String    @default("Order now")
+  ctaLabel     String  @default("Order now")
   /// Product slides only: show the Discount-Engine starting price ("From EGP X"
   /// + strikethrough). Display-only — never stored, always resolved at render.
-  showPrice    Boolean   @default(true)
+  showPrice    Boolean @default(true)
   /// Desktop/tablet crop — an UploadThing URL or a /public path.
   imageDesktop String
   /// Optional art-directed phone crop; falls back to `imageDesktop`.
@@ -794,22 +803,22 @@ model HeroSlide {
   /// "appears in existing orders" message) nor silently drop the slide and
   /// orphan its bucket images. A slide left with no destination is hidden from
   /// the storefront and flagged in /admin/hero.
-  productId    String?
-  product      Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
   /// Link destination — "/…", "#…" or http(s):// only (isSafeHref).
-  linkUrl      String?
+  linkUrl   String?
 
   /// Ascending display position (lower = earlier).
-  order        Int       @default(0)
+  order    Int       @default(0)
   /// Hidden from the storefront when false, without deleting the row. Defaults
   /// OFF: a new slide is a draft until the admin publishes it.
-  isActive     Boolean   @default(false)
+  isActive Boolean   @default(false)
   /// Cairo day edges (storeDateStart / storeDateEnd); null = open-ended.
-  startsAt     DateTime?
-  endsAt       DateTime?
+  startsAt DateTime?
+  endsAt   DateTime?
 
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Matches the storefront read: where isActive, ordered by `order` ascending.
   @@index([isActive, order])

@@ -90,6 +90,8 @@ function variantRow(o: {
   productAvailable?: boolean;
   /** The fulfilling branch's override row, if any (omitted → no row → in stock). */
   branchAvailable?: boolean;
+  /** The branch override's sold-out-today instant, if any (compared to `now`). */
+  soldOutUntil?: Date | null;
   variantPromos?: PromotionLike[];
   productPromos?: PromotionLike[];
   categoryPromos?: PromotionLike[];
@@ -102,7 +104,9 @@ function variantRow(o: {
     price: decimalLike(o.price),
     isAvailable: o.variantAvailable ?? true,
     branchAvailability:
-      o.branchAvailable === undefined ? [] : [{ isAvailable: o.branchAvailable }],
+      o.branchAvailable === undefined && o.soldOutUntil === undefined
+        ? []
+        : [{ isAvailable: o.branchAvailable ?? true, soldOutUntil: o.soldOutUntil ?? null }],
     promotions: o.variantPromos ?? [],
     product: {
       name: o.productName ?? "Chocolate Gateau",
@@ -942,8 +946,40 @@ describe("placeOrder — branch-level stock", () => {
     const args = mockPrisma.productVariant.findMany.mock.calls[0][0] as any;
     expect(args.include.branchAvailability).toEqual({
       where: { branchId: { in: [MENOUF.id] } },
-      select: { isAvailable: true },
+      select: { isAvailable: true, soldOutUntil: true },
     });
+  });
+
+  it("refuses a line sold out TODAY at the branch, with the 'today' wording — and writes nothing", async () => {
+    stubVariants([
+      variantRow({
+        id: "v2",
+        price: 150,
+        name: "Small",
+        productName: "Kunafa",
+        // Live globally, live at the branch long-term, but sold out for today.
+        branchAvailable: true,
+        soldOutUntil: new Date("2999-01-01T00:00:00.000Z"),
+      }),
+    ]);
+
+    const res = await placeOrder(payload({ branchId: MENOUF.id, items: [{ variantId: "v2", quantity: 1 }] }));
+
+    expect(res).toEqual({
+      success: false,
+      error: "Kunafa (Small) is sold out at the Menouf branch today.",
+    });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("orders normally when a sold-out-today mark has already expired", async () => {
+    stubVariants([
+      variantRow({ id: "v1", price: 100, branchAvailable: true, soldOutUntil: new Date("2000-01-01T00:00:00.000Z") }),
+    ]);
+
+    const res = await placeOrder(payload({ branchId: MENOUF.id }));
+
+    expect(res.success).toBe(true);
   });
 
   it("orders normally when the branch row says available, or there is no row at all", async () => {

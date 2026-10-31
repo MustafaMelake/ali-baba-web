@@ -221,10 +221,23 @@ describe("setBranchStock — payload validation", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("getBranchStockIssues — checkout preview", () => {
-  function stubOutRows(rows: { variantId: string; product: string; variant: string }[]) {
+  const FAR_FUTURE = new Date("2999-01-01T00:00:00.000Z"); // always ahead of `now`
+  const PAST = new Date("2000-01-01T00:00:00.000Z");
+
+  function stubOutRows(
+    rows: {
+      variantId: string;
+      product: string;
+      variant: string;
+      isAvailable?: boolean;
+      soldOutUntil?: Date | null;
+    }[],
+  ) {
     mockPrisma.branchVariantAvailability.findMany.mockResolvedValue(
       rows.map((r) => ({
         variantId: r.variantId,
+        isAvailable: r.isAvailable ?? false,
+        soldOutUntil: r.soldOutUntil ?? null,
         variant: { name: r.variant, product: { name: r.product } },
       })) as never,
     );
@@ -232,7 +245,7 @@ describe("getBranchStockIssues — checkout preview", () => {
 
   it("flags each switched-off line with placeOrder's exact wording", async () => {
     mockPrisma.branch.findFirst.mockResolvedValue({ name: "Menouf" } as never);
-    stubOutRows([{ variantId: "v2", product: "Kunafa", variant: "Small" }]);
+    stubOutRows([{ variantId: "v2", product: "Kunafa", variant: "Small", isAvailable: false }]);
 
     const res = await getBranchStockIssues(["v1", "v2"], "branch_menouf");
 
@@ -244,7 +257,36 @@ describe("getBranchStockIssues — checkout preview", () => {
     });
   });
 
-  it("asks only for branch stock-outs of globally-live items (global ones are placeOrder's 'no longer available')", async () => {
+  it("flags a sold-out-today line with the 'today' wording, distinct from a long-term stock-out", async () => {
+    mockPrisma.branch.findFirst.mockResolvedValue({ name: "Menouf" } as never);
+    stubOutRows([
+      { variantId: "v2", product: "Kunafa", variant: "Small", isAvailable: true, soldOutUntil: FAR_FUTURE },
+    ]);
+
+    const res = await getBranchStockIssues(["v2"], "branch_menouf");
+
+    expect(res).toEqual({
+      success: true,
+      issues: [
+        { variantId: "v2", message: "Kunafa (Small) is sold out at the Menouf branch today." },
+      ],
+    });
+  });
+
+  it("treats a long-term-off row with a stale mark as a plain stock-out", async () => {
+    mockPrisma.branch.findFirst.mockResolvedValue({ name: "Menouf" } as never);
+    stubOutRows([
+      { variantId: "v2", product: "Kunafa", variant: "Small", isAvailable: false, soldOutUntil: PAST },
+    ]);
+
+    const res = await getBranchStockIssues(["v2"], "branch_menouf");
+
+    expect(res.success && res.issues[0]?.message).toBe(
+      "Kunafa (Small) is currently out of stock at the Menouf branch.",
+    );
+  });
+
+  it("asks only for branch stock-outs or sold-out-today of globally-live items", async () => {
     mockPrisma.branch.findFirst.mockResolvedValue({ name: "Menouf" } as never);
     stubOutRows([]);
 
@@ -252,12 +294,12 @@ describe("getBranchStockIssues — checkout preview", () => {
 
     expect(mockPrisma.branchVariantAvailability.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
+        where: expect.objectContaining({
           branchId: "branch_menouf",
           variantId: { in: ["v1", "v2"] }, // trimmed + de-duplicated
-          isAvailable: false,
+          OR: [{ isAvailable: false }, { soldOutUntil: { gt: expect.any(Date) } }],
           variant: { isAvailable: true, product: { isAvailable: true } },
-        },
+        }),
       }),
     );
   });

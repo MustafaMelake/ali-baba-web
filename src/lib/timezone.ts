@@ -87,6 +87,20 @@ export function storeMidnight(daysAgo = 0, now: Date = new Date()): Date {
   return utcInstantOfStoreMidnight(Date.UTC(year, month - 1, day - daysAgo));
 }
 
+/**
+ * The exact UTC instant of the NEXT store-timezone midnight after `now` — i.e.
+ * the start of tomorrow (Cairo). This is when a "Sold out today" mark expires:
+ * the variant is un-orderable at the branch until this instant, then comes back
+ * on its own because every reader compares the stored value to `now`.
+ *
+ * Built in calendar space (tomorrow's date at 00:00 Cairo), so a 23h/25h DST day
+ * can never shift it by an hour — Egypt leaves DST on 2026-10-29.
+ */
+export function nextStoreMidnight(now: Date = new Date()): Date {
+  // `daysAgo = -1` → Date.UTC(year, month-1, day + 1): tomorrow's Cairo midnight.
+  return storeMidnight(-1, now);
+}
+
 /** The exact UTC instant the store-timezone CURRENT month began (day 1, 00:00). */
 export function storeMonthStart(now: Date = new Date()): Date {
   const { year, month } = storeDayParts(now);

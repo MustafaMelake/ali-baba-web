@@ -24,6 +24,7 @@ import {
   storeDayKey,
   storeDateStart,
   storeDateEnd,
+  nextStoreMidnight,
 } from "@/lib/timezone";
 
 /** `livePromotionWhere` / `isPromotionLive` semantics: inclusive on both ends. */
@@ -125,6 +126,70 @@ describe("promotion window regression — a same-day promotion is live all day",
     // Not live during business hours — the bug this suite pins.
     expect(isLive(naiveStart, naiveEnd, cairoHour(14))).toBe(false);
     expect(isLive(start, end, cairoHour(14))).toBe(true);
+  });
+});
+
+// The expiry instant of a "Sold out today" mark: the NEXT Cairo midnight after
+// `now`. It must equal the start of the FOLLOWING Cairo day for any instant in
+// the current one — so a mark set at 00:01 and one set at 23:59 of the same
+// Cairo day both expire at the same instant, and a reader's `soldOutUntil > now`
+// stays true until exactly that instant.
+describe("nextStoreMidnight — when a sold-out-today mark expires", () => {
+  it("is the start of TOMORROW (Cairo), in winter (UTC+02:00)", () => {
+    // 2026-01-15 12:00 Cairo → next midnight is 2026-01-16 00:00 Cairo.
+    expect(nextStoreMidnight(new Date("2026-01-15T10:00:00.000Z"))!.toISOString()).toBe(
+      storeDateStart("2026-01-16")!.toISOString(),
+    );
+    expect(nextStoreMidnight(new Date("2026-01-15T10:00:00.000Z")).toISOString()).toBe(
+      "2026-01-15T22:00:00.000Z",
+    );
+  });
+
+  it("is the start of TOMORROW (Cairo), in summer (UTC+03:00)", () => {
+    expect(nextStoreMidnight(new Date("2026-07-15T10:00:00.000Z")).toISOString()).toBe(
+      "2026-07-15T21:00:00.000Z",
+    );
+  });
+
+  it("is constant across a whole Cairo day — set at 00:01 or 23:59, same expiry", () => {
+    const dayStart = storeDateStart("2026-07-21")!; // 00:00 Cairo
+    const nearStart = new Date(dayStart.getTime() + 60_000); // 00:01 Cairo
+    const nearEnd = new Date(storeDateEnd("2026-07-21")!.getTime() - 60_000); // ~23:59 Cairo
+    const expected = storeDateStart("2026-07-22")!.toISOString();
+    expect(nextStoreMidnight(nearStart).toISOString()).toBe(expected);
+    expect(nextStoreMidnight(nearEnd).toISOString()).toBe(expected);
+  });
+
+  // Egypt left DST on 2026-10-29 (the 25h fall-back day). Both sides must resolve
+  // to the real next Cairo midnight, not a naive +24h that would land an hour off.
+  it("resolves the next midnight on both sides of the 2026-10-29 fall-back", () => {
+    // During 2026-10-28 (still DST) → start of the 25h day 2026-10-29.
+    expect(nextStoreMidnight(new Date("2026-10-28T12:00:00.000Z")).toISOString()).toBe(
+      storeDateStart("2026-10-29")!.toISOString(),
+    );
+    // During the 25h day 2026-10-29 → start of 2026-10-30 (now UTC+02:00).
+    expect(nextStoreMidnight(new Date("2026-10-29T12:00:00.000Z")).toISOString()).toBe(
+      storeDateStart("2026-10-30")!.toISOString(),
+    );
+    // The mark stays in the future until that exact instant, then expires.
+    const now = new Date("2026-10-29T12:00:00.000Z");
+    const expiry = nextStoreMidnight(now);
+    expect(expiry > now).toBe(true);
+    expect(expiry > new Date(expiry.getTime() - 1)).toBe(true);
+    expect(expiry > expiry).toBe(false); // at the instant itself: no longer sold out
+  });
+
+  it("is independent of the machine's own timezone", () => {
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = "America/New_York";
+      expect(nextStoreMidnight(new Date("2026-07-15T10:00:00.000Z")).toISOString()).toBe(
+        "2026-07-15T21:00:00.000Z",
+      );
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
   });
 });
 

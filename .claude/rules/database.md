@@ -36,7 +36,7 @@ These `onDelete` policies *are* the data-safety model. **Do not weaken them** �
 | `CartItem → User` / `→ ProductVariant` | Cascade | no orphan cart lines |
 | `WishlistItem → User` / `→ Product` | Cascade | — |
 | `MenuItem → MenuCategory` | Cascade | café items die with their category |
-| `BranchVariantAvailability → Branch` / `→ ProductVariant` | Cascade | per-branch stock overrides die with either (a missing row means "available") |
+| `BranchVariantAvailability → Branch` / `→ ProductVariant` | Cascade | per-branch stock overrides die with either (a missing row means "available"; `isAvailable=false` is the head-office long-term switch, `soldOutUntil > now` is a MANAGER's "sold out today" that expires on its own at the next Cairo midnight — the two are independent and OR together) |
 | `HeroSlide → Product` | **SetNull** | a banner never blocks a product delete (Restrict would also misreport as `deleteProduct`'s "appears in existing orders" P2003) nor silently drops the slide and orphans its bucket images (Cascade bypasses `deleteUploadedFiles`); a slide left with no destination is hidden by `liveHeroSlideWhere` and flagged in `/admin/hero` |
 | `CollectionProduct → Collection` / `→ Product` | Cascade | link rows only — deleting a collection never touches its products, deleting a product drops it from every collection |
 | `CollectionCategory → Collection` / `→ Category` | Cascade | link rows only — a collection never blocks a category delete (the `Product → Category` Restrict still does) |
