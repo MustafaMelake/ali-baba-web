@@ -8,7 +8,8 @@ import {
   resolveBranchScope,
   type DashboardScope,
 } from "@/lib/session";
-import { LISTABLE_PRODUCT, variantLabel } from "@/lib/catalog";
+import { LISTABLE_PRODUCT, isSoldOutToday, variantLabel } from "@/lib/catalog";
+import { STORE_TZ } from "@/lib/timezone";
 import {
   filterBranchStock,
   parseStockFilter,
@@ -41,6 +42,15 @@ const HEADER = {
   eyebrow: "Catalog",
   title: "Branch Stock",
 } as const;
+
+// When a "sold out today" item returns (the next Cairo midnight), in store time.
+const RETURN_FMT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: STORE_TZ,
+  weekday: "short",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
 
 /**
  * Branch inventory — ADMIN and MANAGER.
@@ -121,6 +131,8 @@ export default async function AdminInventoryPage({
     );
   }
 
+  // One instant for the whole render — judges every sold-out-today overlay.
+  const now = new Date();
   const products = await prisma.product.findMany({
     where: LISTABLE_PRODUCT,
     orderBy: [{ category: { name: "asc" } }, { name: "asc" }],
@@ -140,23 +152,30 @@ export default async function AdminInventoryPage({
           // This branch's override only — no row means in stock.
           branchAvailability: {
             where: { branchId },
-            select: { isAvailable: true },
+            select: { isAvailable: true, soldOutUntil: true },
           },
         },
       },
     },
   });
 
-  // Flatten the override into a plain boolean (and the Decimal price into a
-  // number) before anything reaches a client island.
+  // Flatten the override into plain fields (and the Decimal price into a number)
+  // before anything reaches a client island. `inStock` is the LONG-TERM switch
+  // the toggle controls; `soldOutUntil` is the manager's self-expiring "sold out
+  // today" overlay — shown read-only here (an ADMIN doesn't set it). Resolved
+  // against the single `now`.
   const rows = products.map((product) => {
-    const variants = product.variants.map((v) => ({
-      id: v.id,
-      name: v.name,
-      sku: v.sku,
-      price: v.price.toNumber(),
-      inStock: v.branchAvailability[0]?.isAvailable !== false,
-    }));
+    const variants = product.variants.map((v) => {
+      const override = v.branchAvailability[0];
+      return {
+        id: v.id,
+        name: v.name,
+        sku: v.sku,
+        price: v.price.toNumber(),
+        inStock: override?.isAvailable !== false,
+        soldOutUntil: isSoldOutToday(override, now) ? override!.soldOutUntil! : null,
+      };
+    });
     return {
       ...product,
       variants,
@@ -329,6 +348,16 @@ export default async function AdminInventoryPage({
                           {variant.sku && (
                             <span className="ml-2 font-mono text-[11px] text-stone-400">
                               {variant.sku}
+                            </span>
+                          )}
+                          {variant.soldOutUntil && (
+                            // Read-only: the branch manager set this on /admin/today;
+                            // it clears itself at midnight. ADMIN sees it, can't flip it.
+                            <span
+                              className="ms-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
+                              title={`Back ${RETURN_FMT.format(variant.soldOutUntil)} (Cairo)`}
+                            >
+                              Sold out today · {branch.name} · back {RETURN_FMT.format(variant.soldOutUntil)}
                             </span>
                           )}
                         </span>
