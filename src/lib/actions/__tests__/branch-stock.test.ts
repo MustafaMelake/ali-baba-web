@@ -284,6 +284,18 @@ describe("markSoldOutToday — the write", () => {
     expect(update.data).not.toHaveProperty("isAvailable");
   });
 
+  it("IGNORES a forged branchId in the payload — always writes the manager's own branch", async () => {
+    mockPrisma.productVariant.findMany.mockResolvedValue([{ id: "v1" }] as never);
+
+    // soldOutTodaySchema has no branchId field, so Zod strips it; the branch is
+    // the live scope's. A manager cannot reach another branch this way.
+    const res = await markSoldOutToday({ productId: "p1", branchId: "branch_sadat" } as never);
+
+    expect(res).toEqual({ success: true, updated: 1 });
+    expect(writes().create.data[0].branchId).toBe("branch_menouf");
+    expect(writes().update.where.branchId).toBe("branch_menouf");
+  });
+
   it("marks a single named size", async () => {
     mockPrisma.productVariant.findMany.mockResolvedValue([{ id: "v2" }] as never);
 
