@@ -54,7 +54,7 @@ function wishlistRow(product: {
       id: "prod_1",
       name: "Kunafa Tray",
       slug: "kunafa-tray",
-      images: ["https://utfs.io/f/kunafa.jpg"],
+      images: ["https://img.alibaba.test/products/kunafa.jpg"],
       isAvailable: product.isAvailable ?? true,
       category: { name: "Oriental", promotions: [] },
       promotions: product.promotions ?? [],

@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 export default defineConfig({
   test: {
     environment: "node", // per-file pragmas override this (see cart-store.test.ts)
+    // The R2 public base every image fixture lives on (isHostedImageUrl reads it).
+    env: { NEXT_PUBLIC_R2_PUBLIC_BASE_URL: "https://img.alibaba.test" },
     // Run each test file in a forked child process instead of a worker thread.
     // Forks avoid the intermittent "Vitest failed to find the runner" first-touch
     // race that worker threads hit on Windows single-file runs — stronger

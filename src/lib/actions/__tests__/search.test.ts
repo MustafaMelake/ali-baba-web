@@ -77,7 +77,7 @@ function productRow(o: {
     id,
     name: o.name,
     slug: id,
-    images: o.images ?? [`https://utfs.io/f/${id}.jpg`],
+    images: o.images ?? [`https://img.alibaba.test/products/${id}.jpg`],
     category: { name: o.category ?? "Cakes", promotions: o.categoryPromos ?? [] },
     promotions: o.productPromos ?? [],
     variants: [
@@ -320,7 +320,7 @@ describe("searchCatalog — relevance", () => {
     stubSearch({
       categoryRows: [
         categoryRow({ name: "Birthday Cakes", count: 4 }),
-        categoryRow({ name: "Cakes", count: 12, image: "https://utfs.io/f/cakes.jpg" }),
+        categoryRow({ name: "Cakes", count: 12, image: "https://img.alibaba.test/categories/cakes.jpg" }),
         categoryRow({ name: "Cheesecakes", count: 2 }),
         categoryRow({ name: "Wedding Cakes", count: 3 }),
       ],
@@ -330,7 +330,7 @@ describe("searchCatalog — relevance", () => {
 
     if (!result.success) throw new Error(result.error);
     expect(result.data.categories).toEqual([
-      { id: "cakes", name: "Cakes", slug: "cakes", image: "https://utfs.io/f/cakes.jpg", productCount: 12 },
+      { id: "cakes", name: "Cakes", slug: "cakes", image: "https://img.alibaba.test/categories/cakes.jpg", productCount: 12 },
       { id: "birthday-cakes", name: "Birthday Cakes", slug: "birthday-cakes", image: null, productCount: 4 },
       { id: "wedding-cakes", name: "Wedding Cakes", slug: "wedding-cakes", image: null, productCount: 3 },
     ]);

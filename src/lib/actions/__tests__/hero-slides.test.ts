@@ -15,7 +15,7 @@
 //   • FAN-OUT — every success revalidates "/" and "/admin/hero".
 //
 // MOCKING — same boundaries as faqs.test.ts (@/lib/prisma deep-mocked,
-// @/lib/session, next/cache) plus the UploadThing purge helper.
+// @/lib/session, next/cache) plus the R2 purge helper.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -53,8 +53,8 @@ vi.spyOn(console, "error").mockImplementation(() => {});
 
 const prismaError = (code: string) => Object.assign(new Error(code), { code });
 
-const OLD_DESKTOP = "https://abc.ufs.sh/f/old-desktop";
-const OLD_MOBILE = "https://abc.ufs.sh/f/old-mobile";
+const OLD_DESKTOP = "https://img.alibaba.test/hero/old-desktop.png";
+const OLD_MOBILE = "https://img.alibaba.test/hero/old-mobile.png";
 
 /** A valid product slide as the modal sends it. */
 const input = (overrides: Record<string, unknown> = {}) => ({
@@ -221,7 +221,7 @@ describe("createHeroSlide", () => {
 
 describe("updateHeroSlide", () => {
   it("purges only the replaced image, after the write", async () => {
-    const NEW_DESKTOP = "https://abc.ufs.sh/f/new-desktop";
+    const NEW_DESKTOP = "https://img.alibaba.test/hero/new-desktop.png";
     const res = await updateHeroSlide("slide_1", input({ imageDesktop: NEW_DESKTOP }));
 
     expect(res).toEqual({ success: true });
@@ -263,7 +263,7 @@ describe("updateHeroSlide", () => {
     ["P2003", "That product no longer exists — pick another one."],
   ])("translates %s and purges nothing", async (code, error) => {
     mockPrisma.heroSlide.update.mockRejectedValue(prismaError(code));
-    const res = await updateHeroSlide("slide_1", input({ imageDesktop: "https://abc.ufs.sh/f/x" }));
+    const res = await updateHeroSlide("slide_1", input({ imageDesktop: "https://img.alibaba.test/hero/x.png" }));
     expect(res).toEqual({ success: false, error });
     expect(mockedPurge).not.toHaveBeenCalled();
   });

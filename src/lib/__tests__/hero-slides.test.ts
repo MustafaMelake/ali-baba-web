@@ -66,7 +66,7 @@ function row(overrides: Record<string, unknown> = {}): HeroSlideStorefrontRow {
     subtitle: null,
     ctaLabel: "Order now",
     showPrice: true,
-    imageDesktop: "https://abc.ufs.sh/f/desktop",
+    imageDesktop: "https://img.alibaba.test/hero/desktop.png",
     imageMobile: null,
     imageAlt: "A tray of pistachio kunafa",
     linkUrl: null,

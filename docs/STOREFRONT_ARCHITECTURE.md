@@ -698,7 +698,7 @@ Note the deliberate type split: **money columns are `Decimal`** (like every pric
 | Metric | Lever in use | Where |
 |---|---|---|
 | **LCP** | Server Components fetch with Prisma at render time — hero image, cards, **and resolved discount prices** arrive in the initial HTML, no client-fetch waterfall | `(shop)/page.tsx`, `/category/[slug]`, `/shop` |
-| **LCP** | `next/image` with per-breakpoint `sizes`, `remotePatterns` scoped to the R2 public host (from `NEXT_PUBLIC_R2_PUBLIC_BASE_URL`; the legacy UploadThing hosts until the image migration) | [`next.config.ts`](../next.config.ts), `CategorySlider.tsx` |
+| **LCP** | `next/image` with per-breakpoint `sizes`, `remotePatterns` scoped to the R2 public host (from `NEXT_PUBLIC_R2_PUBLIC_BASE_URL`) | [`next.config.ts`](../next.config.ts), `CategorySlider.tsx` |
 | **CLS** | `tabular-nums` on **every** price node that can change at runtime — PDP hero price, strikethroughs, variant pills, quantity stepper, CTA line total, menu prices | `ProductPurchasePanel`, `VariantSelector`, `MenuRow` |
 | **CLS** | Pulse-skeleton for the navbar auth state while `useSession()` is `isPending`; matching skeleton as the `/login` Suspense fallback; checkout holds its background until the cart store rehydrates, pricing settings load, **and** (guests) the cart is re-priced | `Navbar.tsx`, `LoginFallback`, `checkout/page.tsx` |
 | **INP** | `IntersectionObserver` for the menu scroll-spy instead of a `scroll` handler | `MenuClient.tsx` |

@@ -27,13 +27,10 @@ const nextConfig: NextConfig = {
   },
   images: {
     remotePatterns: [
-      // Cloudflare R2 — where every upload lands (/api/upload).
+      // Cloudflare R2 — where every upload lands (/api/upload). The only remote
+      // host: the UploadThing hosts went once every stored URL had been moved
+      // (scripts/migrate-images-to-r2.ts).
       ...r2RemotePattern(),
-      // LEGACY UploadThing hosts — kept until scripts/migrate-images-to-r2.ts
-      // has moved every stored URL to R2; removed together with UPLOADTHING_HOST
-      // in validators.ts.
-      { protocol: "https", hostname: "utfs.io" },
-      { protocol: "https", hostname: "*.ufs.sh" },
     ],
   },
 };

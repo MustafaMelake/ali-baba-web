@@ -17,14 +17,6 @@ const optionalText = (max: number) =>
 
 // ─── Stored image URLs ───────────────────────────────────────────────────────
 
-/**
- * LEGACY — the UploadThing hosts, accepted only until every stored URL has been
- * copied to R2 (scripts/migrate-images-to-r2.ts); removed with them from
- * next.config. MUST mirror `images.remotePatterns` there (the `utfs.io` host +
- * one `*.ufs.sh` label).
- */
-const UPLOADTHING_HOST = /^(?:utfs\.io|[^.]+\.ufs\.sh)$/;
-
 export const HOSTED_IMAGE_ERROR = "Upload the image here — pasted links can't be displayed.";
 
 /**
@@ -47,7 +39,6 @@ export function isHostedImageUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:" || parsed.port !== "") return false;
-    if (UPLOADTHING_HOST.test(parsed.hostname)) return true;
     const r2 = r2PublicBase();
     return (
       r2 !== null &&

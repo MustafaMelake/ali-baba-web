@@ -45,8 +45,8 @@ describe("parseDeliveryFee", () => {
 // categories, locations, hero slides). next/image throws on a host missing from
 // next.config's remotePatterns — and that throw takes down the whole ISR page
 // rendering the image — so a foreign host must never reach the database.
-// Uploads land on the R2 public base (NEXT_PUBLIC_R2_PUBLIC_BASE_URL); the
-// legacy UploadThing hosts stay accepted until the image migration is done.
+// Uploads land on the R2 public base (NEXT_PUBLIC_R2_PUBLIC_BASE_URL). The
+// UploadThing hosts were retired once every stored URL had moved to R2.
 describe("isHostedImageUrl", () => {
   beforeEach(() => {
     vi.stubEnv("NEXT_PUBLIC_R2_PUBLIC_BASE_URL", "https://img.alibaba.test");
@@ -58,8 +58,6 @@ describe("isHostedImageUrl", () => {
   it.each([
     "https://img.alibaba.test/products/cl9abc.webp",
     "https://img.alibaba.test/hero/k1.png",
-    "https://utfs.io/f/abc123",
-    "https://x8k2p9.ufs.sh/f/abc123",
     "/placeholder.jpg",
     "/hero.jpeg",
   ])("accepts %s", (url) => {
@@ -67,6 +65,8 @@ describe("isHostedImageUrl", () => {
   });
 
   it.each([
+    "https://utfs.io/f/abc123", // retired UploadThing hosts
+    "https://x8k2p9.ufs.sh/f/abc123",
     "http://utfs.io/f/abc123", // not https
     "https://utfs.io:8443/f/abc123", // explicit port
     "https://a.b.ufs.sh/f/abc123", // remotePatterns `*` is a single label
@@ -174,10 +174,10 @@ describe("productInputSchema images", () => {
     variants: [{ name: "Small", price: 120 }],
   };
 
-  it("accepts UploadThing gallery URLs", () => {
+  it("accepts R2 gallery URLs", () => {
     const parsed = productInputSchema.safeParse({
       ...base,
-      images: ["https://abc.ufs.sh/f/1", "https://utfs.io/f/2"],
+      images: ["https://img.alibaba.test/products/1.webp", "https://img.alibaba.test/products/2.jpg"],
     });
     expect(parsed.success).toBe(true);
   });
@@ -185,7 +185,7 @@ describe("productInputSchema images", () => {
   it("refuses a gallery containing a foreign host", () => {
     const parsed = productInputSchema.safeParse({
       ...base,
-      images: ["https://abc.ufs.sh/f/1", "https://evil.example/x.jpg"],
+      images: ["https://img.alibaba.test/products/1.webp", "https://evil.example/x.jpg"],
     });
     expect(parsed.success).toBe(false);
   });
@@ -200,7 +200,7 @@ describe("heroSlideSchema", () => {
     subtitle: "",
     ctaLabel: "Order now",
     showPrice: true,
-    imageDesktop: "https://abc.ufs.sh/f/desktop",
+    imageDesktop: "https://img.alibaba.test/hero/desktop.png",
     imageMobile: "",
     imageAlt: "A tray of pistachio kunafa",
     productId: "prod_1",
@@ -320,7 +320,7 @@ describe("safeHrefError — why a link was refused", () => {
     const parsed = heroSlideSchema.safeParse({
       ctaLabel: "Order now",
       showPrice: false,
-      imageDesktop: "https://abc.ufs.sh/f/d",
+      imageDesktop: "https://img.alibaba.test/hero/d.png",
       imageAlt: "Banner",
       productId: null,
       linkUrl: "//evil.com",
