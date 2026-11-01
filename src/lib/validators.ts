@@ -18,10 +18,10 @@ const optionalText = (max: number) =>
 // ─── Stored image URLs ───────────────────────────────────────────────────────
 
 /**
- * The remote hosts `next/image` will render — MUST mirror `images.remotePatterns`
- * in next.config.ts (the legacy `utfs.io` host + one `*.ufs.sh` label). An image
- * URL on any other host makes `<Image>` throw at render, which takes down the
- * whole ISR page showing it (the homepage, for a location card), not just the card.
+ * LEGACY — the UploadThing hosts, accepted only until every stored URL has been
+ * copied to R2 (scripts/migrate-images-to-r2.ts); removed with them from
+ * next.config. MUST mirror `images.remotePatterns` there (the `utfs.io` host +
+ * one `*.ufs.sh` label).
  */
 const UPLOADTHING_HOST = /^(?:utfs\.io|[^.]+\.ufs\.sh)$/;
 
@@ -29,9 +29,13 @@ export const HOSTED_IMAGE_ERROR = "Upload the image here — pasted links can't 
 
 /**
  * The one rule for every image URL an admin action persists (product gallery,
- * category card, location card, hero slide): an UploadThing URL over https, or
- * a /public path. Every admin form uploads through UploadThing, so a legitimate
- * payload always passes; this is the server's refusal of a forged one.
+ * category card, location card, hero slide, collection): https on the R2 public
+ * base (NEXT_PUBLIC_R2_PUBLIC_BASE_URL — host and path prefix), or a /public
+ * path. Shared client + server: every admin form uploads through /api/upload,
+ * so a legitimate payload always passes; this is the server's refusal of a
+ * forged one. The host MUST mirror `images.remotePatterns` in next.config.ts —
+ * an image URL on any other host makes `<Image>` throw at render, which takes
+ * down the whole ISR page showing it (the homepage, for a location card).
  */
 export function isHostedImageUrl(url: string): boolean {
   if (url.startsWith("/")) {
@@ -42,10 +46,16 @@ export function isHostedImageUrl(url: string): boolean {
   }
   try {
     const parsed = new URL(url);
+    if (parsed.protocol !== "https:" || parsed.port !== "") return false;
+    if (UPLOADTHING_HOST.test(parsed.hostname)) return true;
+    const r2 = r2PublicBase();
     return (
-      parsed.protocol === "https:" &&
-      parsed.port === "" &&
-      UPLOADTHING_HOST.test(parsed.hostname)
+      r2 !== null &&
+      parsed.hostname === r2.hostname &&
+      !parsed.search &&
+      !parsed.hash &&
+      parsed.pathname.startsWith(`${r2.prefix}/`) &&
+      parsed.pathname.length > r2.prefix.length + 1
     );
   } catch {
     return false; // neither a /public path nor an absolute URL

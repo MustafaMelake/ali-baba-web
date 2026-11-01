@@ -7,7 +7,7 @@
 // 2-dp through roundMoney, like every other amount.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   HERO_MAX_SLIDES,
   heroSlideReorderSchema,
@@ -44,8 +44,19 @@ describe("parseDeliveryFee", () => {
 // categories, locations, hero slides). next/image throws on a host missing from
 // next.config's remotePatterns — and that throw takes down the whole ISR page
 // rendering the image — so a foreign host must never reach the database.
+// Uploads land on the R2 public base (NEXT_PUBLIC_R2_PUBLIC_BASE_URL); the
+// legacy UploadThing hosts stay accepted until the image migration is done.
 describe("isHostedImageUrl", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_R2_PUBLIC_BASE_URL", "https://img.alibaba.test");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it.each([
+    "https://img.alibaba.test/products/cl9abc.webp",
+    "https://img.alibaba.test/hero/k1.png",
     "https://utfs.io/f/abc123",
     "https://x8k2p9.ufs.sh/f/abc123",
     "/placeholder.jpg",
@@ -61,6 +72,12 @@ describe("isHostedImageUrl", () => {
     "https://ufs.sh/f/abc123",
     "https://utfs.io.evil.com/f/abc123",
     "https://images.example.com/cake.jpg",
+    "http://img.alibaba.test/products/a.jpg", // R2 host, not https
+    "https://img.alibaba.test:8443/products/a.jpg",
+    "https://img.alibaba.test.evil.com/products/a.jpg", // look-alike host
+    "https://evil.img.alibaba.test/products/a.jpg",
+    "https://img.alibaba.test/products/a.jpg?v=2", // query string
+    "https://img.alibaba.test/",
     "//evil.com/cake.jpg", // protocol-relative
     "/\\evil.com/cake.jpg", // browsers treat "/\" like "//"
     "/hero.jpeg?v=2", // local image with a query string
@@ -71,6 +88,20 @@ describe("isHostedImageUrl", () => {
     "",
   ])("rejects %s", (url) => {
     expect(isHostedImageUrl(url)).toBe(false);
+  });
+
+  it("honours a path prefix on the public base", () => {
+    vi.stubEnv("NEXT_PUBLIC_R2_PUBLIC_BASE_URL", "https://cdn.alibaba.test/media");
+    expect(isHostedImageUrl("https://cdn.alibaba.test/media/products/a.jpg")).toBe(true);
+    expect(isHostedImageUrl("https://cdn.alibaba.test/other/a.jpg")).toBe(false);
+  });
+
+  it("accepts no remote host at all when the public base is unset or not https", () => {
+    vi.stubEnv("NEXT_PUBLIC_R2_PUBLIC_BASE_URL", "");
+    expect(isHostedImageUrl("https://img.alibaba.test/products/a.jpg")).toBe(false);
+    vi.stubEnv("NEXT_PUBLIC_R2_PUBLIC_BASE_URL", "http://img.alibaba.test");
+    expect(isHostedImageUrl("https://img.alibaba.test/products/a.jpg")).toBe(false);
+    expect(isHostedImageUrl("/placeholder.jpg")).toBe(true);
   });
 });
 
