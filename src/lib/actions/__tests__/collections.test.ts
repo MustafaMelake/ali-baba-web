@@ -22,7 +22,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 vi.mock("@/lib/prisma", () => ({ prisma: mockDeep<PrismaClient>() }));
 vi.mock("@/lib/session", () => ({ getServerSession: vi.fn(), requireAdmin: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), updateTag: vi.fn() }));
-vi.mock("@/lib/uploadthing-server", () => ({ deleteUploadedFiles: vi.fn() }));
+vi.mock("@/lib/r2", () => ({ deleteUploadedFiles: vi.fn() }));
 
 import {
   addCategoryProductsToCollection,

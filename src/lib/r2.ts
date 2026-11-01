@@ -14,9 +14,14 @@
 //
 // Env (server-only, secret): R2_ENDPOINT, R2_ACCESS_KEY_ID,
 // R2_SECRET_ACCESS_KEY, R2_BUCKET. Public: NEXT_PUBLIC_R2_PUBLIC_BASE_URL.
+//
+// Bucket hygiene: nothing on the R2 side knows when a row stops referencing a
+// file, so the catalog mutations call deleteUploadedFiles after their DB write
+// commits. Purges are STRICTLY best-effort — a failed delete never rolls back or
+// fails the write; the worst case is a lingering file, logged for a manual sweep.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createId } from "@paralleldrive/cuid2";
 import {
   isUploadFolder,
@@ -115,4 +120,45 @@ export async function putImage(
     }),
   );
   return publicUrl(key);
+}
+
+/** DeleteObjects takes at most 1000 keys per request. */
+const DELETE_BATCH = 1000;
+
+/**
+ * Best-effort purge of uploaded images by their stored URLs. De-dupes,
+ * silently skips anything keyFromUrl doesn't recognise (/public paths, legacy
+ * UploadThing URLs, foreign values), and swallows (logs) every failure —
+ * including missing R2 env. Callers invoke it AFTER their DB write commits and
+ * never need to catch.
+ */
+export async function deleteUploadedFiles(
+  urls: ReadonlyArray<string | null | undefined>,
+): Promise<void> {
+  const keys = [
+    ...new Set(
+      urls
+        .filter((u): u is string => typeof u === "string" && u.length > 0)
+        .map(keyFromUrl)
+        .filter((k): k is string => k !== null),
+    ),
+  ];
+  if (keys.length === 0) return;
+
+  try {
+    for (let i = 0; i < keys.length; i += DELETE_BATCH) {
+      const batch = keys.slice(i, i + DELETE_BATCH);
+      const result = await r2Client().send(
+        new DeleteObjectsCommand({
+          Bucket: r2Bucket(),
+          Delete: { Objects: batch.map((Key) => ({ Key })), Quiet: true },
+        }),
+      );
+      if (result.Errors?.length) {
+        console.error("R2 purge partly failed (files remain in the bucket):", result.Errors);
+      }
+    }
+  } catch (err) {
+    console.error("R2 purge failed (files remain in the bucket):", err);
+  }
 }

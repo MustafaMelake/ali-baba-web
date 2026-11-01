@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
-import { deleteUploadedFiles } from "@/lib/uploadthing-server";
+import { deleteUploadedFiles } from "@/lib/r2";
 import {
   productInputSchema,
   productUpdateSchema,

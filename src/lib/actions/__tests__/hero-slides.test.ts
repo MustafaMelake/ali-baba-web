@@ -26,7 +26,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 vi.mock("@/lib/prisma", () => ({ prisma: mockDeep<PrismaClient>() }));
 vi.mock("@/lib/session", () => ({ getServerSession: vi.fn(), requireAdmin: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/uploadthing-server", () => ({ deleteUploadedFiles: vi.fn() }));
+vi.mock("@/lib/r2", () => ({ deleteUploadedFiles: vi.fn() }));
 
 import {
   createHeroSlide,
@@ -38,7 +38,7 @@ import {
 } from "@/lib/actions/hero-slides";
 import { requireAdmin } from "@/lib/session";
 import { revalidatePath } from "next/cache";
-import { deleteUploadedFiles } from "@/lib/uploadthing-server";
+import { deleteUploadedFiles } from "@/lib/r2";
 import { HERO_MAX_SLIDES } from "@/lib/validators";
 import { HERO_DEFAULT_ALT } from "@/lib/hero-slides";
 

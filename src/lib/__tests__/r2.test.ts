@@ -6,7 +6,9 @@
 // round-trip, with keyFromUrl refusing anything off the public base (legacy
 // UploadThing URLs, /public paths, look-alike hosts, traversal); object keys
 // are "<folder>/<cuid>.<ext>" with the extension from the content type; and
-// putImage sends one PutObject with the right bucket, key and Content-Type.
+// putImage sends one PutObject with the right bucket, key and Content-Type;
+// deleteUploadedFiles deletes exactly the right keys (de-duped, non-R2 values
+// skipped, ≤ 1000 per request) and never throws — the post-commit contract.
 //
 // MOCKING — @aws-sdk/client-s3: S3Client records its config and its sends.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,5 +159,76 @@ describe("objectKey / putImage", () => {
     const { putImage } = await loadR2();
 
     await expect(putImage("products", new Uint8Array([1]), "image/png")).rejects.toThrow("AccessDenied");
+  });
+});
+
+describe("deleteUploadedFiles", () => {
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  beforeEach(() => consoleError.mockClear());
+
+  it("deletes the right keys, de-duped, skipping anything not on R2", async () => {
+    const { deleteUploadedFiles } = await loadR2();
+
+    await deleteUploadedFiles([
+      "https://img.alibaba.test/products/a.webp",
+      "https://img.alibaba.test/products/a.webp", // duplicate
+      "https://img.alibaba.test/hero/b.png",
+      "https://x8k2p9.ufs.sh/f/legacy", // legacy UploadThing — not ours to delete
+      "/placeholder.jpg",
+      null,
+      undefined,
+      "",
+    ]);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const { input } = send.mock.calls[0][0] as { input: Record<string, unknown> };
+    expect(input).toEqual({
+      Bucket: ENV.R2_BUCKET,
+      Delete: { Objects: [{ Key: "products/a.webp" }, { Key: "hero/b.png" }], Quiet: true },
+    });
+  });
+
+  it("makes no request when nothing is deletable", async () => {
+    const { deleteUploadedFiles } = await loadR2();
+
+    await deleteUploadedFiles(["/placeholder.jpg", "https://utfs.io/f/x", null]);
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("splits more than 1000 keys into batches", async () => {
+    const { deleteUploadedFiles } = await loadR2();
+    const urls = Array.from({ length: 1001 }, (_, i) => `https://img.alibaba.test/products/k${i}.jpg`);
+
+    await deleteUploadedFiles(urls);
+
+    expect(send).toHaveBeenCalledTimes(2);
+    const sizes = send.mock.calls.map(([c]) => (c as { input: { Delete: { Objects: unknown[] } } }).input.Delete.Objects.length);
+    expect(sizes).toEqual([1000, 1]);
+  });
+
+  it("only logs a failed purge — never throws", async () => {
+    send.mockRejectedValue(new Error("NoSuchBucket"));
+    const { deleteUploadedFiles } = await loadR2();
+
+    await expect(deleteUploadedFiles(["https://img.alibaba.test/products/a.webp"])).resolves.toBeUndefined();
+    expect(consoleError).toHaveBeenCalled();
+  });
+
+  it("logs per-key errors reported by R2", async () => {
+    send.mockResolvedValue({ Errors: [{ Key: "products/a.webp", Code: "AccessDenied" }] });
+    const { deleteUploadedFiles } = await loadR2();
+
+    await deleteUploadedFiles(["https://img.alibaba.test/products/a.webp"]);
+
+    expect(consoleError).toHaveBeenCalled();
+  });
+
+  it("swallows missing R2 env too", async () => {
+    vi.stubEnv("R2_ENDPOINT", "");
+    const { deleteUploadedFiles } = await loadR2();
+
+    await expect(deleteUploadedFiles(["https://img.alibaba.test/products/a.webp"])).resolves.toBeUndefined();
+    expect(consoleError).toHaveBeenCalled();
   });
 });

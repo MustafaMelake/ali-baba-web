@@ -23,7 +23,7 @@ import { prisma } from "@/lib/prisma";
 // consolidated envelope gate.
 import { requireAdmin } from "@/lib/session";
 import { ensureAdmin, prismaErrorCode, slugify } from "@/lib/action-utils";
-import { deleteUploadedFiles } from "@/lib/uploadthing-server";
+import { deleteUploadedFiles } from "@/lib/r2";
 import type { Prisma } from "@/generated/prisma/client";
 import { DiscountType } from "@/generated/prisma/enums";
 import {

@@ -16,7 +16,7 @@
 //     DB level). An ordered product hits P2003 and is REFUSED with a clean
 //     message (not soft-deleted) so its history + media survive.
 //
-// Boundary mocks only (Prisma, session, next/cache, uploadthing); the real Zod
+// Boundary mocks only (Prisma, session, next/cache, the R2 purge); the real Zod
 // validators and prismaErrorCode run. Every assertion targets the exact payload.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -27,12 +27,12 @@ import type { PrismaClient } from "@/generated/prisma/client";
 vi.mock("@/lib/prisma", () => ({ prisma: mockDeep<PrismaClient>() }));
 vi.mock("@/lib/session", () => ({ requireAdmin: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/uploadthing-server", () => ({ deleteUploadedFiles: vi.fn() }));
+vi.mock("@/lib/r2", () => ({ deleteUploadedFiles: vi.fn() }));
 
 import { createProduct, updateProduct, deleteProduct } from "@/app/admin/products/actions";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session";
-import { deleteUploadedFiles } from "@/lib/uploadthing-server";
+import { deleteUploadedFiles } from "@/lib/r2";
 import type { ProductInput, ProductUpdateInput } from "@/lib/validators";
 
 const mockPrisma = prisma as unknown as DeepMockProxy<PrismaClient>;
