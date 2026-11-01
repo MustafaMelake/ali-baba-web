@@ -22,7 +22,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockDeep<PrismaClient>() }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: vi.fn() } } }));
 vi.mock("next/headers", () => ({ headers: vi.fn(async () => new Headers()) }));
 
-import { getDashboardStats, getOrders } from "@/lib/actions/dashboard";
+import { getDashboardStats, getOrders, getVisitorFunnel } from "@/lib/actions/dashboard";
 import { auth } from "@/lib/auth";
 
 const mockPrisma = prisma as unknown as DeepMockProxy<PrismaClient>;
@@ -171,5 +171,78 @@ describe("getOrders — MANAGER", () => {
 
     await expect(getOrders({ branchId: OTHER_BRANCH })).rejects.toThrow(/own branch/);
     expect(orderQueryCount()).toBe(0);
+  });
+});
+
+// ── Visitor funnel card ───────────────────────────────────────────────────────
+// Same RBAC as the order loaders: the branch is spread at the top level of the
+// VisitEvent read AND the order counts, and a foreign branch throws first.
+
+function visitWheres() {
+  return mockPrisma.visitEvent.findMany.mock.calls.map(
+    ([args]) => (args as { where?: Record<string, unknown> }).where ?? {},
+  );
+}
+
+describe("getVisitorFunnel", () => {
+  beforeEach(() => {
+    mockPrisma.visitEvent.findMany.mockResolvedValue([]);
+  });
+
+  it("scopes a MANAGER's events and orders to their own branch", async () => {
+    signedInAs("MANAGER", OWN_BRANCH);
+
+    const funnel = await getVisitorFunnel();
+
+    expect(visitWheres()).toHaveLength(1);
+    for (const where of visitWheres()) expect(where.branchId).toBe(OWN_BRANCH);
+    expect(orderWheres()).toHaveLength(2); // week + month order counts
+    for (const where of orderWheres()) expect(where.branchId).toBe(OWN_BRANCH);
+    expect(funnel.branchScoped).toBe(true);
+  });
+
+  it("refuses a MANAGER asking for another branch before reading anything", async () => {
+    signedInAs("MANAGER", OWN_BRANCH);
+
+    await expect(getVisitorFunnel({ branchId: OTHER_BRANCH })).rejects.toThrow(/own branch/);
+    expect(visitWheres()).toHaveLength(0);
+    expect(orderQueryCount()).toBe(0);
+  });
+
+  it("gives an ADMIN every branch", async () => {
+    signedInAs("ADMIN");
+
+    const funnel = await getVisitorFunnel();
+
+    for (const where of [...visitWheres(), ...orderWheres()]) expect(where).not.toHaveProperty("branchId");
+    expect(funnel.branchScoped).toBe(false);
+  });
+
+  it("refuses a customer", async () => {
+    signedInAs("USER");
+
+    await expect(getVisitorFunnel()).rejects.toThrow();
+    expect(visitWheres()).toHaveLength(0);
+  });
+
+  it("counts placed orders (not cancelled) and splits the week out of the 30-day read", async () => {
+    signedInAs("ADMIN");
+    const now = Date.now();
+    const daysAgo = (n: number) => new Date(now - n * 86_400_000);
+    mockPrisma.visitEvent.findMany.mockResolvedValue([
+      { type: "VIEW", visitorId: "recent", createdAt: daysAgo(1) },
+      { type: "VIEW", visitorId: "older", createdAt: daysAgo(20) },
+    ] as never);
+    mockPrisma.order.count.mockResolvedValueOnce(2).mockResolvedValueOnce(9);
+
+    const funnel = await getVisitorFunnel();
+
+    for (const where of orderWheres()) expect(where.status).toEqual({ not: "CANCELLED" });
+    expect(funnel.week.uniqueVisitors).toBe(1);
+    expect(funnel.month.uniqueVisitors).toBe(2);
+    expect(funnel.week.steps.at(-1)).toMatchObject({ key: "orders", count: 2 });
+    expect(funnel.month.steps.at(-1)).toMatchObject({ key: "orders", count: 9 });
+    expect(funnel.week.daily).toHaveLength(7);
+    expect(funnel.month.daily).toHaveLength(30);
   });
 });

@@ -25,10 +25,13 @@ import type { Prisma } from "@/generated/prisma/client";
 import { formatDate, formatDateTime } from "@/lib/utils";
 import { phoneSearchDigits } from "@/lib/validators";
 import { storeDayKey, storeDayParts, storeMidnight } from "@/lib/timezone";
+import { summarizeVisits, type VisitorSummary } from "@/lib/visitor-funnel";
 import type { AdminOrderView } from "@/components/admin/order-types";
 import type { TabValue } from "@/components/admin/AdminOrderFilters";
 
 const CHART_DAYS = 30;
+/** The visitor card's short window — "This week". */
+const VISITOR_WEEK_DAYS = 7;
 
 export type RevenuePoint = { date: string; revenue: number };
 
@@ -197,6 +200,73 @@ export async function getDashboardStats(
       totalAmount: o.totalAmount.toNumber(),
     })),
     chartData,
+  };
+}
+
+export type VisitorFunnel = {
+  /** The last 7 Cairo days, today included. */
+  week: VisitorSummary;
+  /** The last 30 Cairo days, today included. */
+  month: VisitorSummary;
+  /** True when the figures are pinned to one branch (a MANAGER, or an ADMIN who asked). */
+  branchScoped: boolean;
+};
+
+/**
+ * The dashboard's visitor card: unique visitors, page views, the funnel
+ * visitors → product views → add-to-cart → checkout → orders, and daily
+ * unique visitors — for the last 7 and the last 30 Cairo days, so the card's
+ * toggle needs no second request.
+ *
+ * Branch-scoped exactly like the order loaders: `branchId` is spread at the
+ * top level of BOTH the VisitEvent and the Order `where`. Storefront browsing
+ * isn't tied to a branch (events carry one only when attributable), so a
+ * MANAGER's traffic figures are only their branch's attributable events — the
+ * card says so — while the order step is their branch's real orders.
+ *
+ * The order step is the existing order-VOLUME rule (every status but
+ * CANCELLED — placed orders, not revenue), counted from the real Order table:
+ * order placement is never a tracker event, so nothing is double-counted.
+ *
+ * Reads the window's events (three columns) and does the math in memory
+ * (src/lib/visitor-funnel.ts) — one indexed range scan, bucketed by Cairo day
+ * like the revenue chart. Scale limit: fine for tens of thousands of events a
+ * month; past that, prune old rows (DOMAIN_MAP) or move the counting into SQL.
+ */
+export async function getVisitorFunnel(
+  params?: { branchId?: string },
+): Promise<VisitorFunnel> {
+  const scope = await requireDashboardAccess();
+  const branchId = resolveBranchScope(scope, params?.branchId);
+
+  const branchWhere: Prisma.OrderWhereInput = branchId ? { branchId } : {};
+  const eventBranchWhere: Prisma.VisitEventWhereInput = branchId ? { branchId } : {};
+
+  // One `now` for every window and bucket below.
+  const now = new Date();
+  const weekStart = storeMidnight(VISITOR_WEEK_DAYS - 1, now);
+  const monthStart = storeMidnight(CHART_DAYS - 1, now);
+  const placedOrders: Prisma.OrderWhereInput = { status: { not: OrderStatus.CANCELLED } };
+
+  const [events, ordersWeek, ordersMonth] = await Promise.all([
+    prisma.visitEvent.findMany({
+      where: { ...eventBranchWhere, createdAt: { gte: monthStart } },
+      select: { type: true, visitorId: true, createdAt: true },
+    }),
+    prisma.order.count({
+      where: { ...branchWhere, ...placedOrders, createdAt: { gte: weekStart } },
+    }),
+    prisma.order.count({
+      where: { ...branchWhere, ...placedOrders, createdAt: { gte: monthStart } },
+    }),
+  ]);
+
+  const weekEvents = events.filter((e) => e.createdAt >= weekStart);
+
+  return {
+    week: summarizeVisits(weekEvents, ordersWeek, VISITOR_WEEK_DAYS, now),
+    month: summarizeVisits(events, ordersMonth, CHART_DAYS, now),
+    branchScoped: !!branchId,
   };
 }
 

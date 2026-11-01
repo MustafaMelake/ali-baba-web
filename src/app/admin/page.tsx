@@ -11,11 +11,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { getServerSession } from "@/lib/session";
-import { getDashboardStats } from "@/lib/actions/dashboard";
+import { getDashboardStats, getVisitorFunnel } from "@/lib/actions/dashboard";
 import { cn, formatEGP, formatDate } from "@/lib/utils";
 import { OrderStatus } from "@/generated/prisma/enums";
 import Pill from "@/components/admin/Pill";
 import RevenueChart from "@/components/admin/RevenueChart";
+import VisitorFunnelCard from "@/components/admin/VisitorFunnelCard";
 
 export const metadata = {
   title: "Admin Dashboard | Ali Baba",
@@ -70,9 +71,11 @@ export default async function AdminDashboardPage() {
 
   // All metrics + RBAC branch scoping live in the action. A throw here means a
   // MANAGER with no branch assigned (the layout already admitted ADMIN/MANAGER).
+  // Both loaders run the same guard and branch scope, in parallel.
   let data;
+  let visitors;
   try {
-    data = await getDashboardStats();
+    [data, visitors] = await Promise.all([getDashboardStats(), getVisitorFunnel()]);
   } catch {
     return (
       <div className="mx-auto max-w-6xl">
@@ -197,6 +200,13 @@ export default async function AdminDashboardPage() {
           <RevenueChart data={chartData} />
         </div>
       </section>
+
+      {/* Visitors + conversion funnel (client-side tracker, Cairo days) */}
+      <VisitorFunnelCard
+        week={visitors.week}
+        month={visitors.month}
+        branchScoped={visitors.branchScoped}
+      />
 
       {/* Lower panels */}
       <section className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">

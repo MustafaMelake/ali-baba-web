@@ -66,6 +66,7 @@ Prefer a unique constraint + caught error over an application-level pre-check th
 
 - **"MANAGER ⇒ has a `branchId`"** — `branchId` is optional (`USER`/`ADMIN` have none), so it's enforced at two chokepoints: assignment (`updateUserRole` requires a valid branch) and access (`requireDashboardAccess` rejects a branchless manager). See `@rules/backend.md`.
 - **`MenuItem` price parity in a fixed-price category** is an admin-workflow convention (bulk `updateMany` multiply), not a DB constraint. If a fixed-price category renders a wrong price, check for divergent `MenuItem.price` rows first.
+- **`VisitEvent` references are labels, not keys.** Its `branchId` / `productId` have no FK by design, so an append-only analytics log never blocks or vanishes with a product/branch delete, and a stale id on its public write can't raise a P2003. They can dangle, so never join them back to render anything; only count by them. Old rows are prunable by age (DOMAIN_MAP D-28).
 - **`MarketingEvent` date order and span** — `endDate ≥ startDate`, a ≤ 366-day span, and a 1–100 whole-percent target are enforced by the shared `marketingEventSchema` (no CHECK constraints in this codebase). Its `@db.Date` columns hold UTC-midnight values of Cairo `"YYYY-MM-DD"` keys — write with `dayKeyToDate`, read with `dateToDayKey` (`src/lib/marketing-calendar.ts`), never with local-time getters. The model has no relations; built-in holidays are computed, not stored.
 
 ## Two sealed worlds — don't confuse the models
