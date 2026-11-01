@@ -10,7 +10,7 @@
 // Every mutation gates on `ensureAdmin()` (an ADMIN-only screen — MANAGERs
 // have no hero access), re-parses the shared `heroSlideSchema`, and busts the
 // homepage + the admin list. Replaced/deleted images are purged from the
-// UploadThing bucket best-effort AFTER the write commits — a failed purge only
+// R2 bucket best-effort AFTER the write commits — a failed purge only
 // logs, it never fails the action.
 //
 // NOTE: this is a "use server" module — every export MUST be an async function.

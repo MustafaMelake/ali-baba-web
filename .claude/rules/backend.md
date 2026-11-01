@@ -2,8 +2,8 @@
 
 Scope: `src/lib/actions/**`, `src/app/admin/products/actions.ts`, `src/lib/session.ts`,
 `src/proxy.ts`, `src/app/api/**`. The platform has **no REST/GraphQL data API** — all
-writes are Server Actions; the only route handlers are the vendored pass-throughs
-(`src/app/api/auth/[...all]/route.ts` and `src/app/api/uploadthing/route.ts`).
+writes are Server Actions. There are two route handlers: Better Auth's vendored pass-through
+(`src/app/api/auth/[...all]/route.ts`) and the ADMIN image upload (`src/app/api/upload/route.ts`, see **Uploads**).
 
 ## The Server Action contract
 
@@ -78,6 +78,12 @@ There is no automatic cache discovery. When you add a surface that renders a mut
 
 ## Uploads
 
-The real gate is `requireAdminUploader` in `src/app/api/uploadthing/core.ts` (server session read, `role !== "ADMIN"` → `UploadThingError`) — MANAGERs cannot upload. The DB stores only URL strings; orphaned bucket files are purged **best-effort, post-commit** via `deleteUploadedFiles` in `src/lib/uploadthing-server.ts` — a failed purge only logs, it never rolls back or fails the DB write.
+Images live in **Cloudflare R2**. The client is `src/lib/r2.ts`: an S3Client built **lazily** on first use, so `next build` never needs the secrets. Missing env throws `R2ConfigError` only when the client is used. Env: `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (server-only) and `NEXT_PUBLIC_R2_PUBLIC_BASE_URL` (the public host).
 
-**Every image URL an action persists must pass `isHostedImageUrl`** (`@/lib/validators`): https on an UploadThing host (`utfs.io` or one `*.ufs.sh` label — mirroring `next.config` `remotePatterns`) or a `/public` path (no `//`, `/\` or query string). A foreign host makes `next/image` throw at render and takes down the **whole ISR page** showing it (a location card → the homepage), not just the card. Enforced today in the product schemas, the category actions, `validateLocation`, `heroSlideSchema` and `collectionSchema`; a new image column follows suit.
+- **The single uploader gate is `POST /api/upload`.** It does a `getServerSession()` read and refuses with 403 unless `role === "ADMIN"` and the user isn't `mustChangePassword`. MANAGERs cannot upload. It is a route handler rather than a Server Action because an action's body is capped at 1 MB and the picker needs XHR progress events.
+- **The file goes browser → the function → R2** as a server-side `PutObject`, so the bucket needs **no CORS rule**. The function body limit on Vercel is 4.5 MB, so the server caps a file at `UPLOAD_MAX_BYTES` (4 MB). `ImageDropzone` → `src/lib/image-upload.ts` lets the admin pick up to 8 MB and re-encodes anything larger than 4 MB to WebP in the browser first.
+- **The bytes decide the type.** `sniffImageType` accepts JPEG, PNG, WebP, AVIF or GIF. SVG is refused because it can carry script. The object is stored with the sniffed Content-Type and extension. Keys are `<folder>/<cuid>.<ext>`, and the folder must be in the fixed `UPLOAD_FOLDERS` allowlist.
+- **The route answers `UploadResponse` JSON** (`{ success, url } | { success: false, error }`) and writes nothing to the DB. The form saves the URL through its own action, which re-checks `isHostedImageUrl`.
+- **The DB stores only public URL strings.** Orphaned files are purged **best-effort, post-commit** via `deleteUploadedFiles` in `src/lib/r2.ts`. It uses `keyFromUrl` and only deletes `<upload folder>/<name>` keys on the public base, one `DeleteObjects` per 1000. A failed purge only logs; it never rolls back or fails the DB write.
+
+**Every image URL an action persists must pass `isHostedImageUrl`** (`@/lib/validators`): https on the R2 public base (the host **and** path prefix of `NEXT_PUBLIC_R2_PUBLIC_BASE_URL`, mirroring `next.config` `remotePatterns`, which reads the same variable at build time) or a `/public` path (no `//`, `/\` or query string). A foreign host makes `next/image` throw at render and takes down the **whole ISR page** showing it (a location card → the homepage), not just the card. Enforced today in the product schemas, the category actions, `validateLocation`, `heroSlideSchema` and `collectionSchema`; a new image column follows suit.

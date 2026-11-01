@@ -25,7 +25,7 @@ type CategoryRow = {
 function CategoryCard({ category }: { category: CategoryRow }) {
   return (
     <article className="group flex flex-col overflow-hidden rounded-2xl border border-stone-200/70 bg-white shadow-sm transition-shadow hover:shadow-md">
-      {/* Hero image (plain CSS background — UploadThing URLs, no next/image) */}
+      {/* Hero image (plain CSS background — R2 URLs, no next/image) */}
       <div
         className="relative flex h-36 items-center justify-center bg-stone-100 bg-cover bg-center"
         style={category.image ? { backgroundImage: `url(${category.image})` } : undefined}

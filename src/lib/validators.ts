@@ -121,6 +121,26 @@ export function isUploadImageType(value: unknown): value is UploadImageType {
   return typeof value === "string" && Object.hasOwn(UPLOAD_IMAGE_TYPES, value);
 }
 
+/** What POST /api/upload answers — the same success/error union as a Server Action. */
+export type UploadResponse = { success: true; url: string } | { success: false; error: string };
+
+/**
+ * The image type a file's leading bytes actually are, or null — so the upload
+ * route (and the image migration) store what the bytes say, never what the
+ * client or a remote server claimed.
+ */
+export function sniffImageType(bytes: Uint8Array): UploadImageType | null {
+  const ascii = (from: number, to: number) => String.fromCharCode(...bytes.subarray(from, to));
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 8 && ascii(0, 8) === "\x89PNG\r\n\x1a\n") return "image/png";
+  if (bytes.length >= 6 && (ascii(0, 6) === "GIF87a" || ascii(0, 6) === "GIF89a")) return "image/gif";
+  if (bytes.length >= 12 && ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
+  if (bytes.length >= 12 && ascii(4, 8) === "ftyp" && ["avif", "avis"].includes(ascii(8, 12))) {
+    return "image/avif";
+  }
+  return null;
+}
+
 // ─── Admin-entered links ─────────────────────────────────────────────────────
 
 export const SAFE_HREF_ERROR = 'Link must start with "/", "#", or "http(s)://".';

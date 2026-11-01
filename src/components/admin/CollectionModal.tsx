@@ -3,12 +3,12 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, ImagePlus, Layers, Loader2, RefreshCw, X } from "lucide-react";
+import { Check, Layers, Loader2, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { createCollection, updateCollection } from "@/lib/actions/collections";
 import { collectionSchema, fieldErrors, type CollectionInput } from "@/lib/validators";
 import { useDialogFocus } from "@/lib/use-dialog-focus";
-import { UploadDropzone } from "@/lib/uploadthing";
+import ImageDropzone from "@/components/admin/ImageDropzone";
 import { cn } from "@/lib/utils";
 
 const inputClasses =
@@ -227,28 +227,13 @@ export default function CollectionModal({
                       </button>
                     </div>
                   ) : (
-                    <UploadDropzone
-                      endpoint="collectionImage"
-                      appearance={{
-                        container:
-                          "flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-stone-200 bg-stone-50/60 px-6 py-6",
-                        uploadIcon: "text-stone-400",
-                        label: "text-sm font-medium text-stone-600 hover:text-primary",
-                        allowedContent: "text-xs text-stone-400",
-                        button:
-                          "rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary/90 after:bg-primary/40",
+                    <ImageDropzone
+                      folder="collections"
+                      onUploaded={([uploaded]) => {
+                        setImage(uploaded);
+                        toast.success("Image uploaded");
                       }}
-                      content={{ uploadIcon: <ImagePlus className="h-7 w-7 text-stone-400" /> }}
-                      onClientUploadComplete={(res) => {
-                        const uploaded = res[0]?.ufsUrl;
-                        if (uploaded) {
-                          setImage(uploaded);
-                          toast.success("Image uploaded");
-                        }
-                      }}
-                      onUploadError={(err) => {
-                        toast.error(err.message || "Image upload failed.");
-                      }}
+                      onError={(message) => toast.error(message)}
                     />
                   )}
                   {errors.image && <p className="text-xs text-red-600">{errors.image}</p>}

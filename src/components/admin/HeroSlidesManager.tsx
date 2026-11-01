@@ -233,7 +233,7 @@ export default function HeroSlidesManager({
                   </button>
                 </div>
 
-                {/* Thumbnail — plain <img>: UploadThing / /public URLs only. */}
+                {/* Thumbnail — plain <img>: R2 / /public URLs only. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={slide.imageDesktop}

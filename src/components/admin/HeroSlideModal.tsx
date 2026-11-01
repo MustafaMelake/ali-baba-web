@@ -7,7 +7,6 @@ import {
   Check,
   ChevronDown,
   GalleryHorizontal,
-  ImagePlus,
   Link2,
   Loader2,
   Package,
@@ -24,7 +23,7 @@ import {
 import { HERO_COPY, HERO_IMAGE_SIZE, type HeroSlideView } from "@/lib/hero-slides";
 import { fieldErrors, heroSlideSchema, type HeroSlideInput } from "@/lib/validators";
 import { useDialogFocus } from "@/lib/use-dialog-focus";
-import { UploadDropzone } from "@/lib/uploadthing";
+import ImageDropzone from "@/components/admin/ImageDropzone";
 import { cn } from "@/lib/utils";
 import { HERO_FRAME_ASPECT, HeroSlideFrame } from "@/components/HeroCarousel";
 import type { HeroSlideAdminView } from "./HeroSlidesManager";
@@ -181,7 +180,7 @@ function ImageField({
       <span className="text-sm font-medium text-stone-700">{label}</span>
       {value ? (
         <div className={cn("relative overflow-hidden rounded-xl border border-stone-200", aspect)}>
-          {/* Plain <img> — UploadThing / /public URLs only. */}
+          {/* Plain <img> — R2 / /public URLs only. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={value} alt="" className="h-full w-full object-cover" />
           <button
@@ -194,30 +193,13 @@ function ImageField({
           </button>
         </div>
       ) : (
-        <UploadDropzone
-          endpoint="heroImage"
-          // Styled via `appearance` (we don't import UploadThing's global
-          // stylesheet — it ships a Tailwind v3 reset that breaks layout).
-          appearance={{
-            container:
-              "flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-stone-200 bg-stone-50/60 px-6 py-6",
-            uploadIcon: "text-stone-400",
-            label: "text-sm font-medium text-stone-600 hover:text-primary",
-            allowedContent: "text-xs text-stone-400",
-            button:
-              "rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary/90 after:bg-primary/40",
+        <ImageDropzone
+          folder="hero"
+          onUploaded={([uploaded]) => {
+            onChange(uploaded);
+            toast.success("Image uploaded");
           }}
-          content={{ uploadIcon: <ImagePlus className="h-7 w-7 text-stone-400" /> }}
-          onClientUploadComplete={(res) => {
-            const uploaded = res[0]?.ufsUrl;
-            if (uploaded) {
-              onChange(uploaded);
-              toast.success("Image uploaded");
-            }
-          }}
-          onUploadError={(err) => {
-            toast.error(err.message || "Image upload failed.");
-          }}
+          onError={(message) => toast.error(message)}
         />
       )}
       <p className="text-xs text-stone-400">{hint}</p>

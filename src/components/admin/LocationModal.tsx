@@ -4,10 +4,10 @@ import { useEffect, useState, useTransition } from "react";
 import { useDialogFocus } from "@/lib/use-dialog-focus";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Loader2, Check, MapPin, ImagePlus, RefreshCw } from "lucide-react";
+import { X, Loader2, Check, MapPin, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { createLocation, updateLocation } from "@/lib/actions/locations";
-import { UploadDropzone } from "@/lib/uploadthing";
+import ImageDropzone from "@/components/admin/ImageDropzone";
 import { cn } from "@/lib/utils";
 import { isHostedImageUrl } from "@/lib/validators";
 
@@ -333,7 +333,7 @@ export default function LocationModal({
                   />
                 </div>
 
-                {/* Image — integrated UploadThing picker (mirrors EditCategoryModal):
+                {/* Image — integrated image picker (mirrors EditCategoryModal):
                     a rounded preview + Replace once set, the dropzone when empty.
                     No more copy-pasting a URL from a separate tab. */}
                 <div className="space-y-2">
@@ -341,7 +341,7 @@ export default function LocationModal({
 
                   {imageUrl ? (
                     <div className="relative overflow-hidden rounded-xl border border-stone-200">
-                      {/* Plain <img> — UploadThing / /public URLs, no next/image yet. */}
+                      {/* Plain <img> — R2 / /public URLs, no next/image yet. */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={imageUrl}
@@ -358,32 +358,13 @@ export default function LocationModal({
                       </button>
                     </div>
                   ) : (
-                    <UploadDropzone
-                      endpoint="locationImage"
-                      // Styled via `appearance` (we don't import UploadThing's global
-                      // stylesheet — it ships a Tailwind v3 reset that breaks layout).
-                      appearance={{
-                        container:
-                          "flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-stone-200 bg-stone-50/60 px-6 py-6",
-                        uploadIcon: "text-stone-400",
-                        label: "text-sm font-medium text-stone-600 hover:text-primary",
-                        allowedContent: "text-xs text-stone-400",
-                        button:
-                          "rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary/90 after:bg-primary/40",
+                    <ImageDropzone
+                      folder="locations"
+                      onUploaded={([uploaded]) => {
+                        setImageUrl(uploaded);
+                        toast.success("Image uploaded");
                       }}
-                      content={{
-                        uploadIcon: <ImagePlus className="h-7 w-7 text-stone-400" />,
-                      }}
-                      onClientUploadComplete={(res) => {
-                        const uploaded = res[0]?.ufsUrl;
-                        if (uploaded) {
-                          setImageUrl(uploaded);
-                          toast.success("Image uploaded");
-                        }
-                      }}
-                      onUploadError={(err) => {
-                        toast.error(err.message || "Image upload failed.");
-                      }}
+                      onError={(message) => toast.error(message)}
                     />
                   )}
                   <p className="text-xs text-stone-400">

@@ -53,7 +53,7 @@ export async function updateProduct(
   const existing = await prisma.product.findUnique({
     where: { id },
     // `images` captured too: after the update commits, files the admin removed
-    // are unreferenced and get purged from the UploadThing bucket below.
+    // are unreferenced and get purged from the R2 bucket below.
     select: { id: true, slug: true, images: true, variants: { select: { id: true } } },
   });
   if (!existing) {
@@ -153,7 +153,7 @@ export async function updateProduct(
 
   // Best-effort bucket hygiene (post-commit, mirrors the variant cleanup):
   // images the admin removed from the product are unreferenced now — purge
-  // them from UploadThing so replaced media can't pile up in the bucket.
+  // them from R2 so replaced media can't pile up in the bucket.
   const keptImages = new Set(data.images);
   const removedImages = existing.images.filter((url) => !keptImages.has(url));
   if (removedImages.length > 0) await deleteUploadedFiles(removedImages);

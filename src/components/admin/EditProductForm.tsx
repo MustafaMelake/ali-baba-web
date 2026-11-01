@@ -2,14 +2,14 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, X, ImagePlus, Check, Plus, Trash2, Tag } from "lucide-react";
+import { Loader2, X, Check, Plus, Trash2, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { productUpdateSchema, fieldErrors } from "@/lib/validators";
 import { updateProduct } from "@/app/admin/products/actions";
 import { setProductCollections } from "@/lib/actions/collections";
 import MultiSelect from "@/components/admin/MultiSelect";
-import { UploadDropzone } from "@/lib/uploadthing";
+import ImageDropzone from "@/components/admin/ImageDropzone";
 import { cn, deriveVariantDiscount, slugify } from "@/lib/utils";
 
 export type SelectOption = { id: string; name: string };
@@ -375,27 +375,13 @@ export default function EditProductForm({
 
         {images.length < 4 && (
           <div className="mt-5">
-            <UploadDropzone
-              endpoint="productImage"
-              appearance={{
-                container:
-                  "rounded-2xl border-2 border-dashed border-stone-200 bg-stone-50/60 ut-uploading:opacity-70",
-                button:
-                  "bg-primary text-white text-sm font-semibold after:bg-primary/80 focus-within:ring-primary",
-                label: "text-stone-600 hover:text-primary",
-                allowedContent: "text-stone-400",
+            <ImageDropzone
+              folder="products"
+              maxFiles={4 - images.length}
+              onUploaded={(urls) => {
+                setImages((prev) => [...prev, ...urls].slice(0, 4));
               }}
-              content={{
-                uploadIcon: <ImagePlus className="h-8 w-8 text-stone-400" />,
-              }}
-              onClientUploadComplete={(res) => {
-                setImages((prev) =>
-                  [...prev, ...res.map((file) => file.ufsUrl)].slice(0, 4),
-                );
-              }}
-              onUploadError={(error) => {
-                setFormError(error.message || "Image upload failed.");
-              }}
+              onError={(message) => setFormError(message)}
             />
           </div>
         )}

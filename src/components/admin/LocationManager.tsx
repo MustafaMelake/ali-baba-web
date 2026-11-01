@@ -247,8 +247,8 @@ function LocationCard({
         <GripVertical className="h-4 w-4" />
       </button>
 
-      {/* Thumbnail — a plain <img> (not next/image) so arbitrary UploadThing /
-          external URLs render without remotePatterns config. */}
+      {/* Thumbnail — a plain <img> (not next/image) so any stored R2 /
+          /public URL renders without remotePatterns config. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={location.imageUrl}

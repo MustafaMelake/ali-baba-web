@@ -24,11 +24,6 @@ export const metadata = {
  *   — so there is NO `fixed` + padding-offset coupling that could leave phantom
  *   whitespace if the rail ever fails to render. `min-w-0` lets wide tables
  *   scroll inside the main pane instead of stretching the layout.
- *
- * NB: we deliberately do NOT import "@uploadthing/react/styles.css" here — that
- * file bundles a Tailwind v3 reset + plain `.hidden`/`.flex` rules that override
- * our v4 responsive variants and collapse the sidebar. UploadThing widgets are
- * styled locally via their `appearance` prop instead.
  */
 export default async function AdminLayout({
   children,

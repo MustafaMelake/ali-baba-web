@@ -17,6 +17,7 @@ import {
   PROTOCOL_RELATIVE_ERROR,
   SAFE_HREF_ERROR,
   safeHrefError,
+  sniffImageType,
   parseDeliveryFee,
   productInputSchema,
 } from "@/lib/validators";
@@ -102,6 +103,35 @@ describe("isHostedImageUrl", () => {
     vi.stubEnv("NEXT_PUBLIC_R2_PUBLIC_BASE_URL", "http://img.alibaba.test");
     expect(isHostedImageUrl("https://img.alibaba.test/products/a.jpg")).toBe(false);
     expect(isHostedImageUrl("/placeholder.jpg")).toBe(true);
+  });
+});
+
+// sniffImageType decides what an upload IS from its leading bytes — the route
+// and the image migration store that type, never a claimed one.
+describe("sniffImageType", () => {
+  const bytes = (...parts: (string | number[])[]) =>
+    new Uint8Array(parts.flatMap((p) => (typeof p === "string" ? [...p].map((c) => c.charCodeAt(0)) : p)));
+
+  it.each([
+    ["image/jpeg", bytes([0xff, 0xd8, 0xff, 0xdb])],
+    ["image/png", bytes([0x89], "PNG", [0x0d, 0x0a, 0x1a, 0x0a])],
+    ["image/gif", bytes("GIF89a")],
+    ["image/gif", bytes("GIF87a")],
+    ["image/webp", bytes("RIFF", [0, 0, 0, 0], "WEBP")],
+    ["image/avif", bytes([0, 0, 0, 0x1c], "ftypavif")],
+  ])("recognises %s", (type, data) => {
+    expect(sniffImageType(data)).toBe(type);
+  });
+
+  it.each([
+    ["SVG", bytes("<svg xmlns=")],
+    ["HTML", bytes("<!doctype html>")],
+    ["a truncated PNG", bytes([0x89], "PN")],
+    ["a RIFF that isn't WebP", bytes("RIFF", [0, 0, 0, 0], "WAVE")],
+    ["an HEIC (not accepted)", bytes([0, 0, 0, 0x18], "ftypheic")],
+    ["nothing", bytes()],
+  ])("rejects %s", (_label, data) => {
+    expect(sniffImageType(data)).toBeNull();
   });
 });
 

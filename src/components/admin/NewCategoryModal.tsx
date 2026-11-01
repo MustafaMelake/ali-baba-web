@@ -4,10 +4,10 @@ import { useState, useEffect, useTransition } from "react";
 import { useDialogFocus } from "@/lib/use-dialog-focus";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Loader2, Check, ImagePlus, RefreshCw, FolderPlus } from "lucide-react";
+import { X, Loader2, Check, RefreshCw, FolderPlus } from "lucide-react";
 import { toast } from "sonner";
 import { createCategory } from "@/lib/actions/categories";
-import { UploadDropzone } from "@/lib/uploadthing";
+import ImageDropzone from "@/components/admin/ImageDropzone";
 
 const inputClasses =
   "w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm text-stone-900 outline-none transition-colors placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20";
@@ -212,7 +212,7 @@ export default function NewCategoryModal({
 
                   {image ? (
                     <div className="relative overflow-hidden rounded-xl border border-stone-200">
-                      {/* Plain <img> — UploadThing URLs, no next/image in admin forms. */}
+                      {/* Plain <img> — R2 URLs, no next/image in admin forms. */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={image}
@@ -229,30 +229,13 @@ export default function NewCategoryModal({
                       </button>
                     </div>
                   ) : (
-                    <UploadDropzone
-                      endpoint="categoryImage"
-                      appearance={{
-                        container:
-                          "flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-stone-200 bg-stone-50/60 px-6 py-6",
-                        uploadIcon: "text-stone-400",
-                        label: "text-sm font-medium text-stone-600 hover:text-primary",
-                        allowedContent: "text-xs text-stone-400",
-                        button:
-                          "rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary/90 after:bg-primary/40",
+                    <ImageDropzone
+                      folder="categories"
+                      onUploaded={([uploaded]) => {
+                        setImage(uploaded);
+                        toast.success("Image uploaded");
                       }}
-                      content={{
-                        uploadIcon: <ImagePlus className="h-7 w-7 text-stone-400" />,
-                      }}
-                      onClientUploadComplete={(res) => {
-                        const uploaded = res[0]?.ufsUrl;
-                        if (uploaded) {
-                          setImage(uploaded);
-                          toast.success("Image uploaded");
-                        }
-                      }}
-                      onUploadError={(err) => {
-                        toast.error(err.message || "Image upload failed.");
-                      }}
+                      onError={(message) => toast.error(message)}
                     />
                   )}
                 </div>

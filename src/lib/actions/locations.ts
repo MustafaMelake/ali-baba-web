@@ -93,7 +93,7 @@ function validateLocation(
   const imageUrl = data.imageUrl?.trim() ?? "";
   if (imageUrl.length < 2) return { error: "Image URL is required." };
   if (imageUrl.length > 2048) return { error: "Image URL is too long (max 2048 characters)." };
-  // next/image only renders UploadThing hosts — a foreign URL here would crash
+  // next/image only renders the R2 host — a foreign URL here would crash
   // the homepage's BranchSelector, not just this card.
   if (!isHostedImageUrl(imageUrl)) return { error: HOSTED_IMAGE_ERROR };
 
