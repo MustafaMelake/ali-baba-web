@@ -63,6 +63,15 @@ enum MarketingEventType {
   CAMPAIGN // the shop's own planned promotion
 }
 
+/// A storefront analytics event (see VisitEvent). Order placement is NOT one —
+/// the funnel reads real Orders for its last step.
+enum VisitEventType {
+  VIEW // any storefront page view
+  PRODUCT_VIEW // a product detail page
+  ADD_TO_CART // a line added from a card or the PDP
+  CHECKOUT_START // the checkout page opened
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Better Auth — standard models
 // Field names & types must match what Better Auth's prismaAdapter expects.
@@ -860,4 +869,40 @@ model MarketingEvent {
 
   // The calendar reads date windows: startDate <= rangeEnd AND endDate >= rangeStart.
   @@index([startDate, endDate])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visitor analytics (admin dashboard funnel)
+//
+// One row per client-side tracker event — the storefront is ISR-cached, so a
+// server-side counter would never run on a cached hit; the tracker island
+// (src/components/analytics/VisitTracker.tsx) posts batches through the public
+// recordVisitEvents action instead. `visitorId` is a random per-browser UUID
+// kept in localStorage: no cookie, no User link, no personal data.
+//
+// Append-only and deliberately relation-free: `branchId` / `productId` are
+// plain strings, so an analytics row never blocks a product or branch delete
+// (Restrict) or disappears with one (Cascade), and a stale id on this public
+// write can't raise a P2003 that drops the batch. Old rows may be pruned later
+// (DOMAIN_MAP); nothing references them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VisitEvent {
+  id        String         @id @default(cuid())
+  type      VisitEventType
+  /// Random per-browser UUID (localStorage) — counts unique visitors, not a User id.
+  visitorId String
+  /// Pathname only — the query string is never stored.
+  path      String
+  /// The branch the event is attributable to, when known (null for browsing).
+  branchId  String?
+  /// The product viewed / added, for PRODUCT_VIEW and ADD_TO_CART.
+  productId String?
+  createdAt DateTime       @default(now())
+
+  // The dashboard funnel reads a createdAt window, optionally per type.
+  @@index([type, createdAt])
+  @@index([createdAt])
+  // A MANAGER reads the same window scoped to their branch.
+  @@index([branchId, createdAt])
 }
