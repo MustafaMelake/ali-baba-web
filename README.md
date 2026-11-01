@@ -47,7 +47,7 @@
 | **ORM** | **Prisma 7** + `@prisma/adapter-pg` | Driver-adapter over `pg`, with a clean pooled-vs-direct connection split. |
 | **Auth & RBAC** | **Better Auth 1.6** | DB-backed sessions (not JWT). Roles: `USER · ADMIN · MANAGER`. |
 | **Client State** | **Zustand 5** (`persist`) | Used narrowly — **only** for the cart, keyed by `variantId`. Everything else is server state. |
-| **Media** | **UploadThing 7** | Admin-only, role-gated upload endpoints. The database stores URL strings only. |
+| **Media** | **Cloudflare R2** (S3 API) | One ADMIN-only upload route, server-side PutObject. The database stores URL strings only. |
 | **Feedback / Charts** | `sonner` · `Recharts` · `Embla` | A toast on every mutation; bespoke analytics dashboards; buttery carousels. |
 
 ---
@@ -71,7 +71,7 @@
 ### 🔐 Role-Based Security (RBAC)
 - **Security is structural, not cosmetic.** Every page and every Server Action re-enforces permission — sidebar link-hiding is decoration only.
 - **Server Actions are guarded internally** via a single `@/lib/session` door (`requireAdmin` / `requireDashboardAccess`); a `MANAGER` is pinned to their branch on every order and revenue query.
-- **UploadThing endpoints are locked to `ADMIN`** — the middleware rejects any non-admin session with an `UploadThingError`, so even a `MANAGER` cannot upload.
+- **The image upload route is locked to `ADMIN`.** `POST /api/upload` refuses any other session with a 403, so even a `MANAGER` cannot upload, and it checks the file's bytes, not its claimed type.
 
 ---
 
@@ -203,7 +203,7 @@ ali-baba-web/
 │   │   │   └── layout.tsx       #     RBAC-guarded shell
 │   │   ├── api/
 │   │   │   ├── auth/[...all]/    #     Better Auth handler (pass-through)
-│   │   │   └── uploadthing/      #     Role-gated media endpoints (ADMIN only)
+│   │   │   └── upload/           #     Image upload to R2 (ADMIN only)
 │   │   └── layout.tsx
 │   │
 │   ├── components/

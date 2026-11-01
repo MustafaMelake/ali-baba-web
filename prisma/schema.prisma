@@ -654,7 +654,7 @@ model Location {
   title       String
   /// Editorial paragraph describing the location.
   description String
-  /// Card image URL (an UploadThing/absolute URL or a /public path).
+  /// Card image URL (an R2 URL or a /public path — isHostedImageUrl).
   imageUrl    String
   /// City/area for the LocalBusiness JSON-LD `addressLocality`, e.g. "Menouf".
   locality    String
@@ -719,7 +719,7 @@ model Collection {
   /// /collections/[slug] links never 404.
   slug         String  @unique
   description  String?
-  /// Card/header image — an UploadThing URL or a /public path (isHostedImageUrl).
+  /// Card/header image — an R2 URL or a /public path (isHostedImageUrl).
   image        String?
   /// Ascending display position: the /collections index, the footer column and
   /// the collection cards on a category page all use this one global order.
@@ -800,7 +800,7 @@ model HeroSlide {
   /// Product slides only: show the Discount-Engine starting price ("From EGP X"
   /// + strikethrough). Display-only — never stored, always resolved at render.
   showPrice    Boolean @default(true)
-  /// Desktop/tablet crop — an UploadThing URL or a /public path.
+  /// Desktop/tablet crop — an R2 URL or a /public path.
   imageDesktop String
   /// Optional art-directed phone crop; falls back to `imageDesktop`.
   imageMobile  String?

@@ -200,3 +200,17 @@ ORDER BY pending DESC;
 - **Vercel Web Analytics:** the root layout now renders `<Analytics />` from `@vercel/analytics`. It is a cookie-free, independent cross-check of the in-house funnel. **It records nothing until it is enabled**: Vercel dashboard → the project → **Analytics** tab → **Enable** (Web Analytics), then redeploy. No environment variable is needed. Its numbers include the admin console (`/admin`), and the in-house tracker counts the storefront only, so expect Vercel to read slightly higher.
 - **Smoke check:** browse a few storefront pages in a normal browser, wait about 2 s, then open `/admin` as an ADMIN. The Visitors card should show at least one unique visitor today.
 - The new debts are D-28 – D-30 in `docs/DOMAIN_MAP.md` §18.2.
+
+---
+
+## 11. Addendum (2026-11-01): image storage moves to Cloudflare R2
+
+**Order matters.** Every step runs before the next one starts.
+
+1. **Vercel env (Production + Preview):** add `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (server-only) and `NEXT_PUBLIC_R2_PUBLIC_BASE_URL` (the bucket's public URL; a custom domain is recommended over `*.r2.dev`, which Cloudflare rate-limits). `next.config` reads the public URL **at build time**, so it must exist before the build that ships this code. No bucket CORS rule is needed: uploads go through the server.
+2. **Deploy** the code. The UploadThing hosts are still accepted, so every existing image keeps rendering.
+3. **(PROD)** Run `npx tsx scripts/migrate-images-to-r2.ts --dry-run` against the production `DATABASE_URL`, then run it again without `--dry-run`. It must finish with "Failed (untouched): 0". Re-running is safe.
+4. Only then ship the final commit that drops the UploadThing hosts from `next.config` and `isHostedImageUrl` (D-31).
+5. Remove `UPLOADTHING_TOKEN` / `UPLOADTHING_SECRET` from Vercel and `.env`, and close the UploadThing account once you're satisfied. The files there are not deleted by any of this.
+
+**Rollback:** until step 3 runs, no row points at R2, so an instant rollback is safe. After step 3 the rows point at R2 and the previous deployment's `next.config` doesn't allow that host, so roll forward instead, or restore the Neon branch from before the migration.

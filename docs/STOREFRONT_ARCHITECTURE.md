@@ -37,7 +37,7 @@ model Category {
   ...
   slug        String  @unique   // drives /category/[slug]
   subtitle    String?           // marketing tagline under the title in the slider card
-  image       String?           // slider hero image (UploadThing URL or /public path)
+  image       String?           // slider hero image (R2 URL or /public path)
   /// When true, this category is surfaced in the homepage CategorySlider.
   /// Any number of categories may be featured (no longer capped at five).
   isFeatured  Boolean @default(false)
@@ -92,7 +92,7 @@ Each row is mapped to the `CategorySlider` card shape: a presentational two-digi
 - `sliderOrder` is sanitized server-side (`sanitizeSliderOrder`: non-finite → 0, floored, clamped ≥ 0).
 - Every mutation revalidates `/`, `/admin/categories`, and fires `updateTag("categories")` so the footer's cached category column updates read-your-own-writes (§1.3). `updateCategory` also revalidates `/category/${slug}`.
 - Like every admin action module, the category actions gate and translate errors through the centralized [`src/lib/action-utils.ts`](../src/lib/action-utils.ts) helpers (`ensureAdmin` RBAC gate, `prismaErrorCode`, `slugify`) — the previously copy-pasted per-file versions are gone.
-- **Bucket hygiene:** replacing or deleting a category image purges the old UploadThing file via `deleteUploadedFiles` ([`src/lib/uploadthing-server.ts`](../src/lib/uploadthing-server.ts), a `UTApi` wrapper). Purges run strictly **post-commit and best-effort** — a failed bucket delete never rolls back or fails the DB write, it only logs. Product image mutations do the same.
+- **Bucket hygiene:** replacing or deleting a category image purges the old R2 object via `deleteUploadedFiles` ([`src/lib/r2.ts`](../src/lib/r2.ts)). Purges run strictly **post-commit and best-effort** — a failed bucket delete never rolls back or fails the DB write, it only logs. Product image mutations do the same.
 
 ### 1.2 Standard Categories & the Catalog Directory — `BUILT`
 
@@ -698,7 +698,7 @@ Note the deliberate type split: **money columns are `Decimal`** (like every pric
 | Metric | Lever in use | Where |
 |---|---|---|
 | **LCP** | Server Components fetch with Prisma at render time — hero image, cards, **and resolved discount prices** arrive in the initial HTML, no client-fetch waterfall | `(shop)/page.tsx`, `/category/[slug]`, `/shop` |
-| **LCP** | `next/image` with per-breakpoint `sizes`, `remotePatterns` scoped to the UploadThing CDN (`utfs.io`, `*.ufs.sh`) | [`next.config.ts`](../next.config.ts), `CategorySlider.tsx` |
+| **LCP** | `next/image` with per-breakpoint `sizes`, `remotePatterns` scoped to the R2 public host (from `NEXT_PUBLIC_R2_PUBLIC_BASE_URL`; the legacy UploadThing hosts until the image migration) | [`next.config.ts`](../next.config.ts), `CategorySlider.tsx` |
 | **CLS** | `tabular-nums` on **every** price node that can change at runtime — PDP hero price, strikethroughs, variant pills, quantity stepper, CTA line total, menu prices | `ProductPurchasePanel`, `VariantSelector`, `MenuRow` |
 | **CLS** | Pulse-skeleton for the navbar auth state while `useSession()` is `isPending`; matching skeleton as the `/login` Suspense fallback; checkout holds its background until the cart store rehydrates, pricing settings load, **and** (guests) the cart is re-priced | `Navbar.tsx`, `LoginFallback`, `checkout/page.tsx` |
 | **INP** | `IntersectionObserver` for the menu scroll-spy instead of a `scroll` handler | `MenuClient.tsx` |

@@ -33,7 +33,7 @@
 
 ## 0 · Global Architecture Snapshot
 
-**Runtime topology.** Next.js 16 App Router, RSC-first. There is **no REST/JSON data API**: all writes flow through Server Actions (`"use server"` files under `src/lib/actions/` plus `src/app/admin/products/actions.ts`), and the only route handlers are vendored pass-throughs — Better Auth's catch-all (`src/app/api/auth/[...all]/route.ts`) and UploadThing (`src/app/api/uploadthing/route.ts`). Read-side loaders that never need a POST surface (`dashboard.ts`, `analytics.ts`, `store-settings.ts` reader) are deliberately *not* `"use server"` — they are server-only modules imported by RSC pages.
+**Runtime topology.** Next.js 16 App Router, RSC-first. There is **no REST/JSON data API**: all writes flow through Server Actions (`"use server"` files under `src/lib/actions/` plus `src/app/admin/products/actions.ts`), and the only route handlers are Better Auth's vendored catch-all (`src/app/api/auth/[...all]/route.ts`) and the ADMIN image upload to R2 (`src/app/api/upload/route.ts`, §14). Read-side loaders that never need a POST surface (`dashboard.ts`, `analytics.ts`, `store-settings.ts` reader) are deliberately *not* `"use server"` — they are server-only modules imported by RSC pages.
 
 **Two businesses, one deployment:**
 
@@ -543,22 +543,36 @@ Catalog (slider fields; hero product slides follow `LISTABLE_PRODUCT` and the `P
 ## 14 · Media Uploads
 
 ### 14.1 System Overview
-Admin-only image ingestion into UploadThing's bucket. The database stores only URL strings (`Product.images String[]`, `Category.image String?`, `Location.imageUrl`, `HeroSlide.imageDesktop`/`imageMobile?`, `Collection.image?`); persistence of those strings happens later through the Server Actions, which re-gate independently **and** refuse any URL that fails the shared `isHostedImageUrl` (`@/lib/validators`: https on `utfs.io` / a single-label `*.ufs.sh` host — mirroring `next.config` `remotePatterns` — or a `/public` path without `//`, `/\` or a query string). A foreign host would make `next/image` throw at render and take down the whole ISR page showing it, so this is enforced on every image-persisting write (products' Zod schemas, `create`/`updateCategory`, `validateLocation` + `LocationModal`, `heroSlideSchema`, `collectionSchema`).
+Admin-only image ingestion into a **Cloudflare R2** bucket. The database stores only public URL strings (`Product.images String[]`, `Category.image String?`, `Location.imageUrl`, `HeroSlide.imageDesktop`/`imageMobile?`, `Collection.image?`). Those strings are persisted later by the Server Actions, which re-gate independently **and** refuse any URL that fails the shared `isHostedImageUrl` (`@/lib/validators`). It accepts https on the R2 public base (host + path prefix of `NEXT_PUBLIC_R2_PUBLIC_BASE_URL`, mirrored in `next.config` `remotePatterns`) or a `/public` path without `//`, `/\` or a query string. A foreign host would make `next/image` throw at render and take down the whole ISR page showing it, so this is enforced on every image-persisting write (products' Zod schemas, `create`/`updateCategory`, `validateLocation` + `LocationModal`, `heroSlideSchema`, `collectionSchema`). **Transitional:** the legacy UploadThing hosts (`utfs.io`, `*.ufs.sh`) stay accepted in both places until `scripts/migrate-images-to-r2.ts` has moved every stored URL (D-31).
 
 ### 14.2 Database Schema & Integrity
-No models. Referential integrity between DB URLs and bucket objects is enforced **best-effort at mutation time**: product/category deletes and image-replacing updates purge the old bucket files via `UTApi` (`src/lib/uploadthing-server.ts` → `deleteUploadedFiles`), strictly post-commit so a failed purge can never roll back or fail the DB write (it only logs). There is no background reconciliation sweep.
+No models. Referential integrity between DB URLs and bucket objects is enforced **best-effort at mutation time**. Product, category, collection and hero-slide deletes, and image-replacing updates, purge the old objects through `deleteUploadedFiles` (`src/lib/r2.ts`). It is strictly post-commit, so a failed purge can never roll back or fail the DB write; it only logs. There is no background reconciliation sweep, and an upload whose form is never saved stays in the bucket.
 
 ### 14.3 File Boundaries
-`src/app/api/uploadthing/core.ts` — `requireAdminUploader(req)` middleware (server-side session read + `role !== "ADMIN"` ⇒ `UploadThingError`; this is *the real gate*, executed before any upload is admitted); routes `productImage` (≤ 4 MB × 4), `categoryImage` (≤ 4 MB × 1), `locationImage` (≤ 4 MB × 1), `collectionImage` (≤ 4 MB × 1) and `heroImage` (≤ **8 MB** × 1 — designed banners with baked-in text are often large PNGs; `next/image` re-encodes for delivery); `src/app/api/uploadthing/route.ts`; `src/lib/uploadthing.ts` (typed client helpers); `src/lib/uploadthing-server.ts` (`UTApi` admin client + `deleteUploadedFiles` best-effort purge — extracts file keys from stored `…/f/<key>` URLs, silently skips `/public` paths). Consumers: `NewProductForm`, `EditProductForm`, category modals, `LocationModal`, `HeroSlideModal`, `CollectionModal`; purge callers: product + category delete/update actions, hero-slide update/delete.
+- `src/lib/r2.ts` (server-only): a **lazy** S3Client (region `auto`, `R2_ENDPOINT` + key pair, built on first use so `next build` never needs the secrets; `R2ConfigError` names a missing variable).
+  - `publicUrl(key)` / `keyFromUrl(url)`: the latter only parses `<upload folder>/<name>` keys on the public base.
+  - `objectKey` → `<folder>/<cuid>.<ext>`, `putImage`, and `deleteUploadedFiles` (de-dupe, skip non-R2 values, `DeleteObjects` ≤ 1000 per request).
+- `src/app/api/upload/route.ts` is **the single uploader gate**: `getServerSession()`, ADMIN and not `mustChangePassword`, else 401/403.
+  - Folder from the fixed `UPLOAD_FOLDERS` (`products`, `categories`, `hero`, `collections`, `locations`). Max `UPLOAD_MAX_BYTES` (4 MB, under Vercel's 4.5 MB function body limit).
+  - Type from the leading bytes (`sniffImageType`: JPEG/PNG/WebP/AVIF/GIF, never SVG). Answers `UploadResponse` JSON.
+- `src/lib/image-upload.ts` (browser): `pickError` (≤ 8 MB, image types), `shrinkToFit` (re-encodes a pick over 4 MB to WebP before sending), `uploadImage` (XHR for progress).
+- `src/components/admin/ImageDropzone.tsx`: choose/drop, in-flight preview, progress, multi-select for the product gallery.
+- Consumers: `NewProductForm`, `EditProductForm`, category modals, `LocationModal`, `HeroSlideModal`, `CollectionModal`. Purge callers: the product, category, collection and hero-slide update/delete actions.
+- `scripts/migrate-images-to-r2.ts`: the one-off copy of pre-R2 images (§14.4).
 
 ### 14.4 Step-by-Step Data Flow
-Client widget → UploadThing → middleware authorizes per-request → file lands in bucket → `ufsUrl` returned via `onClientUploadComplete` → the URL enters the form state → persisted by `createProduct`/`updateProduct`/category actions. On the way out: `deleteProduct`/`deleteCategory` capture the stored URLs **before** the row is deleted and purge them after the delete commits; `updateProduct`/`updateCategory` purge whichever images the save removed or replaced (all best-effort — a Restrict-blocked delete purges nothing, since the row keeps its media).
+**Upload:** `ImageDropzone` → (shrink if > 4 MB) → `POST /api/upload` (multipart `file` + `folder`) → gate → sniff → `PutObject` server-side (no browser→R2, so **no bucket CORS**) → `{ success, url }` → the URL enters the form state → persisted by the entity's action, which re-checks `isHostedImageUrl`.
+
+**Purge:** deletes capture the stored URLs **before** the row is deleted and purge them after the delete commits. Updates purge whichever images the save removed or replaced. All of it is best-effort; a Restrict-blocked delete purges nothing, since the row keeps its media.
+
+**Migration (one-off):** `npx tsx scripts/migrate-images-to-r2.ts [--dry-run]` scans every image column. It skips values already on R2 and `/public` paths, downloads the rest, sniffs them, puts them under the kind's folder and rewrites the row. It is idempotent, never deletes, and lists (and leaves untouched) anything it can't copy.
 
 ### 14.5 Intersections & Blast Radius
-RBAC (§2), Catalog (§3). MANAGERs cannot upload (ADMIN-only middleware) — consistent with catalog being ADMIN-only.
+RBAC (§2) and Catalog (§3). MANAGERs cannot upload (ADMIN-only route), consistent with the catalog being ADMIN-only. Caching (§16): `next.config` reads `NEXT_PUBLIC_R2_PUBLIC_BASE_URL` **at build time** for `remotePatterns`, so a build without it can't render R2 images. The client bundle inlines the same value for `isHostedImageUrl`.
 
 ### 14.6 Technical Debt & Vestigial Code
-- `@uploadthing/react/styles.css` is deliberately **not** imported (it bundles a Tailwind-v3 reset that collapses the admin sidebar); widgets are styled via `appearance` props — do not "fix" this by importing it (documented in `admin/layout.tsx`).
+- D-31: legacy UploadThing hosts are still accepted until the image migration has run against production; then they are dropped from `next.config` and `isHostedImageUrl`.
+- Orphans: an image uploaded but never saved (the form closed) stays in the bucket. Same as before; no sweep.
 
 ---
 
@@ -679,6 +693,7 @@ Read row → depends on column. ● = hard dependency (breaks), ○ = soft (degr
 | D-28 | §12 | `VisitEvent` grows with every storefront page view and nothing prunes it. Add an age-based delete (e.g. > 90 days) when the table gets large. Nothing references the rows | Retention (future) |
 | D-29 | §12 | Storefront browsing carries no branch (the catalog is branch-agnostic), so a MANAGER's branch-scoped funnel shows only attributable events (none today) plus their own orders. The card says so. Attribute events to a branch (e.g. a per-branch landing link or the checkout's chosen branch) if managers need traffic | Feature gap |
 | D-30 | §12 | `getVisitorFunnel` pulls the 30-day window's events (three columns) into Node to count. Fine for tens of thousands a month; past that, move the distinct counts and Cairo-day buckets into SQL (`AT TIME ZONE` with `STORE_TZ`, as `getAnalytics` does) | Perf (future) |
+| D-31 | §14 | The legacy UploadThing hosts (`utfs.io`, `*.ufs.sh`) are still accepted by `isHostedImageUrl` and `next.config` until `scripts/migrate-images-to-r2.ts` has moved every stored URL. Drop both once a run against production reports nothing left | Transitional |
 
 ---
 
