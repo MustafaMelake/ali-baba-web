@@ -191,3 +191,12 @@ ORDER BY pending DESC;
 
 - Delete the `deploy-rehearsal` Neon branch, if you made one. Keep `pre-deploy-2026-10-24` for a week, then delete it.
 - The open debts this release leaves are tracked in `docs/DOMAIN_MAP.md` §18.2 (D-19 – D-27).
+
+---
+
+## 10. Addendum (2026-11-01): visitor analytics
+
+- **Migration:** `20261101000000_add_visit_events` is purely additive (a new enum, the `VisitEvent` table and three indexes, no foreign keys). The build applies it like any other. Rollback is the same as §8: leave the table, the old code never reads it.
+- **Vercel Web Analytics:** the root layout now renders `<Analytics />` from `@vercel/analytics`. It is a cookie-free, independent cross-check of the in-house funnel. **It records nothing until it is enabled**: Vercel dashboard → the project → **Analytics** tab → **Enable** (Web Analytics), then redeploy. No environment variable is needed. Its numbers include the admin console (`/admin`), and the in-house tracker counts the storefront only, so expect Vercel to read slightly higher.
+- **Smoke check:** browse a few storefront pages in a normal browser, wait about 2 s, then open `/admin` as an ADMIN. The Visitors card should show at least one unique visitor today.
+- The new debts are D-28 – D-30 in `docs/DOMAIN_MAP.md` §18.2.

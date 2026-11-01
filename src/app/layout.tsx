@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Cormorant_Garamond, Geist } from "next/font/google"; // استخدمنا خط فاخر للـ Serif
 import { Toaster } from "sonner";
+import { Analytics } from "@vercel/analytics/next";
 import { GRID_DENSITY_SCRIPT } from "@/lib/grid-density";
 import CartSyncProvider from "@/components/providers/CartSyncProvider";
 import PasswordChangeGate from "@/components/providers/PasswordChangeGate";
@@ -62,6 +63,10 @@ export default function RootLayout({
         {/* Holds a user with an admin-reset password on /account/change-password. */}
         <PasswordChangeGate />
         <Toaster richColors position="top-center" />
+        {/* Vercel Web Analytics — cookie-free, independent cross-check of the
+            in-house visitor funnel (VisitEvent). Inert until Web Analytics is
+            enabled for the project in the Vercel dashboard. */}
+        <Analytics />
       </body>
     </html>
   );
