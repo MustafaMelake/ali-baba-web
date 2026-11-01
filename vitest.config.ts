@@ -20,7 +20,8 @@ export default defineConfig({
     // race that worker threads hit on Windows single-file runs — stronger
     // isolation for a negligible cost at this suite size.
     pool: "forks",
-    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    // scripts/ holds one-off maintenance scripts whose core loops are tested too.
+    include: ["src/**/*.{test,spec}.{ts,tsx}", "scripts/**/*.{test,spec}.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "text-summary", "html"],
