@@ -54,6 +54,63 @@ export function isHostedImageUrl(url: string): boolean {
 
 const hostedImageUrl = z.string().trim().refine(isHostedImageUrl, HOSTED_IMAGE_ERROR);
 
+// ─── Image uploads (Cloudflare R2) ───────────────────────────────────────────
+
+/**
+ * The R2 bucket's public origin (+ optional path prefix) from
+ * NEXT_PUBLIC_R2_PUBLIC_BASE_URL, without a trailing slash — or null when it's
+ * unset or not an https URL. Read on every call (not at module load) so the
+ * build never throws without it; Next inlines the NEXT_PUBLIC_ value into the
+ * client bundle, so client and server agree on the same host.
+ */
+export function r2PublicBase(): { origin: string; hostname: string; prefix: string } | null {
+  const raw = process.env.NEXT_PUBLIC_R2_PUBLIC_BASE_URL;
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || url.port !== "" || url.search || url.hash) return null;
+    return { origin: url.origin, hostname: url.hostname, prefix: url.pathname.replace(/\/+$/, "") };
+  } catch {
+    return null;
+  }
+}
+
+/** Bucket folders, one per image kind — the upload route refuses anything else. */
+export const UPLOAD_FOLDERS = ["products", "categories", "hero", "collections", "locations"] as const;
+export type UploadFolder = (typeof UPLOAD_FOLDERS)[number];
+
+/**
+ * Server cap per upload. The route runs as a Vercel function, whose request
+ * body limit is 4.5 MB, so the multipart body must stay under it. The picker
+ * accepts up to UPLOAD_PICK_MAX_BYTES and re-encodes a larger file in the
+ * browser before sending.
+ */
+export const UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+/** Largest file the admin may pick (shrunk client-side to UPLOAD_MAX_BYTES). */
+export const UPLOAD_PICK_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Accepted image types → the object-key extension. The extension and the
+ * stored Content-Type come from the validated type, never the client filename.
+ * No SVG: it can carry script and would be served from our image host.
+ */
+export const UPLOAD_IMAGE_TYPES = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/avif": "avif",
+  "image/gif": "gif",
+} as const satisfies Record<string, string>;
+export type UploadImageType = keyof typeof UPLOAD_IMAGE_TYPES;
+
+export function isUploadFolder(value: unknown): value is UploadFolder {
+  return typeof value === "string" && (UPLOAD_FOLDERS as readonly string[]).includes(value);
+}
+
+export function isUploadImageType(value: unknown): value is UploadImageType {
+  return typeof value === "string" && Object.hasOwn(UPLOAD_IMAGE_TYPES, value);
+}
+
 // ─── Admin-entered links ─────────────────────────────────────────────────────
 
 export const SAFE_HREF_ERROR = 'Link must start with "/", "#", or "http(s)://".';
