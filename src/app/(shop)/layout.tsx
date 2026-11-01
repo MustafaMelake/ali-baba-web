@@ -1,5 +1,6 @@
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/layout/Footer";
+import VisitTracker from "@/components/analytics/VisitTracker";
 
 /**
  * Storefront chrome for EVERY (shop) route: the fixed Navbar (which also
@@ -23,6 +24,8 @@ export default function ShopLayout({
       {/* flex-grow pushes the Footer to the bottom (root body is flex-col). */}
       <main className="flex-grow pt-16 md:pt-20">{children}</main>
       <Footer />
+      {/* Client-side page views — the ISR cache runs no server code per visit. */}
+      <VisitTracker />
     </>
   );
 }

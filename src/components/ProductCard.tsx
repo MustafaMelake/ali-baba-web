@@ -8,6 +8,7 @@ import { Plus, Check, ArrowUpRight } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { formatMoney } from "@/lib/utils";
+import { trackVisit } from "@/lib/visit-tracker";
 import { percentOff } from "@/lib/discounts";
 import { isOnSale } from "@/lib/shop-filters";
 import WishlistButton from "@/components/products/WishlistButton";
@@ -58,6 +59,7 @@ export default function ProductCard({ product }: { product: ShopProduct }) {
       },
       isLoggedIn,
     );
+    trackVisit("add_to_cart", { productId: product.id });
     setAdded(true);
     setTimeout(() => setAdded(false), 1800);
   }

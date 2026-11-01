@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Minus, Plus, ShoppingBag, Check } from "lucide-react";
 import { useCartStore } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { CHECKOUT_MAX_QUANTITY } from "@/lib/validators";
 import { formatMoney } from "@/lib/utils";
+import { trackVisit } from "@/lib/visit-tracker";
 import WishlistButton from "@/components/products/WishlistButton";
 import VariantSelector, {
   type SelectableVariant,
@@ -51,6 +52,11 @@ export default function ProductPurchasePanel({
   // When logged in, each add also persists to the DB (cross-device cart).
   const isLoggedIn = !!useSession().data?.user;
 
+  // Funnel step 2 — the PDP is ISR-cached, so the browser reports the view.
+  useEffect(() => {
+    trackVisit("product_view", { productId: product.id });
+  }, [product.id]);
+
   const activeVariant =
     variants.find((v) => v.id === selectedVariantId) ?? defaultVariant;
 
@@ -78,6 +84,7 @@ export default function ProductPurchasePanel({
       },
       isLoggedIn,
     );
+    trackVisit("add_to_cart", { productId: product.id });
     setAdded(true);
     setTimeout(() => setAdded(false), 2500);
   }

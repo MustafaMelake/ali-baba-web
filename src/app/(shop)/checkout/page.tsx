@@ -19,6 +19,7 @@ import { useCartStore, type CartItem } from "@/lib/cart-store";
 import { useSession } from "@/lib/auth-client";
 import { placeOrder } from "@/lib/actions/orders";
 import { getActiveBranches } from "@/lib/actions/branches";
+import { trackVisit } from "@/lib/visit-tracker";
 import { getBranchStockIssues, type BranchStockIssue } from "@/lib/actions/branch-stock";
 import { getPublicPricingSettings } from "@/lib/actions/store-settings";
 import type { PricingSettings } from "@/lib/store-settings";
@@ -554,6 +555,13 @@ export default function CheckoutPage() {
     ...i,
     category: i.category ?? "",
   }));
+
+  // Funnel step 4 — reported once the persisted cart has rehydrated, and only
+  // when there is something to check out (an empty-cart visit is not a start).
+  const hasCartLines = hydrated && cartItems.length > 0;
+  useEffect(() => {
+    if (hasCartLines) trackVisit("checkout_start");
+  }, [hasCartLines]);
 
   // Form state
   const [mode, setMode] = useState<Mode>("delivery");

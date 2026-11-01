@@ -754,6 +754,49 @@ export const soldOutTodaySchema = z
 
 export type SoldOutTodayInput = z.infer<typeof soldOutTodaySchema>;
 
+// ─── Visitor analytics (recordVisitEvents) ──────────────────────────────────
+
+/** What the storefront tracker reports. Order placement is NOT one — the funnel counts real Orders. */
+export const VISIT_EVENT_KINDS = ["view", "product_view", "add_to_cart", "checkout_start"] as const;
+export type VisitEventKind = (typeof VISIT_EVENT_KINDS)[number];
+
+/** Events per call — the tracker flushes at this size, so one call is one bounded insert. */
+export const VISIT_BATCH_MAX = 20;
+export const VISIT_PATH_MAX = 200;
+
+/**
+ * One tracker batch. The action is a PUBLIC endpoint, so every column is bounded
+ * here: a UUID visitor id, a bare pathname (no query string or fragment — the
+ * tracker never sends one, and junk is refused rather than stored), short ids.
+ */
+export const visitBatchSchema = z.object({
+  visitorId: z.uuid(),
+  events: z
+    .array(
+      z.object({
+        type: z.enum(VISIT_EVENT_KINDS),
+        path: z.string().max(VISIT_PATH_MAX).regex(/^\/[^?#\s]*$/),
+        productId: z.string().min(1).max(64).optional(),
+        branchId: z.string().min(1).max(64).optional(),
+      }),
+    )
+    .min(1)
+    .max(VISIT_BATCH_MAX),
+});
+
+export type VisitBatchInput = z.input<typeof visitBatchSchema>;
+
+// Common crawlers, link-preview fetchers, headless browsers and HTTP clients.
+// Deliberately broad: a missed human costs one uncounted visit, a missed bot
+// inflates the funnel.
+const BOT_USER_AGENT =
+  /bot|crawl|spider|slurp|mediapartners|facebookexternalhit|whatsapp|telegram|preview|headless|lighthouse|pagespeed|curl|wget|python|axios|node-fetch|go-http|java\/|okhttp|scrapy|httpclient/i;
+
+/** True when a request's User-Agent is missing or looks automated — its visit events are dropped. */
+export function isBotUserAgent(userAgent: string | null | undefined): boolean {
+  return !userAgent || BOT_USER_AGENT.test(userAgent);
+}
+
 /**
  * Flattens a ZodError into a `{ "path.to.field": "message" }` map. Stable across
  * Zod minor versions (reads `.issues` directly) and handles nested paths like

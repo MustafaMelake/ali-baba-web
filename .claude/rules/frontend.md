@@ -80,6 +80,8 @@ decision — the store's docblock calls the dynamic route "the trap this store r
 Any new personalized affordance on a cached surface follows the same shape: cached
 shell, client store keyed by user, one fetch, optimistic writes.
 
+**Visitor analytics are reported by the browser, never counted on the server.** A cached ISR hit runs no server code, so a server-side counter would miss most visits; adding one would force the route dynamic. `VisitTracker` (mounted once in the `(shop)` layout) calls `trackVisit("view")` on each pathname change. `ProductPurchasePanel` reports `product_view` and `add_to_cart`, the card quick-add reports `add_to_cart`, and checkout reports `checkout_start` once the hydrated cart has lines. `src/lib/visit-tracker.ts` batches events into one `recordVisitEvents` call (1.5 s pause, a full batch, or the tab hiding). It is fire-and-forget: never awaited, never toasted, every failure swallowed, skipped under `navigator.webdriver`. The visitor id is a random UUID in localStorage (in memory if storage throws): no cookie, no account link, pathname only. The tracker reads `usePathname()`, never `useSearchParams()`. Order placement is not an event; the funnel counts real orders. A new funnel step follows the same shape: one `trackVisit` call at the interaction, no server work on the cached route.
+
 **A per-visitor *layout* preference on a cached surface goes on `<html>`, not in React.**
 The phone grid density (2-up / 1-up, `src/lib/grid-density.ts`) is the reference. An
 inline `<head>` script in the root layout copies the saved choice from `localStorage`
