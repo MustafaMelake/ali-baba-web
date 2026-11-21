@@ -69,4 +69,4 @@ A `Branch` is simultaneously a **pickup point**, a **delivery area**, the **per-
 
 ## Reviews
 
-Auth-gated (no anonymous path); `userId` + `authorName` come from the session, **never** form input (`authorName` is a point-in-time snapshot). Created `isApproved: false` — invisible until an admin approves. Moderation revalidates the queue always, and the public PDP only when the change affects it.
+Auth-gated (no anonymous path); `userId` + `authorName` come from the session, **never** form input (`authorName` is a point-in-time snapshot). Created `isApproved: false` — invisible until an admin approves. **Submitting revalidates nothing** (audit L-12): the review is invisible, so busting the cached PDP would only let any account force re-renders. Moderation revalidates the queue always, and the public PDP only when the change affects it (approval, or deleting an approved review).

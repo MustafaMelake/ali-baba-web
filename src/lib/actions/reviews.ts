@@ -104,7 +104,7 @@ export async function submitProductReview(
   // instead of surfacing a raw Prisma foreign-key error.
   const product = await prisma.product.findUnique({
     where: { id: productId },
-    select: { slug: true },
+    select: { id: true },
   });
   if (!product) {
     return { success: false, error: "This product no longer exists." };
@@ -124,9 +124,11 @@ export async function submitProductReview(
       },
     });
 
-    // The new review is unapproved, so nothing it adds is visible yet; we
-    // revalidate so the page reflects any approval that lands later.
-    revalidatePath(`/product/${product.slug}`);
+    // No revalidation (audit L-12): the review is created unapproved, so the
+    // cached product page has nothing new to show — and busting it here let any
+    // signed-in account force a PDP re-render on demand. approveReview
+    // revalidates the page when the review actually becomes visible; the
+    // moderation queue (/admin/reviews) is force-dynamic.
 
     return {
       success: true,
