@@ -23,7 +23,13 @@ When several live promotions apply, **exactly one** applies: the one yielding th
 
 ### No promotion may make a product free
 
-The engine floors prices at 0, so a big enough promotion silently gives products away. `promotions.ts` refuses a `FIXED_AMOUNT` value at or above the cheapest **available** variant it targets (directly, via its product, via its category, or via a collection — any collection, active or not, since a draft can be published later) on create, update **and** re-activation, and caps `PERCENTAGE` below 100. The other direction is guarded too: `collections.ts` refuses publishing a collection, or adding products to an active one, when a live or scheduled `FIXED_AMOUNT` promotion on it would reach the cheapest variant brought in. A price edited afterwards is caught by `placeOrder`, which refuses any 0 EGP line rather than bill it.
+The engine floors prices at 0, so a big enough promotion silently gives products away. **Three doors are guarded, through ONE comparison** — `fixedAmountMakesFree(value, price)` in `discounts.ts` (with `findFreeingPromotion` for the product side), which puts both sides on the 2-dp grid first, since the columns are `Decimal(12,2)` and `199.999` is stored as `200.00`. Never re-implement that comparison inline.
+
+1. **Promotion writes** — `promotions.ts` refuses a `FIXED_AMOUNT` value at or above the cheapest **available** variant it targets (directly, via its product, via its category, or via a collection — any collection, active or not, since a draft can be published later) on create, update **and** re-activation, and caps `PERCENTAGE` below 100. `validatePromotion` rounds the value with `roundMoney` **before** every check and stores the rounded value, so `99.996%` is refused rather than stored as `100.00`.
+2. **Collection writes** — `collections.ts` refuses publishing a collection, or adding products to an active one, when a live or scheduled `FIXED_AMOUNT` promotion on it would reach the cheapest variant brought in.
+3. **Product writes** — `createProduct` / `updateProduct` refuse the whole write (before the transaction, no partial write) when a live or scheduled `FIXED_AMOUNT` promotion reaching any orderable variant — via that variant, the product, its **new** category, or any collection it's in — would take it to 0: a cheaper new size, a lowered price, or a move into a promoted category. A product being switched off isn't checked (it isn't sold); switching it back on is.
+
+All three are check-then-write, so a concurrent edit can still slip between them; `placeOrder` is the backstop and refuses any 0 EGP line rather than bill it.
 
 ### Single `now` per request — mandatory
 

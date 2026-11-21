@@ -67,13 +67,19 @@ function updateInput(
 }
 
 /** Wire `product.findUnique`: the by-id lookup returns a product owning
- *  `variantIds`; the by-slug uniqueness pre-check returns null (no conflict). */
-function stubExistingProduct(variantIds: string[], images: string[] = []) {
+ *  `variantIds` (all orderable unless listed in `archivedIds`); the by-slug
+ *  uniqueness pre-check returns null (no conflict). */
+function stubExistingProduct(variantIds: string[], images: string[] = [], archivedIds: string[] = []) {
   mockPrisma.product.findUnique.mockImplementation((args: { where: { slug?: string } }) =>
     Promise.resolve(
       args.where.slug !== undefined
         ? null
-        : { id: "prod1", slug: "chocolate-cake", images, variants: variantIds.map((id) => ({ id })) },
+        : {
+            id: "prod1",
+            slug: "chocolate-cake",
+            images,
+            variants: variantIds.map((id) => ({ id, isAvailable: !archivedIds.includes(id) })),
+          },
     ) as never,
   );
 }
@@ -89,6 +95,9 @@ beforeEach(() => {
   // Interactive $transaction: run the callback with the deep mock as `tx`.
   mockPrisma.$transaction.mockImplementation((async (cb: (tx: typeof mockPrisma) => unknown) =>
     cb(mockPrisma)) as never);
+
+  // No fixed-amount promotion reaches the product unless a test says so.
+  mockPrisma.promotion.findMany.mockResolvedValue([] as never);
 
   // Default happy-path writes.
   mockPrisma.product.update.mockResolvedValue({} as never);
@@ -297,5 +306,212 @@ describe("createProduct — validation feedback", () => {
 
     expect(res).toEqual({ success: false, error: "Name must be at least 2 characters" });
     expect(mockPrisma.product.create).not.toHaveBeenCalled();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// No promotion may make a product free — the product side (audit C-1 / M-2)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** A promotion row as the guard's query returns it: which level matched it. */
+function fixedPromo(
+  name: string,
+  value: number,
+  via: { category?: boolean; product?: boolean; collection?: boolean; variantIds?: string[] },
+) {
+  return {
+    name,
+    value: { toNumber: () => value }, // a Prisma Decimal
+    categories: via.category ? [{ id: "cat1" }] : [],
+    products: via.product ? [{ id: "prod1" }] : [],
+    collections: via.collection ? [{ id: "col1" }] : [],
+    variants: (via.variantIds ?? []).map((id) => ({ id })),
+  };
+}
+
+const FREE_ERROR = /would make "Chocolate Cake — Mini" \(20 EGP\) free/;
+
+describe("createProduct / updateProduct — refuse a write that prices a line at 0 EGP", () => {
+  it("refuses adding a cheaper variant under a category fixed-amount promotion — no partial write", async () => {
+    stubExistingProduct(["v1"]);
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Eid −30", 30, { category: true })] as never);
+
+    const res = await updateProduct(
+      "prod1",
+      updateInput([
+        { id: "v1", name: "Large", price: 90 },
+        { name: "Mini", price: 20 },
+      ]),
+    );
+
+    expect(res).toEqual({ success: false, error: expect.stringMatching(FREE_ERROR) });
+    expect(res.success === false && res.error).toContain('"Eid −30" takes 30 EGP off');
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.productVariant.delete).not.toHaveBeenCalled();
+    expect(mockedDeleteFiles).not.toHaveBeenCalled();
+  });
+
+  it("refuses lowering an existing price into the danger zone (product-level promotion)", async () => {
+    stubExistingProduct(["v1"]);
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Launch", 25, { product: true })] as never);
+
+    const res = await updateProduct("prod1", updateInput([{ id: "v1", name: "Mini", price: 20 }]));
+
+    expect(res).toEqual({ success: false, error: expect.stringMatching(FREE_ERROR) });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses moving the product into a category that carries such a promotion — matched on the NEW category", async () => {
+    stubExistingProduct(["v1"]);
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Eid −30", 30, { category: true })] as never);
+
+    const input = { ...updateInput([{ id: "v1", name: "Mini", price: 20 }]), categoryId: "cat-eid" };
+    const res = await updateProduct("prod1", input);
+
+    expect(res.success).toBe(false);
+    const where = mockPrisma.promotion.findMany.mock.calls[0][0]!.where!;
+    expect(where).toMatchObject({ type: "FIXED_AMOUNT", isActive: true });
+    expect(JSON.stringify(where.OR)).toContain('"cat-eid"');
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses a price that a collection the product is in would take to 0", async () => {
+    stubExistingProduct(["v1"]);
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Ramadan box", 20, { collection: true })] as never);
+
+    const res = await updateProduct("prod1", updateInput([{ id: "v1", name: "Mini", price: 20 }]));
+
+    expect(res).toEqual({ success: false, error: expect.stringMatching(FREE_ERROR) });
+  });
+
+  it("counts live AND scheduled promotions: filters on endDate ≥ now, never on startDate", async () => {
+    stubExistingProduct(["v1"]);
+
+    await updateProduct("prod1", updateInput([{ id: "v1", name: "Large", price: 90 }]));
+
+    const where = mockPrisma.promotion.findMany.mock.calls[0][0]!.where!;
+    expect(where.endDate).toEqual({ gte: expect.any(Date) });
+    expect(where).not.toHaveProperty("startDate");
+  });
+
+  it("a variant-level promotion only reaches the variant it names", async () => {
+    stubExistingProduct(["v1", "v2"]);
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Tray deal", 50, { variantIds: ["v1"] })] as never);
+
+    // v2 dropped to 20 is NOT reached by the v1-only promotion → allowed.
+    const ok = await updateProduct(
+      "prod1",
+      updateInput([
+        { id: "v1", name: "Tray", price: 300 },
+        { id: "v2", name: "Mini", price: 20 },
+      ]),
+    );
+    expect(ok.success).toBe(true);
+
+    // v1 dropped to 50 IS reached → refused.
+    const refused = await updateProduct(
+      "prod1",
+      updateInput([
+        { id: "v1", name: "Tray", price: 50 },
+        { id: "v2", name: "Mini", price: 20 },
+      ]),
+    );
+    expect(refused).toEqual({
+      success: false,
+      error: expect.stringMatching(/would make "Chocolate Cake — Tray" \(50 EGP\) free/),
+    });
+  });
+
+  it("lets a safe edit through", async () => {
+    stubExistingProduct(["v1"]);
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Eid −30", 30, { category: true })] as never);
+
+    const res = await updateProduct(
+      "prod1",
+      updateInput([
+        { id: "v1", name: "Large", price: 90 },
+        { name: "Small", price: 45 },
+      ]),
+    );
+
+    expect(res).toEqual({ success: true, archivedCount: 0 });
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("judges the rounding edge on the stored 2-dp grid: 199.999 off a 200 EGP price is refused", async () => {
+    stubExistingProduct(["v1"]);
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Typo", 199.999, { category: true })] as never);
+
+    const res = await updateProduct("prod1", updateInput([{ id: "v1", name: "Tray", price: 200 }]));
+    expect(res.success).toBe(false);
+
+    // 199.99 stays below 200 → allowed.
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Fine", 199.99, { category: true })] as never);
+    const ok = await updateProduct("prod1", updateInput([{ id: "v1", name: "Tray", price: 200 }]));
+    expect(ok.success).toBe(true);
+  });
+
+  it("skips an archived (unorderable) variant — it is never priced", async () => {
+    stubExistingProduct(["v1", "v_old"], [], ["v_old"]);
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Eid −30", 30, { category: true })] as never);
+
+    const res = await updateProduct(
+      "prod1",
+      updateInput([
+        { id: "v1", name: "Large", price: 90 },
+        { id: "v_old", name: "Old mini", price: 10 },
+      ]),
+    );
+
+    expect(res.success).toBe(true);
+  });
+
+  it("does not check a product being switched OFF (it isn't sold) — switching it back on is checked", async () => {
+    stubExistingProduct(["v1"]);
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Eid −30", 30, { category: true })] as never);
+
+    const off = await updateProduct("prod1", {
+      ...updateInput([{ id: "v1", name: "Mini", price: 20 }]),
+      isAvailable: false,
+    });
+    expect(off.success).toBe(true);
+    expect(mockPrisma.promotion.findMany).not.toHaveBeenCalled();
+
+    const on = await updateProduct("prod1", updateInput([{ id: "v1", name: "Mini", price: 20 }]));
+    expect(on.success).toBe(false);
+  });
+
+  it("createProduct refuses a new product priced into a category promotion, creating nothing", async () => {
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Eid −30", 30, { category: true })] as never);
+
+    const res = await createProduct(createInput({ variants: [{ name: "Piece", price: 25 }] }));
+
+    expect(res).toEqual({
+      success: false,
+      error: expect.stringMatching(/would make "Pistachio Kunafa — Piece" \(25 EGP\) free/),
+    });
+    expect(mockPrisma.product.create).not.toHaveBeenCalled();
+    // A brand-new product can only be reached through its category.
+    const where = mockPrisma.promotion.findMany.mock.calls[0][0]!.where!;
+    expect(JSON.stringify(where.OR)).toContain('"cat1"');
+  });
+
+  it("createProduct lets a safely-priced product through", async () => {
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Eid −30", 30, { category: true })] as never);
+    mockPrisma.product.create.mockResolvedValue({ id: "new1" } as never);
+
+    const res = await createProduct(createInput({ variants: [{ name: "Small", price: 45 }] }));
+
+    expect(res).toEqual({ success: true, productId: "new1" });
+  });
+
+  it("a failing guard query returns the generic envelope, never a throw", async () => {
+    stubExistingProduct(["v1"]);
+    mockPrisma.promotion.findMany.mockRejectedValue(new Error("connection reset"));
+
+    const res = await updateProduct("prod1", updateInput([{ id: "v1", name: "Large", price: 90 }]));
+
+    expect(res).toEqual({ success: false, error: "Could not update the product. Please try again." });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 });

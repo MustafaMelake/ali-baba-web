@@ -32,6 +32,8 @@ import {
   PROMOTION_SELECT_FIELDS,
   advertisedPercent,
   percentOff,
+  fixedAmountMakesFree,
+  findFreeingPromotion,
   type PromotionLike,
 } from "@/lib/discounts";
 
@@ -440,5 +442,62 @@ describe("percentOff — the was → now markdown on a badge", () => {
     expect(percentOff(100, 100)).toBe(0);
     expect(percentOff(120, 100)).toBe(0);
     expect(percentOff(50, 0)).toBe(0);
+  });
+});
+
+describe("fixedAmountMakesFree — the one 'no promotion may make a product free' comparison", () => {
+  it("is free when the discount reaches or passes the price", () => {
+    expect(fixedAmountMakesFree(50, 50)).toBe(true);
+    expect(fixedAmountMakesFree(60, 50)).toBe(true);
+    expect(fixedAmountMakesFree(49.99, 50)).toBe(false);
+  });
+
+  it("compares on the 2-dp grid the Decimal(12,2) columns store (audit M-2)", () => {
+    // 199.999 is STORED as 200.00 — the raw float would slip past a 200 price.
+    expect(fixedAmountMakesFree(199.999, 200)).toBe(true);
+    // …and a 199.995 price is stored as 200.00 too.
+    expect(fixedAmountMakesFree(200, 199.995)).toBe(true);
+    // 199.994 stays 199.99 — still safely below 200.
+    expect(fixedAmountMakesFree(199.994, 200)).toBe(false);
+  });
+
+  it("accepts Prisma Decimals (anything with toNumber)", () => {
+    const dec = (n: number) => ({ toNumber: () => n });
+    expect(fixedAmountMakesFree(dec(30), dec(25))).toBe(true);
+    expect(fixedAmountMakesFree(dec(30), dec(45))).toBe(false);
+  });
+});
+
+describe("findFreeingPromotion — the product-side search", () => {
+  const promo = (name: string, value: number) => ({ name, value });
+
+  it("is null when every orderable line stays above every discount", () => {
+    expect(
+      findFreeingPromotion([
+        { variant: { name: "Small", price: 45 }, promotions: [promo("Eid", 30)] },
+        { variant: { name: "Large", price: 90 }, promotions: [promo("Eid", 30)] },
+      ]),
+    ).toBeNull();
+  });
+
+  it("names the cheapest freed variant and the largest discount that frees it", () => {
+    const hit = findFreeingPromotion([
+      { variant: { name: "Large", price: 90 }, promotions: [promo("Eid", 30)] },
+      { variant: { name: "Mini", price: 20 }, promotions: [promo("Flash", 25), promo("Eid", 30)] },
+      { variant: { name: "Piece", price: 28 }, promotions: [promo("Eid", 30)] },
+    ]);
+    expect(hit).toEqual({ variant: { name: "Mini", price: 20 }, promotion: promo("Eid", 30) });
+  });
+
+  it("ignores lines no promotion reaches", () => {
+    expect(findFreeingPromotion([{ variant: { name: "Mini", price: 1 }, promotions: [] }])).toBeNull();
+    expect(findFreeingPromotion([])).toBeNull();
+  });
+
+  it("applies the 2-dp grid on both sides", () => {
+    const hit = findFreeingPromotion([
+      { variant: { name: "Tray", price: 200 }, promotions: [promo("Typo", 199.999)] },
+    ]);
+    expect(hit?.promotion.name).toBe("Typo");
   });
 });

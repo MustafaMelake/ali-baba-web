@@ -150,6 +150,58 @@ describe("createPromotion — percentage ceiling", () => {
   });
 });
 
+describe("promotion values are judged on the 2-dp grid they're stored on (audit M-2)", () => {
+  it("refuses 99.996% — Decimal(12,2) would store it as 100.00 and price everything at 0", async () => {
+    const res = await createPromotion(input({ type: DiscountType.PERCENTAGE, value: 99.996 }));
+
+    expect(res).toEqual({ success: false, error: "A percentage discount must be below 100%." });
+    expect(mockPrisma.promotion.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a fixed 199.999 against a 200 EGP variant (stored as 200.00 = free)", async () => {
+    mockPrisma.productVariant.findFirst.mockResolvedValue(cheapest(200));
+
+    const res = await createPromotion(input({ value: 199.999 }));
+
+    expect(res).toEqual({ success: false, error: expect.stringContaining("Kunafa — Small") });
+    expect(mockPrisma.promotion.create).not.toHaveBeenCalled();
+  });
+
+  it("saves the ROUNDED value — what's checked is exactly what's stored", async () => {
+    mockPrisma.productVariant.findFirst.mockResolvedValue(cheapest(200));
+
+    const res = await createPromotion(input({ value: 19.994 }));
+
+    expect(res.success).toBe(true);
+    expect(mockPrisma.promotion.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ value: 19.99 }) }),
+    );
+  });
+
+  it("refuses a value that rounds to 0", async () => {
+    const res = await createPromotion(input({ value: 0.004 }));
+
+    expect(res).toEqual({ success: false, error: "Discount value must be a positive number." });
+  });
+
+  it("re-activation compares the stored value on the same grid", async () => {
+    mockPrisma.promotion.findUnique.mockResolvedValue({
+      type: DiscountType.FIXED_AMOUNT,
+      value: money(200),
+      categories: [],
+      products: [{ id: "prod_kunafa" }],
+      variants: [],
+      collections: [],
+    } as never);
+    mockPrisma.productVariant.findFirst.mockResolvedValue(cheapest(199.995)); // stored as 200.00
+
+    const res = await togglePromotionActive("promo_1", true);
+
+    expect(res.success).toBe(false);
+    expect(mockPrisma.promotion.update).not.toHaveBeenCalled();
+  });
+});
+
 describe("updatePromotion — fixed-amount ceiling", () => {
   it("refuses an edit that would make a targeted product free", async () => {
     mockPrisma.productVariant.findFirst.mockResolvedValue(cheapest(40));

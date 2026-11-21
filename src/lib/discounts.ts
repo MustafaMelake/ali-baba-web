@@ -135,6 +135,43 @@ export function applyPromotion(basePrice: Numeric, promo: PromotionLike): number
 }
 
 /**
+ * NO PROMOTION MAY MAKE A PRODUCT FREE — the one comparison behind every guard
+ * (promotion save / re-activation, collection publish / add, product create /
+ * update). A FIXED_AMOUNT discount at or above a price takes that line to 0,
+ * because the engine floors at 0.
+ *
+ * Both sides go onto the 2-dp grid FIRST: the columns are Decimal(12,2), so a
+ * 199.999 discount is stored as 200.00, and comparing the raw floats would let
+ * it past a 200 EGP price and then give the product away.
+ */
+export function fixedAmountMakesFree(value: Numeric, price: Numeric): boolean {
+  return roundMoney(value) >= roundMoney(price);
+}
+
+/**
+ * The product side of that guard: given each orderable variant with the
+ * FIXED_AMOUNT promotions that reach it, the pair that would price a line at
+ * 0 — the cheapest such variant, with the largest discount that frees it — or
+ * null when every line stays above every discount.
+ */
+export function findFreeingPromotion<
+  V extends { price: Numeric },
+  P extends { value: Numeric },
+>(lines: { variant: V; promotions: P[] }[]): { variant: V; promotion: P } | null {
+  let hit: { variant: V; promotion: P } | null = null;
+  for (const { variant, promotions } of lines) {
+    for (const promotion of promotions) {
+      if (!fixedAmountMakesFree(promotion.value, variant.price)) continue;
+      const cheaper = !hit || roundMoney(variant.price) < roundMoney(hit.variant.price);
+      const sameLineBigger =
+        !!hit && hit.variant === variant && roundMoney(promotion.value) > roundMoney(hit.promotion.value);
+      if (cheaper || sameLineBigger) hit = { variant, promotion };
+    }
+  }
+  return hit;
+}
+
+/**
  * The fourth targeting level — live promotions on the product's ACTIVE
  * collections. Spread into a PRODUCT include/select next to its own
  * `promotions`: `{ ...collectionPromotionsInclude(now), promotions: {…} }`.

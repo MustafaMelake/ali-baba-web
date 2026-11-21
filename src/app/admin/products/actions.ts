@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
 import { deleteUploadedFiles } from "@/lib/r2";
+import { DiscountType } from "@/generated/prisma/enums";
+import { findFreeingPromotion, roundMoney } from "@/lib/discounts";
 import {
   productInputSchema,
   productUpdateSchema,
@@ -18,6 +20,78 @@ export type CreateProductResult =
 export type UpdateProductResult =
   | { success: true; archivedCount: number }
   | { success: false; error: string };
+
+/**
+ * NO PROMOTION MAY MAKE A PRODUCT FREE — the product side of the guard in
+ * promotions.ts and collections.ts. A promotion is checked when it is saved,
+ * but a product write can bring a price under an existing fixed-amount
+ * discount: a cheaper new size, a lowered price, or a move into a promoted
+ * category. This refuses that write when any live OR scheduled FIXED_AMOUNT
+ * promotion reaching one of the product's orderable variants — through the
+ * variant itself, the product, its (new) category, or a collection it's in —
+ * would take that line to 0 EGP. The comparison is the engine's own
+ * (`findFreeingPromotion` → `fixedAmountMakesFree`, on the 2-dp grid).
+ *
+ * Read before the write's transaction opens, so the transaction stays short; a
+ * promotion saved in the same instant is still caught by `placeOrder`, which
+ * refuses any 0 EGP line.
+ */
+async function freePriceProblem(product: {
+  /** null for a product being created — only its category can reach it yet. */
+  id: string | null;
+  name: string;
+  categoryId: string;
+  /** The orderable variants AFTER the write; `id` only for one that already exists. */
+  variants: { id?: string; name: string; price: number }[];
+}): Promise<string | null> {
+  if (product.variants.length === 0) return null;
+  const productIds = product.id ? [product.id] : [];
+
+  const promotions = await prisma.promotion.findMany({
+    where: {
+      type: DiscountType.FIXED_AMOUNT,
+      isActive: true,
+      // Live or scheduled: a scheduled one goes live with no admin action.
+      endDate: { gte: new Date() },
+      OR: [
+        { categories: { some: { id: product.categoryId } } },
+        { products: { some: { id: { in: productIds } } } },
+        { collections: { some: { products: { some: { productId: { in: productIds } } } } } },
+        { variants: { some: { productId: { in: productIds } } } },
+      ],
+    },
+    // Which level matched: a category, product or collection hit prices every
+    // variant; a variant hit prices only the variants it names.
+    select: {
+      name: true,
+      value: true,
+      categories: { where: { id: product.categoryId }, select: { id: true } },
+      products: { where: { id: { in: productIds } }, select: { id: true } },
+      collections: {
+        where: { products: { some: { productId: { in: productIds } } } },
+        select: { id: true },
+      },
+      variants: { where: { productId: { in: productIds } }, select: { id: true } },
+    },
+  });
+  if (promotions.length === 0) return null;
+
+  const hit = findFreeingPromotion(
+    product.variants.map((variant) => ({
+      variant,
+      promotions: promotions.filter(
+        (p) =>
+          p.categories.length + p.products.length + p.collections.length > 0 ||
+          (!!variant.id && p.variants.some((v) => v.id === variant.id)),
+      ),
+    })),
+  );
+  if (!hit) return null;
+
+  const value = roundMoney(hit.promotion.value);
+  const price = roundMoney(hit.variant.price);
+  return `"${hit.promotion.name}" takes ${value} EGP off — it would make "${product.name} — ${hit.variant.name}" (${price} EGP) free. Set a price above ${value} EGP or lower that promotion first.`;
+}
 
 /**
  * Updates a product's core fields and reconciles its variant list.
@@ -54,7 +128,12 @@ export async function updateProduct(
     where: { id },
     // `images` captured too: after the update commits, files the admin removed
     // are unreferenced and get purged from the R2 bucket below.
-    select: { id: true, slug: true, images: true, variants: { select: { id: true } } },
+    select: {
+      id: true,
+      slug: true,
+      images: true,
+      variants: { select: { id: true, isAvailable: true } },
+    },
   });
   if (!existing) {
     return { success: false, error: "That product no longer exists." };
@@ -80,6 +159,26 @@ export async function updateProduct(
   }
 
   try {
+    // No promotion may make a product free — refused before anything is
+    // written. A product switched off isn't sold, so it's checked when it's
+    // switched back on; an archived (unorderable) variant is never priced.
+    if (data.isAvailable) {
+      const archived = new Set(existing.variants.filter((v) => !v.isAvailable).map((v) => v.id));
+      const tooCheap = await freePriceProblem({
+        id,
+        name: data.name,
+        categoryId: data.categoryId,
+        variants: data.variants
+          .map((v) => ({
+            id: v.id && keptIds.has(v.id) ? v.id : undefined,
+            name: v.name,
+            price: v.price,
+          }))
+          .filter((v) => !(v.id && archived.has(v.id))),
+      });
+      if (tooCheap) return { success: false, error: tooCheap };
+    }
+
     await prisma.$transaction(async (tx) => {
       await tx.product.update({
         where: { id },
@@ -253,6 +352,16 @@ export async function createProduct(
   const data = parsed.data;
 
   try {
+    // No promotion may make a product free — a new product is reached only
+    // through its category (nothing can target it by id yet).
+    const tooCheap = await freePriceProblem({
+      id: null,
+      name: data.name,
+      categoryId: data.categoryId,
+      variants: data.variants.map((v) => ({ name: v.name, price: v.price })),
+    });
+    if (tooCheap) return { success: false, error: tooCheap };
+
     const product = await prisma.product.create({
       data: {
         name: data.name,

@@ -26,6 +26,7 @@ import { prisma } from "@/lib/prisma";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
 import { DiscountType } from "@/generated/prisma/enums";
 import { storeDateEnd, storeDateStart } from "@/lib/timezone";
+import { fixedAmountMakesFree, roundMoney } from "@/lib/discounts";
 
 const VALID_TYPES = new Set<string>(Object.values(DiscountType));
 
@@ -120,7 +121,11 @@ function validatePromotion(input: PromotionInput): ValidatedPromotion | { error:
   }
   const type = input.type as DiscountType;
 
-  const value = Number(input.value);
+  // Onto the 2-dp grid FIRST — the column is Decimal(12,2), so every check
+  // below must judge the value that will actually be stored (99.996% is
+  // stored as 100.00; a fixed 199.999 as 200.00).
+  const raw = Number(input.value);
+  const value = Number.isFinite(raw) ? roundMoney(raw) : NaN;
   if (!Number.isFinite(value) || value <= 0) {
     return { error: "Discount value must be a positive number." };
   }
@@ -193,8 +198,8 @@ async function fixedAmountProblem(
   });
   if (!cheapest) return null;
 
-  const price = cheapest.price.toNumber();
-  if (promotion.value < price) return null;
+  if (!fixedAmountMakesFree(promotion.value, cheapest.price)) return null;
+  const price = roundMoney(cheapest.price);
   return `A ${promotion.value} EGP discount would make "${cheapest.product.name} — ${cheapest.name}" (${price} EGP) free. Use less than ${price} EGP.`;
 }
 
