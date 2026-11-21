@@ -214,3 +214,21 @@ ORDER BY pending DESC;
 5. Remove `UPLOADTHING_TOKEN` / `UPLOADTHING_SECRET` from Vercel and `.env`, and close the UploadThing account once you're satisfied. The files there are not deleted by any of this.
 
 **Rollback:** until step 3 runs, no row points at R2, so an instant rollback is safe. After step 3 the rows point at R2 and the previous deployment's `next.config` doesn't allow that host, so roll forward instead, or restore the Neon branch from before the migration.
+
+---
+
+## 12. Addendum (2026-11): visitor-analytics retention cron (audit H-2)
+
+**New environment variable — `CRON_SECRET`** (Production scope; Preview too if you want the job to run there).
+
+| Variable | Used by | Notes |
+|---|---|---|
+| `CRON_SECRET` | `GET /api/cron/prune-visits` | A long random string, e.g. `openssl rand -hex 32`. Vercel Cron sends it automatically as `Authorization: Bearer <CRON_SECRET>`. **If it is unset, the route refuses every call (500)** and nothing is pruned, so set it before or with this deploy. Never commit it; never put it in a `NEXT_PUBLIC_` variable. |
+
+- **What runs:** `vercel.json` → `crons` schedules `/api/cron/prune-visits` daily at **01:30 UTC** (03:30 Cairo in winter, 04:30 in summer: the quietest hour). It deletes `VisitEvent` rows older than **90 days**, in batches of 5,000, at most 40 batches (200k rows) per run. A backlog drains over several nights.
+- **Plan note:** Hobby allows one run per day per cron job, which is exactly this schedule. Cron jobs run only on the **Production** deployment.
+- **Verify after deploy:** Vercel dashboard → the project → **Settings → Cron Jobs** lists the job; **Run** it once by hand. The function log should show a `200` with `{"success":true,"deleted":N,...}` (0 is normal while the table is younger than 90 days). A `500 "Not configured."` means `CRON_SECRET` is missing.
+- **Manual run** (e.g. after an abuse spike), from your machine:
+  `curl -H "Authorization: Bearer $CRON_SECRET" https://<production-domain>/api/cron/prune-visits`
+- **Dashboard isolation:** the Visitors card on `/admin` now loads on its own. If its query is slow it shows a pulse placeholder, and if it fails it shows "Visitor stats are unavailable right now". Revenue, counters and recent orders render either way.
+- **Rollback:** nothing to undo in the database (no migration). Removing the `crons` entry stops the job.

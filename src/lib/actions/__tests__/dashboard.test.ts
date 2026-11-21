@@ -178,24 +178,65 @@ describe("getOrders — MANAGER", () => {
 // Same RBAC as the order loaders: the branch is spread at the top level of the
 // VisitEvent read AND the order counts, and a foreign branch throws first.
 
-function visitWheres() {
-  return mockPrisma.visitEvent.findMany.mock.calls.map(
-    ([args]) => (args as { where?: Record<string, unknown> }).where ?? {},
-  );
+/** Every raw-SQL VisitEvent read: its full text and all bound values (nested fragments flattened). */
+function visitQueries() {
+  type Sqlish = { strings?: readonly string[]; values?: unknown[] };
+  const flatten = (v: unknown): { text: string; values: unknown[] } => {
+    const sql = v as Sqlish;
+    if (sql && typeof sql === "object" && Array.isArray(sql.values) && Array.isArray(sql.strings)) {
+      const parts = sql.values.map(flatten);
+      return {
+        text: sql.strings.join("?") + parts.map((p) => p.text).join(" "),
+        values: parts.flatMap((p) => p.values),
+      };
+    }
+    return { text: "", values: [v] };
+  };
+  return mockPrisma.$queryRaw.mock.calls.map(([strings, ...values]) => {
+    const parts = values.map(flatten);
+    return {
+      text: (strings as unknown as string[]).join("?") + parts.map((p) => p.text).join(" "),
+      values: parts.flatMap((p) => p.values),
+    };
+  });
+}
+
+/** Stub the two rollups getVisitorFunnel runs: the window aggregates, then the per-day rows. */
+function stubVisitRollups(window: Record<string, number>, daily: { day: string; visitors: number }[] = []) {
+  mockPrisma.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+    strings.join("").includes("GROUP BY") ? daily : [window]) as never);
 }
 
 describe("getVisitorFunnel", () => {
   beforeEach(() => {
-    mockPrisma.visitEvent.findMany.mockResolvedValue([]);
+    stubVisitRollups({});
   });
 
-  it("scopes a MANAGER's events and orders to their own branch", async () => {
+  it("counts in SQL — never loads raw VisitEvent rows into Node (audit H-2)", async () => {
+    signedInAs("ADMIN");
+
+    await getVisitorFunnel();
+
+    expect(mockPrisma.visitEvent.findMany).not.toHaveBeenCalled();
+    const [windowQuery, dailyQuery] = visitQueries();
+    expect(windowQuery.text).toContain('COUNT(DISTINCT "visitorId")');
+    expect(windowQuery.text).toContain(`FILTER (WHERE "type" = 'CHECKOUT_START'`);
+    expect(dailyQuery.text).toContain("AT TIME ZONE 'UTC' AT TIME ZONE ?");
+    expect(dailyQuery.values).toContain("Africa/Cairo"); // STORE_TZ is a bound parameter
+    expect(dailyQuery.text).toContain("GROUP BY 1");
+  });
+
+  it("scopes a MANAGER's events and orders to their own branch (a bound parameter, never interpolated)", async () => {
     signedInAs("MANAGER", OWN_BRANCH);
 
     const funnel = await getVisitorFunnel();
 
-    expect(visitWheres()).toHaveLength(1);
-    for (const where of visitWheres()) expect(where.branchId).toBe(OWN_BRANCH);
+    expect(visitQueries()).toHaveLength(2);
+    for (const q of visitQueries()) {
+      expect(q.text).toContain('AND "branchId" = ?');
+      expect(q.values).toContain(OWN_BRANCH);
+      expect(q.text).not.toContain(OWN_BRANCH);
+    }
     expect(orderWheres()).toHaveLength(2); // week + month order counts
     for (const where of orderWheres()) expect(where.branchId).toBe(OWN_BRANCH);
     expect(funnel.branchScoped).toBe(true);
@@ -205,7 +246,7 @@ describe("getVisitorFunnel", () => {
     signedInAs("MANAGER", OWN_BRANCH);
 
     await expect(getVisitorFunnel({ branchId: OTHER_BRANCH })).rejects.toThrow(/own branch/);
-    expect(visitWheres()).toHaveLength(0);
+    expect(visitQueries()).toHaveLength(0);
     expect(orderQueryCount()).toBe(0);
   });
 
@@ -214,7 +255,8 @@ describe("getVisitorFunnel", () => {
 
     const funnel = await getVisitorFunnel();
 
-    for (const where of [...visitWheres(), ...orderWheres()]) expect(where).not.toHaveProperty("branchId");
+    for (const q of visitQueries()) expect(q.text).not.toContain("branchId");
+    for (const where of orderWheres()) expect(where).not.toHaveProperty("branchId");
     expect(funnel.branchScoped).toBe(false);
   });
 
@@ -222,27 +264,29 @@ describe("getVisitorFunnel", () => {
     signedInAs("USER");
 
     await expect(getVisitorFunnel()).rejects.toThrow();
-    expect(visitWheres()).toHaveLength(0);
+    expect(visitQueries()).toHaveLength(0);
   });
 
-  it("counts placed orders (not cancelled) and splits the week out of the 30-day read", async () => {
+  it("maps the rollup onto both windows, with placed orders (not cancelled) as the last step", async () => {
     signedInAs("ADMIN");
-    const now = Date.now();
-    const daysAgo = (n: number) => new Date(now - n * 86_400_000);
-    mockPrisma.visitEvent.findMany.mockResolvedValue([
-      { type: "VIEW", visitorId: "recent", createdAt: daysAgo(1) },
-      { type: "VIEW", visitorId: "older", createdAt: daysAgo(20) },
-    ] as never);
+    stubVisitRollups(
+      {
+        weekVisitors: 1, weekPageViews: 3, weekProductViewers: 1, weekCartAdders: 0, weekCheckoutStarters: 0,
+        monthVisitors: 2, monthPageViews: 5, monthProductViewers: 2, monthCartAdders: 1, monthCheckoutStarters: 1,
+      },
+      [{ day: "2000-01-01", visitors: 7 }], // outside every window → ignored
+    );
     mockPrisma.order.count.mockResolvedValueOnce(2).mockResolvedValueOnce(9);
 
     const funnel = await getVisitorFunnel();
 
     for (const where of orderWheres()) expect(where.status).toEqual({ not: "CANCELLED" });
-    expect(funnel.week.uniqueVisitors).toBe(1);
-    expect(funnel.month.uniqueVisitors).toBe(2);
+    expect(funnel.week).toMatchObject({ uniqueVisitors: 1, pageViews: 3 });
+    expect(funnel.month).toMatchObject({ uniqueVisitors: 2, pageViews: 5 });
+    expect(funnel.month.steps.map((s) => s.count)).toEqual([2, 2, 1, 1, 9]);
     expect(funnel.week.steps.at(-1)).toMatchObject({ key: "orders", count: 2 });
-    expect(funnel.month.steps.at(-1)).toMatchObject({ key: "orders", count: 9 });
     expect(funnel.week.daily).toHaveLength(7);
     expect(funnel.month.daily).toHaveLength(30);
+    expect(funnel.month.daily.every((d) => d.visitors === 0)).toBe(true);
   });
 });
