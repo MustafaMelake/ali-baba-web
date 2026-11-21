@@ -12,11 +12,17 @@ import {
   livePromotionWhere,
   PROMOTION_SELECT_FIELDS,
   resolvePrice,
+  roundMoney,
 } from "@/lib/discounts";
 import { getStoreSettings } from "@/lib/store-settings";
 import { prismaErrorCode } from "@/lib/action-utils";
 import { checkoutSchema, PICKUP_UNAVAILABLE_ERROR } from "@/lib/validators";
-import { orderTotals } from "@/lib/cart-summary";
+import {
+  orderTotals,
+  PRICES_CHANGED,
+  sameTotal,
+  type PricesChangedSummary,
+} from "@/lib/cart-summary";
 import {
   branchOutOfStockMessage,
   branchSoldOutTodayMessage,
@@ -68,6 +74,20 @@ const TOO_MANY_PENDING_ERROR =
  */
 class OrderLineUnavailableError extends Error {}
 
+/**
+ * [H-3] The fresh bill differs from the total the customer was shown. Thrown
+ * inside the transaction before the order is created, so nothing is written;
+ * the catch turns it into the typed PRICES_CHANGED result.
+ */
+class PricesChangedError extends Error {
+  constructor(readonly summary: PricesChangedSummary) {
+    super(PRICES_CHANGED);
+  }
+}
+
+const PRICES_CHANGED_ERROR =
+  "Prices changed since you opened checkout. Please review the new total and confirm.";
+
 export interface CheckoutPayload {
   items: { variantId: string; quantity: number }[];
   fulfillment: FulfillmentMethod;
@@ -82,11 +102,19 @@ export interface CheckoutPayload {
   customerName: string;
   customerPhone: string;
   orderNotes?: string;
+  /**
+   * [H-3] The total the checkout DISPLAYED. Only ever compared with the fresh
+   * bill — a mismatch returns PRICES_CHANGED instead of an order. Never billed,
+   * never trusted for anything else. Omitted → no consent check (an old bundle).
+   */
+  expectedTotal?: number;
 }
 
 export type PlaceOrderResult =
   | { success: true; orderNumber: number; orderId: string }
-  | { success: false; error: string };
+  | { success: false; error: string; code?: undefined }
+  /** [H-3] Nothing was written: show `summary` and resubmit with `summary.total` to confirm. */
+  | { success: false; error: string; code: typeof PRICES_CHANGED; summary: PricesChangedSummary };
 
 export async function placeOrder(
   payload: CheckoutPayload,
@@ -321,6 +349,7 @@ export async function placeOrder(
       const {
         subtotal,
         deliveryFee,
+        vat,
         total: totalAmount,
       } = orderTotals(
         orderItemsData.map((line) => ({ price: line.unitPrice, quantity: line.quantity })),
@@ -329,6 +358,29 @@ export async function placeOrder(
           ? (branch?.deliveryFee ?? settings.defaultDeliveryFee)
           : 0,
       );
+
+      // [H-3] Price consent: the customer agreed to the total they were shown.
+      // If the fresh bill differs (a promotion ended, a price/VAT/fee changed
+      // while checkout was open), refuse BEFORE creating anything and hand the
+      // new summary back for confirmation. The bill above is still the only
+      // money that can be charged — `expectedTotal` is never used for billing.
+      if (data.expectedTotal !== undefined && !sameTotal(data.expectedTotal, totalAmount)) {
+        throw new PricesChangedError({
+          expectedTotal: roundMoney(data.expectedTotal),
+          subtotal,
+          deliveryFee,
+          vat,
+          vatRate: settings.isVatEnabled ? settings.vatRate : 0,
+          total: totalAmount,
+          lines: orderItemsData.map((line) => ({
+            variantId: line.variantId,
+            productName: line.productName,
+            variantName: line.variantName,
+            unitPrice: line.unitPrice,
+            quantity: line.quantity,
+          })),
+        });
+      }
 
       // إنشاء الأوردر مع سطوره في عملية واحدة (nested write).
       const order = await tx.order.create({
@@ -382,6 +434,10 @@ export async function placeOrder(
     // The throttle is an expected refusal, not a fault — no log noise.
     if (err instanceof TooManyPendingOrdersError) {
       return { success: false, error: err.message };
+    }
+    // A price change since checkout opened — an expected outcome, not a fault.
+    if (err instanceof PricesChangedError) {
+      return { success: false, error: PRICES_CHANGED_ERROR, code: PRICES_CHANGED, summary: err.summary };
     }
     // Only a deliberate domain throw carries a customer-safe message. Every
     // other failure (Prisma fault, driver error) gets the generic line — a

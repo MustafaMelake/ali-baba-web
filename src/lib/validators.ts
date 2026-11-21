@@ -412,6 +412,11 @@ export const checkoutSchema = z
         return phone;
       }),
     orderNotes: optionalText(ORDER_NOTES_MAX_LENGTH),
+    // The total the checkout DISPLAYED (audit H-3 price consent). Advisory
+    // only: placeOrder compares it with its own fresh total and refuses on a
+    // mismatch, but never bills it. Optional so a browser still running the
+    // previous deploy's bundle can order.
+    expectedTotal: z.number().nonnegative().optional(),
   })
   .superRefine((data, ctx) => {
     // `optionalText` trims, so a whitespace-only address arrives here as "";

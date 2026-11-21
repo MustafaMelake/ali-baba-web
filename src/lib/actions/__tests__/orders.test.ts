@@ -247,6 +247,7 @@ describe("placeOrder — per-phone pending throttle [H-1]", () => {
   it("the LOCKED count inside the transaction is the authority: refuses when the fast path raced", async () => {
     // The fast pre-count saw a free slot; by the time this order held the lock, it was gone.
     mockPrisma.order.count.mockResolvedValueOnce(2).mockResolvedValueOnce(3);
+    vi.mocked(console.error).mockClear();
     const res = await placeOrder(payload());
     expect(res).toEqual({
       success: false,
@@ -1238,5 +1239,105 @@ describe("placeOrder — collection-targeted promotions", () => {
     ]);
     await placeOrder(payload());
     expect(persistedOrder().items.create[0].unitPrice).toBe(150);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [audit H-3] Price consent — the shown total is the billed total, or no order
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("placeOrder — price consent (expectedTotal)", () => {
+  // PICKUP, VAT 14%: a 100 EGP line at 20% off → 80 + 11.20 VAT = 91.20 shown.
+  const PROMO = livePromo({ value: 20 });
+  const SHOWN_WITH_PROMO = 91.2;
+
+  it("a promotion ending between preview and submit → PRICES_CHANGED with the new summary, nothing written", async () => {
+    // Preview priced with the promo; by submit it has expired, so the live read carries none.
+    stubVariants([variantRow({ id: "v1", price: 100, productName: "Kunafa", name: "Tray" })]);
+    vi.mocked(console.error).mockClear();
+
+    const res = await placeOrder(payload({ expectedTotal: SHOWN_WITH_PROMO }));
+
+    expect(res).toEqual({
+      success: false,
+      error: "Prices changed since you opened checkout. Please review the new total and confirm.",
+      code: "PRICES_CHANGED",
+      summary: {
+        expectedTotal: 91.2,
+        subtotal: 100,
+        deliveryFee: 0,
+        vat: 14,
+        vatRate: 0.14,
+        total: 114,
+        lines: [{ variantId: "v1", productName: "Kunafa", variantName: "Tray", unitPrice: 100, quantity: 1 }],
+      },
+    });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+    expect(mockPrisma.cartItem.deleteMany).not.toHaveBeenCalled();
+    expect(console.error).not.toHaveBeenCalledWith("placeOrder failed:", expect.anything()); // expected, not a fault
+  });
+
+  it("…then confirming (resubmitting with the new total) places the order at that total", async () => {
+    stubVariants([variantRow({ id: "v1", price: 100 })]);
+
+    const first = await placeOrder(payload({ expectedTotal: SHOWN_WITH_PROMO }));
+    expect(first.success).toBe(false);
+    const confirmedTotal = !first.success && first.code === "PRICES_CHANGED" ? first.summary.total : NaN;
+
+    const confirmed = await placeOrder(payload({ expectedTotal: confirmedTotal }));
+
+    expect(confirmed).toEqual({ success: true, orderNumber: 1001, orderId: "order_1" });
+    expect(persistedOrder()).toMatchObject({ subtotal: 100, deliveryFee: 0, totalAmount: 114 });
+  });
+
+  it("places the order when the shown total still matches the fresh bill", async () => {
+    stubVariants([variantRow({ id: "v1", price: 100, variantPromos: [PROMO] })]);
+
+    const res = await placeOrder(payload({ expectedTotal: SHOWN_WITH_PROMO }));
+
+    expect(res.success).toBe(true);
+    expect(persistedOrder()).toMatchObject({ subtotal: 80, totalAmount: 91.2 });
+  });
+
+  it("refuses when prices went DOWN too — the customer confirms any change", async () => {
+    stubVariants([variantRow({ id: "v1", price: 100, variantPromos: [PROMO] })]);
+
+    const res = await placeOrder(payload({ expectedTotal: 114 })); // shown before the promo started
+
+    expect(res).toMatchObject({ success: false, code: "PRICES_CHANGED", summary: { total: 91.2 } });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("never bills expectedTotal — a forged low total is refused, not charged", async () => {
+    const res = await placeOrder(payload({ expectedTotal: 1 }));
+
+    expect(res).toMatchObject({ success: false, code: "PRICES_CHANGED", summary: { total: 114 } });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("compares on the 2-dp grid (float noise in the shown total is not a change)", async () => {
+    const res = await placeOrder(payload({ expectedTotal: 114.0000000001 }));
+    expect(res.success).toBe(true);
+  });
+
+  it("covers delivery fee and VAT changes, not just line prices", async () => {
+    stubSettings({ defaultDeliveryFee: 50 }); // the fee went up from 35 while checkout was open
+
+    const res = await placeOrder(
+      payload({ fulfillment: FulfillmentMethod.DELIVERY, branchId: null, addressLine: "12 Nasr St", expectedTotal: 149 }),
+    );
+
+    expect(res).toMatchObject({ success: false, code: "PRICES_CHANGED", summary: { deliveryFee: 50, total: 164 } });
+  });
+
+  it("a payload without expectedTotal (a browser still on the previous deploy) orders as before", async () => {
+    const res = await placeOrder(payload());
+    expect(res.success).toBe(true);
+  });
+
+  it("rejects a negative expectedTotal at validation, before any database work", async () => {
+    const res = await placeOrder(payload({ expectedTotal: -5 }));
+    expect(res.success).toBe(false);
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 });

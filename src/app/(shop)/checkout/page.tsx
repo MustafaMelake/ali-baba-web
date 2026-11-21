@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useState, useSyncExternalStore, useTransition, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -31,7 +31,14 @@ import {
   PICKUP_UNAVAILABLE_ERROR,
 } from "@/lib/validators";
 import { roundMoney } from "@/lib/discounts";
-import { orderTotals, subtotalOf, vatLabel } from "@/lib/cart-summary";
+import {
+  orderTotals,
+  PRICES_CHANGED,
+  subtotalOf,
+  vatLabel,
+  type PricesChangedSummary,
+} from "@/lib/cart-summary";
+import PricesChangedNotice from "@/components/cart/PricesChangedNotice";
 import { cn, formatMoney } from "@/lib/utils";
 
 const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
@@ -266,6 +273,7 @@ function OrderSummary({
   onSubmit,
   onRetryPricing,
   retryingPricing,
+  priceConsent,
 }: {
   items: CheckoutItem[];
   mode: Mode;
@@ -282,6 +290,8 @@ function OrderSummary({
   onSubmit: () => void;
   onRetryPricing: () => void;
   retryingPricing: boolean;
+  /** [H-3] The price-consent step, shown in place of the CTA after a PRICES_CHANGED refusal. */
+  priceConsent?: ReactNode;
 }) {
   // The SAME function placeOrder bills with (src/lib/cart-summary.ts), so
   // the total shown here is the total charged. Without the live settings
@@ -448,7 +458,8 @@ function OrderSummary({
         </div>
       )}
 
-      {/* Place Order CTA */}
+      {/* Place Order CTA — or, after a price change, the confirm step that replaces it. */}
+      {priceConsent ?? (
       <button
         type="button"
         onClick={onSubmit}
@@ -490,6 +501,7 @@ function OrderSummary({
           )}
         </AnimatePresence>
       </button>
+      )}
 
       <p className="mt-4 text-center font-sans text-[11px] text-stone-400 leading-relaxed">
         Secure checkout · Your details are never stored without consent
@@ -594,6 +606,16 @@ export default function CheckoutPage() {
   // all is derived below, so the "nothing to do" case never needs an effect.
   const [guestRepriceDone, setGuestRepriceDone] = useState(false);
   const [isPending, startTransition] = useTransition();
+  // [H-3] Set when placeOrder answered PRICES_CHANGED: the server's fresh
+  // summary, plus the unit prices the customer had been shown (to name what
+  // changed). Cleared by confirming (resubmitting at the new total) or dismissing.
+  // `selection` pins the notice to the order it was computed for: change the
+  // mode, area, branch or lines and it stops showing (no stale confirm total).
+  const [priceChange, setPriceChange] = useState<{
+    summary: PricesChangedSummary;
+    shownPrices: Map<string, number>;
+    selection: string;
+  } | null>(null);
   const [placed, setPlaced] = useState(false);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
   // Field-level validation errors keyed by the checkoutSchema path (e.g.
@@ -754,7 +776,22 @@ export default function CheckoutPage() {
     });
   }
 
-  function handleSubmit() {
+  /**
+   * Place the order. `confirmedTotal` is set only by the price-consent step:
+   * the server's new total the customer just agreed to. Otherwise the expected
+   * total is the one on screen — computed by the SAME orderTotals placeOrder
+   * bills with — so any difference means a price really changed.
+   */
+  // What a price-consent answer was computed for (see `priceChange`).
+  const selectionKey = [
+    mode,
+    deliveryAreaId,
+    branchId,
+    cartItems.map((i) => `${i.variantId}:${i.quantity}`).join(","),
+  ].join("|");
+  const activePriceChange = priceChange?.selection === selectionKey ? priceChange : null;
+
+  function handleSubmit(confirmedTotal?: number) {
     // No live pricing → no honest total to confirm against. A known branch
     // stock-out would only bounce off placeOrder, so it blocks here too.
     if (isPending || placed || !pricing || stockIssues.length > 0) return;
@@ -783,6 +820,10 @@ export default function CheckoutPage() {
       customerName: `${firstName} ${lastName}`.trim(),
       customerPhone: phone,
       orderNotes: notes.trim() || undefined,
+      // [H-3] Price consent — compared server-side, never billed.
+      expectedTotal:
+        confirmedTotal ??
+        (previewDeliveryFee === null ? undefined : orderTotals(items, pricing, previewDeliveryFee).total),
     };
 
     // The SAME schema placeOrder re-checks server-side: empty cart, name/phone,
@@ -801,10 +842,24 @@ export default function CheckoutPage() {
     startTransition(async () => {
       const res = await placeOrder(parsed.data);
 
+      if (!res.success && res.code === PRICES_CHANGED) {
+        // Nothing was ordered. Show the server's numbers for confirmation, and
+        // refresh the page's own prices + settings so the summary catches up.
+        setPriceChange({
+          summary: res.summary,
+          shownPrices: new Map(cartItems.map((i) => [i.variantId, i.price])),
+          selection: selectionKey,
+        });
+        void refreshPrices();
+        retryPricing();
+        return;
+      }
       if (!res.success) {
         toast.error(res.error);
         return;
       }
+
+      setPriceChange(null);
 
       // The order now owns these items. placeOrder already removed them from a
       // signed-in buyer's saved cart in the order's own transaction — only the
@@ -1128,9 +1183,21 @@ export default function CheckoutPage() {
                   blockedReason={pickupBlocked ? PICKUP_UNAVAILABLE_ERROR : null}
                   onRemoveItem={(variantId) => removeItem(variantId, isLoggedIn)}
                   loading={isPending}
-                  onSubmit={handleSubmit}
+                  onSubmit={() => handleSubmit()}
                   onRetryPricing={retryPricing}
                   retryingPricing={retryingPricing}
+                  priceConsent={
+                    activePriceChange && (
+                      <PricesChangedNotice
+                        summary={activePriceChange.summary}
+                        previousPrices={activePriceChange.shownPrices}
+                        pickup={mode === "pickup"}
+                        pending={isPending}
+                        onConfirm={() => handleSubmit(activePriceChange.summary.total)}
+                        onDismiss={() => setPriceChange(null)}
+                      />
+                    )
+                  }
                 />
               </div>
             </section>
@@ -1148,9 +1215,21 @@ export default function CheckoutPage() {
                 blockedReason={pickupBlocked ? PICKUP_UNAVAILABLE_ERROR : null}
                 onRemoveItem={(variantId) => removeItem(variantId, isLoggedIn)}
                 loading={isPending}
-                onSubmit={handleSubmit}
+                onSubmit={() => handleSubmit()}
                 onRetryPricing={retryPricing}
                 retryingPricing={retryingPricing}
+                priceConsent={
+                  activePriceChange && (
+                    <PricesChangedNotice
+                      summary={activePriceChange.summary}
+                      previousPrices={activePriceChange.shownPrices}
+                      pickup={mode === "pickup"}
+                      pending={isPending}
+                      onConfirm={() => handleSubmit(activePriceChange.summary.total)}
+                      onDismiss={() => setPriceChange(null)}
+                    />
+                  )
+                }
               />
             </div>
           </div>
