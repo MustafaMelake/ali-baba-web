@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { OrderStatus, FulfillmentMethod } from "@/generated/prisma/enums";
 import { updateOrderStatus } from "@/lib/actions/orders";
+import { nextOrderStatuses } from "@/lib/order-status";
 import { formatEGP, formatMoney, formatPhoneLocal, prettyLabel, whatsappHref } from "@/lib/utils";
 import { vatLabel } from "@/lib/cart-summary";
 import StatusPill from "@/components/orders/StatusPill";
@@ -46,15 +47,23 @@ function statusLabel(status: OrderStatus) {
 function StatusControl({
   orderId,
   current,
+  fulfillment,
+  changedLabel,
 }: {
   orderId: string;
   current: OrderStatus;
+  fulfillment: FulfillmentMethod;
+  /** Who last moved the status, and when — null before tracking began. */
+  changedLabel: string | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [optimistic, setOptimistic] = useState<OrderStatus | null>(null);
 
   const active = optimistic ?? current;
+  // Only the next steps of the lifecycle are offered (src/lib/order-status.ts);
+  // the server enforces the same graph, so this is convenience, not the gate.
+  const allowed = new Set(nextOrderStatuses(fulfillment, current));
 
   function change(next: OrderStatus) {
     if (next === active || isPending) return;
@@ -86,17 +95,21 @@ function StatusControl({
         {STATUSES.map((status) => {
           const isActive = status === active;
           const loading = isPending && optimistic === status;
+          const unavailable = !isActive && !allowed.has(status);
           return (
             <button
               key={status}
               type="button"
               onClick={() => change(status)}
-              disabled={isPending}
+              disabled={isPending || unavailable}
+              title={unavailable ? `Not a next step from ${statusLabel(current)}` : undefined}
               aria-pressed={isActive}
               className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 font-sans text-[13px] font-medium transition-colors disabled:cursor-not-allowed ${
                 isActive
                   ? ACTIVE_CHIP[status]
-                  : "border-stone-200 text-stone-500 hover:border-stone-300 hover:text-stone-800"
+                  : unavailable
+                    ? "border-stone-100 text-stone-300"
+                    : "border-stone-200 text-stone-500 hover:border-stone-300 hover:text-stone-800"
               }`}
             >
               {loading && <Loader2 className="h-3 w-3 animate-spin" />}
@@ -105,6 +118,11 @@ function StatusControl({
           );
         })}
       </div>
+      {changedLabel && (
+        <p className="mt-3 text-xs text-stone-400">
+          Last changed by <span className="text-stone-500">{changedLabel}</span>
+        </p>
+      )}
     </div>
   );
 }
@@ -194,6 +212,8 @@ export default function AdminOrderDetailDrawer({
                   key={order.id}
                   orderId={order.id}
                   current={order.status}
+                  fulfillment={order.fulfillment}
+                  changedLabel={order.statusChangedLabel}
                 />
               </div>
 

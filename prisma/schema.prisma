@@ -104,9 +104,10 @@ model User {
   accounts Account[]
 
   // Business relations
-  orders    Order[]
-  reviews   Review[]
-  cartItems CartItem[]
+  orders              Order[]    @relation("OrderCustomer")
+  statusChangedOrders Order[]    @relation("OrderStatusChangedBy")
+  reviews             Review[]
+  cartItems           CartItem[]
 
   wishlist  WishlistItem[]
   createdAt DateTime       @default(now())
@@ -408,7 +409,7 @@ model Order {
 
   // Optional: orders may be placed by guests.
   userId String?
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user   User?   @relation("OrderCustomer", fields: [userId], references: [id], onDelete: SetNull)
 
   items OrderItem[]
 
@@ -424,6 +425,14 @@ model Order {
 
   status      OrderStatus       @default(PENDING)
   fulfillment FulfillmentMethod @default(DELIVERY)
+
+  // Audit M-3 — who moved the order to its current status, and when. Stamped
+  // by updateOrderStatus on every change (null until the first change, and on
+  // orders from before this column). SetNull: deleting a staff account never
+  // blocks or rewrites order history; the timestamp stays.
+  statusChangedAt   DateTime?
+  statusChangedById String?
+  statusChangedBy   User?     @relation("OrderStatusChangedBy", fields: [statusChangedById], references: [id], onDelete: SetNull)
 
   // DELIVERY → deliveryCity (+ addressLine).  PICKUP → pickupBranch.
   deliveryCity DeliveryLocation?

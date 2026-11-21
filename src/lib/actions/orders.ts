@@ -16,6 +16,7 @@ import {
 } from "@/lib/discounts";
 import { getStoreSettings } from "@/lib/store-settings";
 import { prismaErrorCode } from "@/lib/action-utils";
+import { canTransitionOrder, orderTransitionError } from "@/lib/order-status";
 import { checkoutSchema, PICKUP_UNAVAILABLE_ERROR } from "@/lib/validators";
 import {
   orderTotals,
@@ -454,17 +455,34 @@ export async function placeOrder(
   }
 }
 
+/** [M-3] A status change outside the lifecycle graph — typed so the UI can tell it apart. */
+export type UpdateOrderStatusResult =
+  | { success: true }
+  | { success: false; error: string; code?: undefined }
+  | { success: false; error: string; code: "INVALID_TRANSITION"; from: OrderStatus; to: OrderStatus };
+
 /**
- * Move an order along its lifecycle.
+ * Move an order ONE step along its lifecycle (audit M-3).
  *   - ADMIN   → any order.
  *   - MANAGER → only orders belonging to their OWN branch (branchId match);
  *     anything else (other branch, or an unassigned order) is unauthorized.
- * Revalidates the orders board AND the dashboard so revenue / counters re-sync.
+ *
+ * The step must be in ORDER_STATUS_TRANSITIONS (src/lib/order-status.ts):
+ * nothing skips ahead (PENDING → DELIVERED), nothing leaves DELIVERED or
+ * CANCELLED. Anything else is refused with code "INVALID_TRANSITION". The
+ * write is conditional on the status (and, for a MANAGER, the branch) just
+ * read — so if another staff member changed the order in between, this one
+ * matches nothing and is refused instead of overwriting. Every change stamps
+ * statusChangedAt + statusChangedById (who, when).
+ *
+ * Re-selecting the current status is a no-op success (a double click), with
+ * no write. Revalidates the orders board AND the dashboard so revenue /
+ * counters re-sync.
  */
 export async function updateOrderStatus(
   orderId: string,
   status: OrderStatus,
-): Promise<{ success: true } | { success: false; error: string }> {
+): Promise<UpdateOrderStatusResult> {
   // ADMIN or MANAGER only; role + branch resolved live from the DB.
   let scope;
   try {
@@ -479,29 +497,54 @@ export async function updateOrderStatus(
     return { success: false, error: "Invalid order status." };
   }
 
-  // A MANAGER may only touch orders fulfilled by their own branch.
-  if (scope.role === "MANAGER") {
+  try {
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      select: { branchId: true },
+      select: { status: true, branchId: true, fulfillment: true },
     });
     if (!order) {
       return { success: false, error: "That order no longer exists." };
     }
-    if (order.branchId !== scope.branchId) {
+    // A MANAGER may only touch orders fulfilled by their own branch.
+    if (scope.role === "MANAGER" && order.branchId !== scope.branchId) {
       return {
         success: false,
         error: "Unauthorized: that order belongs to another branch.",
       };
     }
-  }
 
-  try {
-    await prisma.order.update({
-      where: { id: orderId },
-      data: { status },
-      select: { id: true },
+    if (order.status === status) return { success: true }; // already there — nothing to do
+
+    if (!canTransitionOrder(order.fulfillment, order.status, status)) {
+      return {
+        success: false,
+        error: orderTransitionError(order.fulfillment, order.status, status),
+        code: "INVALID_TRANSITION",
+        from: order.status,
+        to: status,
+      };
+    }
+
+    // Conditional on what was just read: a concurrent change (or a branch
+    // reassignment) makes this match nothing rather than overwrite it.
+    const { count } = await prisma.order.updateMany({
+      where: {
+        id: orderId,
+        status: order.status,
+        ...(scope.role === "MANAGER" ? { branchId: scope.branchId } : {}),
+      },
+      data: {
+        status,
+        statusChangedAt: new Date(),
+        statusChangedById: scope.userId,
+      },
     });
+    if (count === 0) {
+      return {
+        success: false,
+        error: "Someone else just updated this order. Refresh to see its current status.",
+      };
+    }
 
     revalidatePath("/admin/orders");
     revalidatePath("/admin");

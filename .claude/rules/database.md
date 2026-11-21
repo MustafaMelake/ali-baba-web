@@ -30,6 +30,7 @@ These `onDelete` policies *are* the data-safety model. **Do not weaken them** �
 | `ProductVariant → OrderItem` | **Restrict** | …**but** an ever-ordered variant can't be hard-deleted — the invariant the whole CRUD-safety model is built on |
 | `OrderItem → Order` | Cascade | items die with their order |
 | `Order → User` | **SetNull** | orders outlive account deletion |
+| `Order → User` (`statusChangedBy`) | **SetNull** | the status audit trail never blocks deleting a staff account; `statusChangedAt` stays (the label then reads "a deleted account") |
 | `Order → Branch` | **SetNull** | history survives branch deletion; row becomes "unassigned" (Super-Admin-only) |
 | `User → Branch` | **Restrict** | a staffed branch can't be deleted (reassign or deactivate first) |
 | `Review → User` / `→ Product` | Cascade | reviews die with either |

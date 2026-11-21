@@ -464,6 +464,7 @@ export async function getOrders(
       include: {
         user: { select: { email: true } },
         branch: { select: { name: true } },
+        statusChangedBy: { select: { name: true } },
         items: {
           select: {
             id: true,
@@ -557,6 +558,10 @@ export async function getOrders(
       lineTotal: it.unitPrice.toNumber() * it.quantity,
     })),
     userEmail: order.user?.email ?? null,
+    // Audit M-3 — the status audit trail, in Cairo time.
+    statusChangedLabel: order.statusChangedAt
+      ? `${order.statusChangedBy?.name ?? "a deleted account"} · ${formatDateTime(order.statusChangedAt)}`
+      : null,
     branchName: order.branch?.name ?? null,
   }));
 
