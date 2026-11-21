@@ -50,6 +50,34 @@ export function orderTotals(
   return { subtotal, vat, deliveryFee: fee, total: roundMoney(subtotal + fee + vat) };
 }
 
+/**
+ * Price consent at checkout (audit H-3). The checkout sends the total it
+ * DISPLAYED as `expectedTotal`; placeOrder bills its own fresh `orderTotals`
+ * regardless, but refuses — before writing anything — when the two differ,
+ * returning this summary so the customer can review and confirm the new total.
+ * `expectedTotal` is only ever compared, never billed.
+ */
+export const PRICES_CHANGED = "PRICES_CHANGED";
+
+export type PricesChangedSummary = {
+  /** The total the checkout showed and sent. */
+  expectedTotal: number;
+  subtotal: number;
+  deliveryFee: number;
+  vat: number;
+  /** The rate behind `vat` (0 when VAT is off) — for the "VAT (14%)" label only. */
+  vatRate: number;
+  /** What placeOrder will bill now; resubmit with this as `expectedTotal` to confirm. */
+  total: number;
+  /** Each line's fresh, discounted unit price. */
+  lines: { variantId: string; productName: string; variantName: string; unitPrice: number; quantity: number }[];
+};
+
+/** Two money amounts are the same bill once both are on the 2-dp grid. */
+export function sameTotal(a: number, b: number): boolean {
+  return roundMoney(a) === roundMoney(b);
+}
+
 export interface SummaryLine {
   variantId: string;
   /** The live, discounted unit price (what placeOrder bills). */

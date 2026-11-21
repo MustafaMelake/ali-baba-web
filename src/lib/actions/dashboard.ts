@@ -21,11 +21,11 @@ import {
   resolveBranchScope,
 } from "@/lib/session";
 import { OrderStatus } from "@/generated/prisma/enums";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { formatDate, formatDateTime } from "@/lib/utils";
 import { phoneSearchDigits } from "@/lib/validators";
-import { storeDayKey, storeDayParts, storeMidnight } from "@/lib/timezone";
-import { summarizeVisits, type VisitorSummary } from "@/lib/visitor-funnel";
+import { STORE_TZ, storeDayKey, storeDayParts, storeMidnight } from "@/lib/timezone";
+import { buildVisitorSummary, type DailyVisitorRow, type VisitorSummary } from "@/lib/visitor-funnel";
 import type { AdminOrderView } from "@/components/admin/order-types";
 import type { TabValue } from "@/components/admin/AdminOrderFilters";
 
@@ -228,10 +228,12 @@ export type VisitorFunnel = {
  * CANCELLED — placed orders, not revenue), counted from the real Order table:
  * order placement is never a tracker event, so nothing is double-counted.
  *
- * Reads the window's events (three columns) and does the math in memory
- * (src/lib/visitor-funnel.ts) — one indexed range scan, bucketed by Cairo day
- * like the revenue chart. Scale limit: fine for tens of thousands of events a
- * month; past that, prune old rows (DOMAIN_MAP) or move the counting into SQL.
+ * All the counting happens in Postgres (audit H-2): one row of window
+ * aggregates (COUNT / COUNT DISTINCT … FILTER, both windows in one scan) and
+ * at most 30 rows of distinct visitors per Cairo day (`AT TIME ZONE` with the
+ * same STORE_TZ as the JS store day). No raw event ever reaches Node, so the
+ * cost no longer grows with traffic in memory. The 90-day prune cron
+ * (/api/cron/prune-visits) bounds the table itself.
  */
 export async function getVisitorFunnel(
   params?: { branchId?: string },
@@ -240,7 +242,8 @@ export async function getVisitorFunnel(
   const branchId = resolveBranchScope(scope, params?.branchId);
 
   const branchWhere: Prisma.OrderWhereInput = branchId ? { branchId } : {};
-  const eventBranchWhere: Prisma.VisitEventWhereInput = branchId ? { branchId } : {};
+  // The same scope for the raw-SQL VisitEvent reads (a bound parameter).
+  const eventBranchSql = branchId ? Prisma.sql`AND "branchId" = ${branchId}` : Prisma.empty;
 
   // One `now` for every window and bucket below.
   const now = new Date();
@@ -248,11 +251,33 @@ export async function getVisitorFunnel(
   const monthStart = storeMidnight(CHART_DAYS - 1, now);
   const placedOrders: Prisma.OrderWhereInput = { status: { not: OrderStatus.CANCELLED } };
 
-  const [events, ordersWeek, ordersMonth] = await Promise.all([
-    prisma.visitEvent.findMany({
-      where: { ...eventBranchWhere, createdAt: { gte: monthStart } },
-      select: { type: true, visitorId: true, createdAt: true },
-    }),
+  const [windowRows, dailyRows, ordersWeek, ordersMonth] = await Promise.all([
+    // Both windows in one pass: the week is a FILTER inside the month read.
+    prisma.$queryRaw<VisitWindowRow[]>`
+      SELECT
+        COUNT(DISTINCT "visitorId")::int                                             AS "monthVisitors",
+        COUNT(*) FILTER (WHERE "type" = 'VIEW')::int                                 AS "monthPageViews",
+        COUNT(DISTINCT "visitorId") FILTER (WHERE "type" = 'PRODUCT_VIEW')::int      AS "monthProductViewers",
+        COUNT(DISTINCT "visitorId") FILTER (WHERE "type" = 'ADD_TO_CART')::int       AS "monthCartAdders",
+        COUNT(DISTINCT "visitorId") FILTER (WHERE "type" = 'CHECKOUT_START')::int    AS "monthCheckoutStarters",
+        COUNT(DISTINCT "visitorId") FILTER (WHERE "createdAt" >= ${weekStart})::int  AS "weekVisitors",
+        COUNT(*) FILTER (WHERE "type" = 'VIEW' AND "createdAt" >= ${weekStart})::int AS "weekPageViews",
+        COUNT(DISTINCT "visitorId") FILTER (WHERE "type" = 'PRODUCT_VIEW' AND "createdAt" >= ${weekStart})::int   AS "weekProductViewers",
+        COUNT(DISTINCT "visitorId") FILTER (WHERE "type" = 'ADD_TO_CART' AND "createdAt" >= ${weekStart})::int    AS "weekCartAdders",
+        COUNT(DISTINCT "visitorId") FILTER (WHERE "type" = 'CHECKOUT_START' AND "createdAt" >= ${weekStart})::int AS "weekCheckoutStarters"
+      FROM "VisitEvent"
+      WHERE "createdAt" >= ${monthStart} ${eventBranchSql}
+    `,
+    // Distinct visitors per CAIRO calendar day (≤ 30 rows); the week's series
+    // is the last 7 of these, so one read serves both windows.
+    prisma.$queryRaw<DailyVisitorRow[]>`
+      SELECT
+        to_char("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${STORE_TZ}, 'YYYY-MM-DD') AS "day",
+        COUNT(DISTINCT "visitorId")::int AS "visitors"
+      FROM "VisitEvent"
+      WHERE "createdAt" >= ${monthStart} ${eventBranchSql}
+      GROUP BY 1
+    `,
     prisma.order.count({
       where: { ...branchWhere, ...placedOrders, createdAt: { gte: weekStart } },
     }),
@@ -261,14 +286,66 @@ export async function getVisitorFunnel(
     }),
   ]);
 
-  const weekEvents = events.filter((e) => e.createdAt >= weekStart);
+  // An aggregate over zero rows still returns one row of zeros; default anyway.
+  const w = windowRows[0] ?? EMPTY_WINDOW_ROW;
 
   return {
-    week: summarizeVisits(weekEvents, ordersWeek, VISITOR_WEEK_DAYS, now),
-    month: summarizeVisits(events, ordersMonth, CHART_DAYS, now),
+    week: buildVisitorSummary(
+      {
+        uniqueVisitors: w.weekVisitors,
+        pageViews: w.weekPageViews,
+        productViewers: w.weekProductViewers,
+        cartAdders: w.weekCartAdders,
+        checkoutStarters: w.weekCheckoutStarters,
+      },
+      ordersWeek,
+      dailyRows,
+      VISITOR_WEEK_DAYS,
+      now,
+    ),
+    month: buildVisitorSummary(
+      {
+        uniqueVisitors: w.monthVisitors,
+        pageViews: w.monthPageViews,
+        productViewers: w.monthProductViewers,
+        cartAdders: w.monthCartAdders,
+        checkoutStarters: w.monthCheckoutStarters,
+      },
+      ordersMonth,
+      dailyRows,
+      CHART_DAYS,
+      now,
+    ),
     branchScoped: !!branchId,
   };
 }
+
+/** The window-aggregate row getVisitorFunnel's SQL returns (all ::int). */
+type VisitWindowRow = {
+  monthVisitors: number;
+  monthPageViews: number;
+  monthProductViewers: number;
+  monthCartAdders: number;
+  monthCheckoutStarters: number;
+  weekVisitors: number;
+  weekPageViews: number;
+  weekProductViewers: number;
+  weekCartAdders: number;
+  weekCheckoutStarters: number;
+};
+
+const EMPTY_WINDOW_ROW: VisitWindowRow = {
+  monthVisitors: 0,
+  monthPageViews: 0,
+  monthProductViewers: 0,
+  monthCartAdders: 0,
+  monthCheckoutStarters: 0,
+  weekVisitors: 0,
+  weekPageViews: 0,
+  weekProductViewers: 0,
+  weekCartAdders: 0,
+  weekCheckoutStarters: 0,
+};
 
 /** Rows per admin orders page — bounds both the RSC payload and the pager math. */
 export const ORDERS_PAGE_SIZE = 50;

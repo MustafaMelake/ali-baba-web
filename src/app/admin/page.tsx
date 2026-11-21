@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
@@ -11,12 +12,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { getServerSession } from "@/lib/session";
-import { getDashboardStats, getVisitorFunnel } from "@/lib/actions/dashboard";
+import { getDashboardStats } from "@/lib/actions/dashboard";
 import { cn, formatEGP, formatDate } from "@/lib/utils";
 import { OrderStatus } from "@/generated/prisma/enums";
 import Pill from "@/components/admin/Pill";
 import RevenueChart from "@/components/admin/RevenueChart";
-import VisitorFunnelCard from "@/components/admin/VisitorFunnelCard";
+import VisitorFunnelSection, { VisitorFunnelFallback } from "@/components/admin/VisitorFunnelSection";
 
 export const metadata = {
   title: "Admin Dashboard | Ali Baba",
@@ -71,11 +72,11 @@ export default async function AdminDashboardPage() {
 
   // All metrics + RBAC branch scoping live in the action. A throw here means a
   // MANAGER with no branch assigned (the layout already admitted ADMIN/MANAGER).
-  // Both loaders run the same guard and branch scope, in parallel.
+  // Visitor analytics are NOT awaited here (audit H-2): they stream in their
+  // own Suspense section below, so they can never slow or break this page.
   let data;
-  let visitors;
   try {
-    [data, visitors] = await Promise.all([getDashboardStats(), getVisitorFunnel()]);
+    data = await getDashboardStats();
   } catch {
     return (
       <div className="mx-auto max-w-6xl">
@@ -201,12 +202,11 @@ export default async function AdminDashboardPage() {
         </div>
       </section>
 
-      {/* Visitors + conversion funnel (client-side tracker, Cairo days) */}
-      <VisitorFunnelCard
-        week={visitors.week}
-        month={visitors.month}
-        branchScoped={visitors.branchScoped}
-      />
+      {/* Visitors + conversion funnel (client-side tracker, Cairo days) — streamed
+          separately; a slow or failed analytics query only affects this card. */}
+      <Suspense fallback={<VisitorFunnelFallback />}>
+        <VisitorFunnelSection />
+      </Suspense>
 
       {/* Lower panels */}
       <section className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">

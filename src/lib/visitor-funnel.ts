@@ -1,11 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Visitor funnel math — pure, dependency-free (no Prisma, no React).
 //
-// Turns the VisitEvent rows of one window into the dashboard card's figures:
-// unique visitors, page views, the funnel visitors → product views →
-// add-to-cart → checkout → orders with the drop-off between steps, and a
-// daily-unique-visitors series bucketed by CAIRO calendar day (timezone.ts —
-// the same store day revenue uses, never the server's clock).
+// Turns one window's SQL rollup of VisitEvent (getVisitorFunnel in
+// dashboard.ts — grouped COUNT / COUNT DISTINCT, never raw rows in memory)
+// into the dashboard card's figures: unique visitors, page views, the funnel
+// visitors → product views → add-to-cart → checkout → orders with the
+// drop-off between steps, and a daily-unique-visitors series on CAIRO
+// calendar days (timezone.ts — the same store day revenue uses, never the
+// server's clock).
 //
 // Every funnel step except the last counts DISTINCT visitors, so a shopper who
 // views ten products is one product viewer. The last step is the real order
@@ -14,12 +16,29 @@
 // therefore floored at 0 rather than shown as a negative.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { storeDayKey, storeDayParts } from "@/lib/timezone";
+import { storeDayParts } from "@/lib/timezone";
 
 /** The tracker's event types — mirrors the VisitEventType enum's values. */
 export type FunnelEventType = "VIEW" | "PRODUCT_VIEW" | "ADD_TO_CART" | "CHECKOUT_START";
 
-export type FunnelEvent = { type: FunnelEventType; visitorId: string; createdAt: Date };
+/**
+ * One window's rollup as the SQL returns it. Each count but `pageViews` is a
+ * COUNT(DISTINCT visitorId) over the window — distinct counts can't be summed
+ * across days, so the window figures come from their own aggregate.
+ */
+export type VisitWindowCounts = {
+  /** Distinct visitors with any event. */
+  uniqueVisitors: number;
+  /** Every VIEW event — total page loads, repeats included. */
+  pageViews: number;
+  /** Distinct visitors with a PRODUCT_VIEW / ADD_TO_CART / CHECKOUT_START. */
+  productViewers: number;
+  cartAdders: number;
+  checkoutStarters: number;
+};
+
+/** Distinct visitors on one Cairo calendar day ("YYYY-MM-DD"), as the SQL groups them. */
+export type DailyVisitorRow = { day: string; visitors: number };
 
 export const FUNNEL_STEP_KEYS = ["visitors", "productViews", "addToCart", "checkout", "orders"] as const;
 export type FunnelStepKey = (typeof FUNNEL_STEP_KEYS)[number];
@@ -70,62 +89,47 @@ const labelFmt = new Intl.DateTimeFormat("en-GB", {
 });
 
 /**
- * Distinct visitors per Cairo calendar day for the `days` days ending today.
- * Buckets are built in calendar space (as the revenue chart does) and each
- * event is keyed by its createdAt's Cairo day, so a DST day can't split or
- * merge a bucket. A visitor active on two days counts on both.
+ * The daily series for the `days` Cairo calendar days ending today, from the
+ * SQL's per-day rows. Buckets are built in calendar space (as the revenue
+ * chart does), so a DST day can't split or merge one; a day with no row is 0,
+ * and a row outside the range (an older day of a wider read) is ignored. A
+ * visitor active on two days counts on both.
  */
-export function dailyUniqueVisitors(events: FunnelEvent[], days: number, now: Date): DailyVisitors[] {
+export function dailyVisitorSeries(rows: DailyVisitorRow[], days: number, now: Date): DailyVisitors[] {
+  const byDay = new Map(rows.map((r) => [r.day, r.visitors]));
   const { year, month, day } = storeDayParts(now);
   const series: DailyVisitors[] = [];
-  const buckets = new Map<string, Set<string>>();
   for (let i = 0; i < days; i++) {
     // UTC-midnight carrier of the Cairo calendar day — formatted in UTC so the label matches the key.
     const carrier = new Date(Date.UTC(year, month - 1, day - (days - 1 - i)));
     const key = carrier.toISOString().slice(0, 10);
-    buckets.set(key, new Set());
-    series.push({ key, date: labelFmt.format(carrier), visitors: 0 });
+    series.push({ key, date: labelFmt.format(carrier), visitors: byDay.get(key) ?? 0 });
   }
-  for (const e of events) buckets.get(storeDayKey(e.createdAt))?.add(e.visitorId);
-  for (const point of series) point.visitors = buckets.get(point.key)!.size;
   return series;
 }
 
 /**
- * The card's figures for one window. `events` must already be limited to the
- * window (and to the caller's branch scope); `orders` is the window's real
- * order count from the same scope.
+ * The card's figures for one window: its SQL rollup (already limited to the
+ * window and the caller's branch scope), the window's real order count from
+ * the same scope, and the per-day rows.
  */
-export function summarizeVisits(
-  events: FunnelEvent[],
+export function buildVisitorSummary(
+  counts: VisitWindowCounts,
   orders: number,
+  dailyRows: DailyVisitorRow[],
   days: number,
   now: Date,
 ): VisitorSummary {
-  const all = new Set<string>();
-  const byType: Record<FunnelEventType, Set<string>> = {
-    VIEW: new Set(),
-    PRODUCT_VIEW: new Set(),
-    ADD_TO_CART: new Set(),
-    CHECKOUT_START: new Set(),
-  };
-  let pageViews = 0;
-  for (const e of events) {
-    all.add(e.visitorId);
-    byType[e.type].add(e.visitorId);
-    if (e.type === "VIEW") pageViews++;
-  }
-
   return {
-    uniqueVisitors: all.size,
-    pageViews,
+    uniqueVisitors: counts.uniqueVisitors,
+    pageViews: counts.pageViews,
     steps: funnelSteps({
-      visitors: all.size,
-      productViews: byType.PRODUCT_VIEW.size,
-      addToCart: byType.ADD_TO_CART.size,
-      checkout: byType.CHECKOUT_START.size,
+      visitors: counts.uniqueVisitors,
+      productViews: counts.productViewers,
+      addToCart: counts.cartAdders,
+      checkout: counts.checkoutStarters,
       orders,
     }),
-    daily: dailyUniqueVisitors(events, days, now),
+    daily: dailyVisitorSeries(dailyRows, days, now),
   };
 }

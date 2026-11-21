@@ -214,3 +214,82 @@ ORDER BY pending DESC;
 5. Remove `UPLOADTHING_TOKEN` / `UPLOADTHING_SECRET` from Vercel and `.env`, and close the UploadThing account once you're satisfied. The files there are not deleted by any of this.
 
 **Rollback:** until step 3 runs, no row points at R2, so an instant rollback is safe. After step 3 the rows point at R2 and the previous deployment's `next.config` doesn't allow that host, so roll forward instead, or restore the Neon branch from before the migration.
+
+---
+
+## 12. Addendum (2026-11): visitor-analytics retention cron (audit H-2)
+
+**New environment variable — `CRON_SECRET`** (Production scope; Preview too if you want the job to run there).
+
+| Variable | Used by | Notes |
+|---|---|---|
+| `CRON_SECRET` | `GET /api/cron/prune-visits` | A long random string, e.g. `openssl rand -hex 32`. Vercel Cron sends it automatically as `Authorization: Bearer <CRON_SECRET>`. **If it is unset, the route refuses every call (500)** and nothing is pruned, so set it before or with this deploy. Never commit it; never put it in a `NEXT_PUBLIC_` variable. |
+
+- **What runs:** `vercel.json` → `crons` schedules `/api/cron/prune-visits` daily at **01:30 UTC** (03:30 Cairo in winter, 04:30 in summer: the quietest hour). It deletes `VisitEvent` rows older than **90 days**, in batches of 5,000, at most 40 batches (200k rows) per run. A backlog drains over several nights.
+- **Plan note:** Hobby allows one run per day per cron job, which is exactly this schedule. Cron jobs run only on the **Production** deployment.
+- **Verify after deploy:** Vercel dashboard → the project → **Settings → Cron Jobs** lists the job; **Run** it once by hand. The function log should show a `200` with `{"success":true,"deleted":N,...}` (0 is normal while the table is younger than 90 days). A `500 "Not configured."` means `CRON_SECRET` is missing.
+- **Manual run** (e.g. after an abuse spike), from your machine:
+  `curl -H "Authorization: Bearer $CRON_SECRET" https://<production-domain>/api/cron/prune-visits`
+- **Dashboard isolation:** the Visitors card on `/admin` now loads on its own. If its query is slow it shows a pulse placeholder, and if it fails it shows "Visitor stats are unavailable right now". Revenue, counters and recent orders render either way.
+- **Rollback:** nothing to undo in the database (no migration). Removing the `crons` entry stops the job.
+
+---
+
+## 13. Rate limiting — Vercel Firewall rules (audit H-4)
+
+**Why at the edge.** Every public write and read is a Server Action or route handler, and there is no limiter in the app. Better Auth's built-in limiter keeps its counters **in memory per function instance**, so on Vercel it only sees a slice of the traffic. Firewall rules run before any function or database work and count across the whole deployment. They are also the **only** defence against rotating phone numbers in fake cash-on-delivery orders (the per-phone throttle bounds one number, not a script with many: see `placeOrder` H-1).
+
+**How Server Actions look on the wire.** A Server Action is a `POST` to the **current page's path** with a `Next-Action` request header (the action's id). The ids change on every build, so **never match on a specific action id**; match on *path + method + the header being present*:
+
+- `placeOrder` (and the checkout helpers `getBranchStockIssues`, `rePriceGuestCart`, `getPublicPricingSettings`) → `POST /checkout` with `Next-Action`.
+- `recordVisitEvents`, `searchCatalog` / `getSearchSuggestions`, cart sync, wishlist, `countShopProducts` → `POST <any storefront path>` with `Next-Action`.
+- Better Auth → `POST /api/auth/sign-in/email`, `POST /api/auth/sign-up/email`, plus `/api/auth/change-password`, `/api/auth/sign-out`, `/api/auth/update-user`.
+- Image upload → `POST /api/upload` (ADMIN-only in code; this caps cost if a session is stolen).
+
+**Shared-IP warning (Egypt).** Mobile carriers put many customers behind one public IP (carrier-grade NAT). Limits are therefore set **per IP but generous**: a real shopper makes a handful of requests per minute, so ceilings sit well above that while still cutting a script down to a trickle. Where the dashboard offers it, key on **IP + JA4 digest** (the TLS fingerprint) to separate different devices sharing one carrier IP.
+
+### The rules
+
+Create each in **Vercel → Project → Firewall → Configure → New Rule** (custom rule). Fields map 1:1: *If* conditions (all must match) → *Then* **Rate Limit** (algorithm **Fixed Window**, window, limit, key) → *action when exceeded*. Start every rule with the exceeded-action **Log** for 24–48 h, read **Firewall → Traffic** to confirm no real customer trips it, then switch to **Deny (429)**.
+
+| # | Name | If (all match) | Window | Limit | Key | When exceeded |
+|---|---|---|---|---|---|---|
+| 1 | `checkout-actions` | Method **equals** `POST` · Request Path **equals** `/checkout` · Request Header `next-action` **exists** | 60 s | **20** | IP (+ JA4) | Deny → 429 |
+| 2 | `checkout-actions-10min` | same as #1 | 600 s | **60** | IP (+ JA4) | Deny → 429 |
+| 3 | `auth-sign-in` | Method `POST` · Path **starts with** `/api/auth/sign-in` | 60 s | **10** | IP (+ JA4) | Deny → 429 |
+| 4 | `auth-sign-up` | Method `POST` · Path **starts with** `/api/auth/sign-up` | 600 s | **10** | IP (+ JA4) | Deny → 429 |
+| 5 | `auth-other` | Method `POST` · Path **starts with** `/api/auth/` | 60 s | **30** | IP (+ JA4) | Deny → 429 |
+| 6 | `upload` | Method `POST` · Path **equals** `/api/upload` | 60 s | **30** | IP | Deny → 429 |
+| 7 | `server-actions` | Method `POST` · Request Header `next-action` **exists** (any path) | 60 s | **120** | IP (+ JA4) | Deny → 429 |
+
+Why these numbers:
+
+- **#1 / #2 (placeOrder).** Opening checkout fires 3–4 action calls (pricing, guest re-price, branch stock; another on each branch change), plus the submit and maybe a price-consent confirm. **20/min** lets several real shoppers behind one carrier IP check out; the **10-minute 60** stops a slow drip. Combined with the 3-PENDING-per-phone cap, one IP can place at most a few orders a minute instead of thousands.
+- **#3 sign-in, 10/min:** enough for typos on a shared IP, far too few to guess passwords. **#4 sign-up, 10 per 10 min:** accounts are free and unverified; this caps throwaway-account farming. **#5:** everything else under `/api/auth/` (change password, sign-out, update user).
+- **#6 upload, 30/min:** an admin gallery upload is ≤ 8 files; this caps R2 write cost if an admin session is ever stolen.
+- **#7 every other Server Action, 120/min.** One tracker batch per page view (a person rarely views > 30 pages a minute), search fires once per ~400 ms pause while typing, plus cart and wishlist syncs. 120/min is comfortable for a human, while a script hammering `recordVisitEvents` (≤ 20 rows per call) is held to ≤ 2,400 rows/min per IP instead of unlimited. Together with the 90-day prune (§12) and the SQL funnel, the dashboard can no longer be flooded. Requests to `/checkout` also count here, which is fine (120 > 20).
+- **Not rate-limited on purpose:** `GET` page loads (ISR cache hits cost nothing and never reach the database) and `GET /api/cron/prune-visits` (Vercel's own scheduler; protected by `CRON_SECRET`).
+
+**If your plan limits the number of rate-limit rules,** keep them in this priority: **#1, #7, #3, #4**, then the rest.
+
+**Verify after switching to Deny** (from a machine you can afford to block for a minute):
+
+```bash
+# Expect ~20 × 200/403-ish responses, then 429s.
+for i in $(seq 1 30); do
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST https://<production-domain>/checkout \
+    -H "next-action: probe" -H "content-type: text/plain;charset=UTF-8" --data '[]'
+done
+```
+
+(The probe's fake action id is rejected by Next.js; only the status codes matter.) Also confirm a normal checkout and sign-in still work.
+
+**Emergency switch:** during an active flood, enable **Attack Challenge Mode** (Firewall → Bot Management) to challenge every visitor until it passes. Turn it off afterwards.
+
+### Code-level guards — proposed, not built
+
+The edge rules above are the fix for H-4. These would add a second line and are **not** implemented yet:
+
+1. **Per-IP order cap in `placeOrder`.** Store a salted hash of the client IP (Vercel's `x-forwarded-for`, trustworthy on Vercel) on `Order` and refuse more than N PENDING orders per IP hash per hour. That would catch phone rotation even if a Firewall rule is misconfigured. It needs a migration (new nullable column + index), and a privacy note (a salted hash, never the raw IP).
+2. **Shared Better Auth limiter.** Configure `rateLimit: { storage: "database" }` (Better Auth's own rate-limit table, one more model and migration) or a `secondaryStorage` (Upstash/Vercel KV), so its sign-in limits count across instances. The edge rules #3–#5 already cover this.
+3. **Phone verification for first-time guests** (WhatsApp/SMS OTP before the first COD order). This is the only real stop for determined fake-order fraud, and it is a product decision with cost per message.
