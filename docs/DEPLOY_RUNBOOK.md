@@ -248,7 +248,42 @@ ORDER BY pending DESC;
 
 **Shared-IP warning (Egypt).** Mobile carriers put many customers behind one public IP (carrier-grade NAT). Limits are therefore set **per IP but generous**: a real shopper makes a handful of requests per minute, so ceilings sit well above that while still cutting a script down to a trickle. Where the dashboard offers it, key on **IP + JA4 digest** (the TLS fingerprint) to separate different devices sharing one carrier IP.
 
-### The rules
+### Now — Vercel Hobby: ONE rule (what we use today)
+
+The project is on **Vercel Hobby, which allows one rate-limit rule per project.** One broad rule on every `POST` covers all the abuse paths at once: every Server Action (`placeOrder`, `recordVisitEvents`, search, cart sync), Better Auth sign-in and sign-up, and `/api/upload`. `GET` page loads, which are cache hits that cost nothing, stay unlimited.
+
+| Field | Value |
+|---|---|
+| Name | `post-rate-limit` |
+| If | Method **equals** `POST` (no path condition, so it covers every path) |
+| Then | **Rate Limit**, algorithm **Fixed Window** |
+| Window | **60 s** |
+| Limit | **60** requests |
+| Key | **IP** (add **JA4 digest** too if your plan offers it, to separate devices behind one carrier IP) |
+| When exceeded | start on **Log** for 24–48 h, then switch to **Deny → 429** |
+
+What 60 POSTs a minute per IP means in practice:
+- **A real shopper** stays well under. That's one tracker batch per page view, one search call per pause while typing, cart syncs, a handful of checkout calls and the order itself.
+- **Several shoppers behind one Egyptian carrier IP** (carrier-grade NAT) still fit, which is why the limit isn't lower. Watch **Firewall → Traffic** during the Log phase. If real customers trip it, raise the limit before switching to Deny.
+- **A script** is held to 60 calls a minute per IP:
+  - at most 60 order attempts, with the per-phone cap of 3 PENDING still applying on top;
+  - at most 1,200 visit rows per minute;
+  - about 1 password guess per second, plus Better Auth's own in-memory limiter.
+
+**Verify after switching to Deny** (from a machine you can afford to block for a minute):
+
+```bash
+# Expect ~60 non-429 responses, then 429s.
+for i in $(seq 1 70); do
+  curl -s -o /dev/null -w "%{http_code}
+" -X POST https://<production-domain>/checkout     -H "next-action: probe" -H "content-type: text/plain;charset=UTF-8" --data '[]'
+done | sort | uniq -c
+```
+
+### After upgrading to Pro — the 7-rule set
+
+Pro allows several rate-limit rules. Then replace the single rule above with this finer set: tighter on checkout and auth, looser on the tracker.
+
 
 Create each in **Vercel → Project → Firewall → Configure → New Rule** (custom rule). Fields map 1:1: *If* conditions (all must match) → *Then* **Rate Limit** (algorithm **Fixed Window**, window, limit, key) → *action when exceeded*. Start every rule with the exceeded-action **Log** for 24–48 h, read **Firewall → Traffic** to confirm no real customer trips it, then switch to **Deny (429)**.
 
@@ -270,9 +305,9 @@ Why these numbers:
 - **#7 every other Server Action, 120/min.** One tracker batch per page view (a person rarely views > 30 pages a minute), search fires once per ~400 ms pause while typing, plus cart and wishlist syncs. 120/min is comfortable for a human, while a script hammering `recordVisitEvents` (≤ 20 rows per call) is held to ≤ 2,400 rows/min per IP instead of unlimited. Together with the 90-day prune (§12) and the SQL funnel, the dashboard can no longer be flooded. Requests to `/checkout` also count here, which is fine (120 > 20).
 - **Not rate-limited on purpose:** `GET` page loads (ISR cache hits cost nothing and never reach the database) and `GET /api/cron/prune-visits` (Vercel's own scheduler; protected by `CRON_SECRET`).
 
-**If your plan limits the number of rate-limit rules,** keep them in this priority: **#1, #7, #3, #4**, then the rest.
+**If a plan allows fewer rules than seven,** keep them in this priority: **#1, #7, #3, #4**, then the rest. With only one, use the single Hobby rule above instead.
 
-**Verify after switching to Deny** (from a machine you can afford to block for a minute):
+**Verify the Pro rules after switching to Deny** (from a machine you can afford to block for a minute):
 
 ```bash
 # Expect ~20 × 200/403-ish responses, then 429s.
