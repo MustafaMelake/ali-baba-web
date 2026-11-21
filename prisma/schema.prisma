@@ -112,6 +112,9 @@ model User {
   wishlist  WishlistItem[]
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
+
+  // Audit L-15 — "managers of this branch" lookups and the Restrict check on a branch delete.
+  @@index([branchId])
 }
 
 model Session {
@@ -456,10 +459,15 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Audit M-5 — composites shaped like the dashboard / orders-board / analytics
+  // queries: status (+ date) for the ADMIN views and revenue ranges; branch
+  // (+ status) + date for every MANAGER-scoped read. They replace the
+  // single-column status and branchId indexes, which are their prefixes.
   @@index([userId])
-  @@index([status])
   @@index([createdAt])
-  @@index([branchId])
+  @@index([status, createdAt])
+  @@index([branchId, createdAt])
+  @@index([branchId, status, createdAt])
   // Backs placeOrder's per-phone PENDING throttle (one indexed COUNT).
   @@index([customerPhone, status])
 }
@@ -909,8 +917,7 @@ model VisitEvent {
   productId String?
   createdAt DateTime       @default(now())
 
-  // The dashboard funnel reads a createdAt window, optionally per type.
-  @@index([type, createdAt])
+  // The dashboard funnel reads a createdAt window (type is filtered inside the aggregate); so does the 90-day prune.
   @@index([createdAt])
   // A MANAGER reads the same window scoped to their branch.
   @@index([branchId, createdAt])
