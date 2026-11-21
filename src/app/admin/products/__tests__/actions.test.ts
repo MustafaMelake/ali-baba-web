@@ -329,7 +329,8 @@ function fixedPromo(
   };
 }
 
-const FREE_ERROR = /would make "Chocolate Cake — Mini" \(20 EGP\) free/;
+// Since audit M-7 the guard is the 90% ceiling (at most 18 EGP off a 20 EGP line).
+const FREE_ERROR = /more than 90% of "Chocolate Cake — Mini" \(20 EGP\), where at most 18 EGP is allowed/;
 
 describe("createProduct / updateProduct — refuse a write that prices a line at 0 EGP", () => {
   it("refuses adding a cheaper variant under a category fixed-amount promotion — no partial write", async () => {
@@ -418,8 +419,23 @@ describe("createProduct / updateProduct — refuse a write that prices a line at
     );
     expect(refused).toEqual({
       success: false,
-      error: expect.stringMatching(/would make "Chocolate Cake — Tray" \(50 EGP\) free/),
+      error: expect.stringMatching(/more than 90% of "Chocolate Cake — Tray" \(50 EGP\)/),
     });
+  });
+
+  it("refuses a NEAR-free line too (audit M-7): 299 off a 300 EGP tray is over the 90% ceiling", async () => {
+    stubExistingProduct(["v1"]);
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Typo", 299, { category: true })] as never);
+
+    const res = await updateProduct("prod1", updateInput([{ id: "v1", name: "Tray", price: 300 }]));
+
+    expect(res).toEqual({
+      success: false,
+      error: expect.stringMatching(
+        /takes 299 EGP off — more than 90% of "Chocolate Cake — Tray" \(300 EGP\), where at most 270 EGP is allowed/,
+      ),
+    });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 
   it("lets a safe edit through", async () => {
@@ -445,8 +461,8 @@ describe("createProduct / updateProduct — refuse a write that prices a line at
     const res = await updateProduct("prod1", updateInput([{ id: "v1", name: "Tray", price: 200 }]));
     expect(res.success).toBe(false);
 
-    // 199.99 stays below 200 → allowed.
-    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Fine", 199.99, { category: true })] as never);
+    // Exactly 90% is the ceiling: 180.004 is stored as 180.00 = 90% of 200 → allowed.
+    mockPrisma.promotion.findMany.mockResolvedValue([fixedPromo("Fine", 180.004, { category: true })] as never);
     const ok = await updateProduct("prod1", updateInput([{ id: "v1", name: "Tray", price: 200 }]));
     expect(ok.success).toBe(true);
   });
@@ -488,7 +504,7 @@ describe("createProduct / updateProduct — refuse a write that prices a line at
 
     expect(res).toEqual({
       success: false,
-      error: expect.stringMatching(/would make "Pistachio Kunafa — Piece" \(25 EGP\) free/),
+      error: expect.stringMatching(/more than 90% of "Pistachio Kunafa — Piece" \(25 EGP\)/),
     });
     expect(mockPrisma.product.create).not.toHaveBeenCalled();
     // A brand-new product can only be reached through its category.

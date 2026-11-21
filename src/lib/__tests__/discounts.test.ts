@@ -32,8 +32,12 @@ import {
   PROMOTION_SELECT_FIELDS,
   advertisedPercent,
   percentOff,
-  fixedAmountMakesFree,
-  findFreeingPromotion,
+  fixedAmountOverCeiling,
+  findOverCeilingPromotion,
+  maxFixedDiscount,
+  percentageOverCeiling,
+  promotionValueProblem,
+  MAX_PERCENT_OFF,
   type PromotionLike,
 } from "@/lib/discounts";
 
@@ -445,59 +449,82 @@ describe("percentOff — the was → now markdown on a badge", () => {
   });
 });
 
-describe("fixedAmountMakesFree — the one 'no promotion may make a product free' comparison", () => {
-  it("is free when the discount reaches or passes the price", () => {
-    expect(fixedAmountMakesFree(50, 50)).toBe(true);
-    expect(fixedAmountMakesFree(60, 50)).toBe(true);
-    expect(fixedAmountMakesFree(49.99, 50)).toBe(false);
+describe("the promotion ceiling (audit M-7) — at most 90% off", () => {
+  it("percentage: 90 is the ceiling, judged on the stored 2-dp grid", () => {
+    expect(MAX_PERCENT_OFF).toBe(90);
+    expect(percentageOverCeiling(90)).toBe(false);
+    expect(percentageOverCeiling(90.004)).toBe(false); // stored as 90.00
+    expect(percentageOverCeiling(90.01)).toBe(true);
+    expect(percentageOverCeiling(99.99)).toBe(true);
   });
 
-  it("compares on the 2-dp grid the Decimal(12,2) columns store (audit M-2)", () => {
-    // 199.999 is STORED as 200.00 — the raw float would slip past a 200 price.
-    expect(fixedAmountMakesFree(199.999, 200)).toBe(true);
-    // …and a 199.995 price is stored as 200.00 too.
-    expect(fixedAmountMakesFree(200, 199.995)).toBe(true);
-    // 199.994 stays 199.99 — still safely below 200.
-    expect(fixedAmountMakesFree(199.994, 200)).toBe(false);
+  it("maxFixedDiscount is 90% of the price, floored to the piastre (never over 90%)", () => {
+    expect(maxFixedDiscount(50)).toBe(45);
+    expect(maxFixedDiscount(45)).toBe(40.5);
+    expect(maxFixedDiscount(33.33)).toBe(29.99); // 29.997 floors — 30.00 would be 90.009%
+    expect(maxFixedDiscount(19.99)).toBe(17.99);
+    expect(maxFixedDiscount(0.5)).toBe(0.45);
+  });
+
+  it("fixed amount: up to 90% passes; anything above — near-free OR free — is over", () => {
+    expect(fixedAmountOverCeiling(45, 50)).toBe(false);
+    expect(fixedAmountOverCeiling(45.01, 50)).toBe(true);
+    expect(fixedAmountOverCeiling(299, 300)).toBe(true); // the audit's 299-off-300 typo
+    expect(fixedAmountOverCeiling(50, 50)).toBe(true); // free
+    expect(fixedAmountOverCeiling(60, 50)).toBe(true);
+  });
+
+  it("compares on the 2-dp grid the Decimal(12,2) columns store", () => {
+    // 180.004 is stored as 180.00 = exactly 90% of 200 — allowed; 180.005 rounds up and isn't.
+    expect(fixedAmountOverCeiling(180.004, 200)).toBe(false);
+    expect(fixedAmountOverCeiling(180.005, 200)).toBe(true);
+    expect(fixedAmountOverCeiling(199.999, 200)).toBe(true);
   });
 
   it("accepts Prisma Decimals (anything with toNumber)", () => {
     const dec = (n: number) => ({ toNumber: () => n });
-    expect(fixedAmountMakesFree(dec(30), dec(25))).toBe(true);
-    expect(fixedAmountMakesFree(dec(30), dec(45))).toBe(false);
+    expect(fixedAmountOverCeiling(dec(30), dec(25))).toBe(true);
+    expect(fixedAmountOverCeiling(dec(30), dec(45))).toBe(false);
+  });
+
+  it("promotionValueProblem — the form's and the server's shared, price-independent check", () => {
+    expect(promotionValueProblem("PERCENTAGE", 90)).toBeNull();
+    expect(promotionValueProblem("PERCENTAGE", 95)).toBe("A percentage discount can be at most 90%.");
+    expect(promotionValueProblem("FIXED_AMOUNT", 500)).toBeNull(); // needs prices: the server judges it
+    expect(promotionValueProblem("PERCENTAGE", 0)).toBe("Discount value must be a positive number.");
+    expect(promotionValueProblem("FIXED_AMOUNT", 0.004)).toBe("Discount value must be a positive number.");
+    expect(promotionValueProblem("PERCENTAGE", Number.NaN)).toBe("Discount value must be a positive number.");
   });
 });
 
-describe("findFreeingPromotion — the product-side search", () => {
+describe("findOverCeilingPromotion — the product-side search", () => {
   const promo = (name: string, value: number) => ({ name, value });
 
-  it("is null when every orderable line stays above every discount", () => {
+  it("is null when every orderable line keeps at least 10% of its price", () => {
     expect(
-      findFreeingPromotion([
+      findOverCeilingPromotion([
         { variant: { name: "Small", price: 45 }, promotions: [promo("Eid", 30)] },
         { variant: { name: "Large", price: 90 }, promotions: [promo("Eid", 30)] },
       ]),
     ).toBeNull();
   });
 
-  it("names the cheapest freed variant and the largest discount that frees it", () => {
-    const hit = findFreeingPromotion([
+  it("names the cheapest over-ceiling variant and the largest discount on it", () => {
+    const hit = findOverCeilingPromotion([
       { variant: { name: "Large", price: 90 }, promotions: [promo("Eid", 30)] },
-      { variant: { name: "Mini", price: 20 }, promotions: [promo("Flash", 25), promo("Eid", 30)] },
-      { variant: { name: "Piece", price: 28 }, promotions: [promo("Eid", 30)] },
+      { variant: { name: "Mini", price: 20 }, promotions: [promo("Flash", 19), promo("Eid", 30)] },
+      { variant: { name: "Piece", price: 32 }, promotions: [promo("Eid", 30)] },
     ]);
     expect(hit).toEqual({ variant: { name: "Mini", price: 20 }, promotion: promo("Eid", 30) });
   });
 
-  it("ignores lines no promotion reaches", () => {
-    expect(findFreeingPromotion([{ variant: { name: "Mini", price: 1 }, promotions: [] }])).toBeNull();
-    expect(findFreeingPromotion([])).toBeNull();
+  it("catches a near-free line, not only a free one", () => {
+    const hit = findOverCeilingPromotion([{ variant: { name: "Tray", price: 300 }, promotions: [promo("Typo", 299)] }]);
+    expect(hit?.promotion.name).toBe("Typo");
   });
 
-  it("applies the 2-dp grid on both sides", () => {
-    const hit = findFreeingPromotion([
-      { variant: { name: "Tray", price: 200 }, promotions: [promo("Typo", 199.999)] },
-    ]);
-    expect(hit?.promotion.name).toBe("Typo");
+  it("ignores lines no promotion reaches", () => {
+    expect(findOverCeilingPromotion([{ variant: { name: "Mini", price: 1 }, promotions: [] }])).toBeNull();
+    expect(findOverCeilingPromotion([])).toBeNull();
   });
 });

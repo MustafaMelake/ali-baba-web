@@ -26,7 +26,13 @@ import { prisma } from "@/lib/prisma";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
 import { DiscountType } from "@/generated/prisma/enums";
 import { storeDateEnd, storeDateStart } from "@/lib/timezone";
-import { fixedAmountMakesFree, roundMoney } from "@/lib/discounts";
+import {
+  fixedAmountOverCeiling,
+  MAX_PERCENT_OFF,
+  maxFixedDiscount,
+  promotionValueProblem,
+  roundMoney,
+} from "@/lib/discounts";
 
 const VALID_TYPES = new Set<string>(Object.values(DiscountType));
 
@@ -126,13 +132,10 @@ function validatePromotion(input: PromotionInput): ValidatedPromotion | { error:
   // stored as 100.00; a fixed 199.999 as 200.00).
   const raw = Number(input.value);
   const value = Number.isFinite(raw) ? roundMoney(raw) : NaN;
-  if (!Number.isFinite(value) || value <= 0) {
-    return { error: "Discount value must be a positive number." };
-  }
-  // 100% would make products free — and placeOrder refuses 0 EGP lines.
-  if (type === DiscountType.PERCENTAGE && value >= 100) {
-    return { error: "A percentage discount must be below 100%." };
-  }
+  // The promotion ceiling (audit M-7): positive, and ≤ 90% for a PERCENTAGE —
+  // the same helper the admin form runs, so their messages match.
+  const valueProblem = promotionValueProblem(type, value);
+  if (valueProblem) return { error: valueProblem };
 
   const startDate = parseBoundary(input.startDate, "start");
   const endDate = parseBoundary(input.endDate, "end");
@@ -165,15 +168,16 @@ function validatePromotion(input: PromotionInput): ValidatedPromotion | { error:
 }
 
 /**
- * A fixed-amount discount at or above a targeted price makes that product free
- * (the engine floors at 0), so it must stay below the cheapest AVAILABLE
- * variant the promotion reaches — directly, through its product, its
- * category, or any collection it targets. Collections count whether or not
- * they're active right now: a draft collection prices nothing today but would
- * the moment it's published (activation re-checks from the other side too —
- * see collections.ts). Returns the admin-facing error, or null when it's safe.
- * Prices edited after the promotion is saved are caught by placeOrder, which
- * refuses any 0 EGP line.
+ * The FIXED_AMOUNT half of the promotion ceiling (audit M-7): the discount may
+ * take at most 90% of the cheapest AVAILABLE variant it reaches — directly,
+ * through its product, its category, or any collection it targets. (At or
+ * above the price it would make the product free; between 90% and 100% it
+ * would bill a near-free line.) Collections count whether or not they're
+ * active right now: a draft collection prices nothing today but would the
+ * moment it's published (activation re-checks from the other side too — see
+ * collections.ts). Returns the admin-facing error, or null when it's safe.
+ * Prices edited later are checked by the product guard; placeOrder still
+ * refuses any 0 EGP line as the last backstop.
  */
 async function fixedAmountProblem(
   promotion: Pick<
@@ -198,9 +202,9 @@ async function fixedAmountProblem(
   });
   if (!cheapest) return null;
 
-  if (!fixedAmountMakesFree(promotion.value, cheapest.price)) return null;
+  if (!fixedAmountOverCeiling(promotion.value, cheapest.price)) return null;
   const price = roundMoney(cheapest.price);
-  return `A ${promotion.value} EGP discount would make "${cheapest.product.name} — ${cheapest.name}" (${price} EGP) free. Use less than ${price} EGP.`;
+  return `A ${roundMoney(promotion.value)} EGP discount would take more than ${MAX_PERCENT_OFF}% off "${cheapest.product.name} — ${cheapest.name}" (${price} EGP). Use at most ${maxFixedDiscount(price)} EGP.`;
 }
 
 // ── Create ───────────────────────────────────────────────────────────────────

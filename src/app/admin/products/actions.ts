@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { ensureAdmin, prismaErrorCode } from "@/lib/action-utils";
 import { deleteUploadedFiles } from "@/lib/r2";
 import { DiscountType } from "@/generated/prisma/enums";
-import { findFreeingPromotion, roundMoney } from "@/lib/discounts";
+import { findOverCeilingPromotion, MAX_PERCENT_OFF, maxFixedDiscount, roundMoney } from "@/lib/discounts";
 import {
   productInputSchema,
   productUpdateSchema,
@@ -30,7 +30,9 @@ export type UpdateProductResult =
  * promotion reaching one of the product's orderable variants — through the
  * variant itself, the product, its (new) category, or a collection it's in —
  * would take that line to 0 EGP. The comparison is the engine's own
- * (`findFreeingPromotion` → `fixedAmountMakesFree`, on the 2-dp grid).
+ * (`findOverCeilingPromotion` → `fixedAmountOverCeiling`, on the 2-dp grid):
+ * since audit M-7 that is the promotion ceiling, so a write that would let a
+ * fixed amount take more than 90% off a line is refused too, not only 100%.
  *
  * Read before the write's transaction opens, so the transaction stays short; a
  * promotion saved in the same instant is still caught by `placeOrder`, which
@@ -76,7 +78,7 @@ async function freePriceProblem(product: {
   });
   if (promotions.length === 0) return null;
 
-  const hit = findFreeingPromotion(
+  const hit = findOverCeilingPromotion(
     product.variants.map((variant) => ({
       variant,
       promotions: promotions.filter(
@@ -90,7 +92,7 @@ async function freePriceProblem(product: {
 
   const value = roundMoney(hit.promotion.value);
   const price = roundMoney(hit.variant.price);
-  return `"${hit.promotion.name}" takes ${value} EGP off — it would make "${product.name} — ${hit.variant.name}" (${price} EGP) free. Set a price above ${value} EGP or lower that promotion first.`;
+  return `"${hit.promotion.name}" takes ${value} EGP off — more than ${MAX_PERCENT_OFF}% of "${product.name} — ${hit.variant.name}" (${price} EGP), where at most ${maxFixedDiscount(price)} EGP is allowed. Raise the price or lower that promotion first.`;
 }
 
 /**

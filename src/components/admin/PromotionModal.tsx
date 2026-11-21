@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X, Loader2, Check, BadgePercent } from "lucide-react";
 import { toast } from "sonner";
 import { createPromotion, updatePromotion } from "@/lib/actions/promotions";
+import { MAX_PERCENT_OFF, promotionValueProblem } from "@/lib/discounts";
 import { DiscountType } from "@/generated/prisma/enums";
 import { cn } from "@/lib/utils";
 import { storeDayKey, storeDayParts } from "@/lib/timezone";
@@ -111,6 +112,9 @@ export default function PromotionModal({
   const [name, setName] = useState("");
   const [type, setType] = useState<string>(DiscountType.PERCENTAGE);
   const [value, setValue] = useState("");
+  // The server's refusal about the value (the fixed-amount half of the ceiling
+  // needs the targeted prices, so only the server can judge it) — shown inline.
+  const [serverValueError, setServerValueError] = useState<string | null>(null);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [isActive, setIsActive] = useState(true);
@@ -175,8 +179,17 @@ export default function PromotionModal({
     };
   }, [isOpen, isPending, onClose]);
 
+  // The price-independent half of the promotion ceiling (audit M-7), checked
+  // live with the SAME helper validatePromotion runs on the server.
+  const valueError = value === "" ? null : promotionValueProblem(type, Number(value));
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (valueError) {
+      toast.error(valueError);
+      return;
+    }
+    setServerValueError(null);
     const payload = {
       name: name.trim(),
       type,
@@ -197,6 +210,8 @@ export default function PromotionModal({
 
       if (!result.success) {
         toast.error(result.error);
+        // A ceiling refusal is about the value — say so next to the field too.
+        if (/at most|discount value/i.test(result.error)) setServerValueError(result.error);
         return;
       }
 
@@ -302,11 +317,17 @@ export default function PromotionModal({
                       <input
                         id="promo-value"
                         value={value}
-                        onChange={(e) => setValue(e.target.value)}
+                        onChange={(e) => {
+                          setValue(e.target.value);
+                          setServerValueError(null);
+                        }}
                         inputMode="decimal"
                         type="number"
                         min="0"
+                        max={type === DiscountType.PERCENTAGE ? MAX_PERCENT_OFF : undefined}
                         step="0.01"
+                        aria-invalid={!!(valueError ?? serverValueError)}
+                        aria-describedby="promo-value-hint"
                         placeholder={type === DiscountType.PERCENTAGE ? "15" : "50"}
                         className={cn(inputClasses, "pr-14")}
                       />
@@ -314,6 +335,17 @@ export default function PromotionModal({
                         {valueSuffix}
                       </span>
                     </div>
+                    {valueError ?? serverValueError ? (
+                      <p id="promo-value-hint" role="alert" className="text-start text-xs font-medium text-red-600">
+                        {valueError ?? serverValueError}
+                      </p>
+                    ) : (
+                      <p id="promo-value-hint" className="text-start text-xs text-stone-400">
+                        {type === DiscountType.PERCENTAGE
+                          ? `At most ${MAX_PERCENT_OFF}% off.`
+                          : `At most ${MAX_PERCENT_OFF}% of the cheapest price it applies to.`}
+                      </p>
+                    )}
                   </div>
                 </div>
 

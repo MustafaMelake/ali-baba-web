@@ -134,34 +134,69 @@ export function applyPromotion(basePrice: Numeric, promo: PromotionLike): number
   return roundMoney(Math.max(0, raw));
 }
 
-/**
- * NO PROMOTION MAY MAKE A PRODUCT FREE — the one comparison behind every guard
- * (promotion save / re-activation, collection publish / add, product create /
- * update). A FIXED_AMOUNT discount at or above a price takes that line to 0,
- * because the engine floors at 0.
- *
- * Both sides go onto the 2-dp grid FIRST: the columns are Decimal(12,2), so a
- * 199.999 discount is stored as 200.00, and comparing the raw floats would let
- * it past a 200 EGP price and then give the product away.
- */
-export function fixedAmountMakesFree(value: Numeric, price: Numeric): boolean {
-  return roundMoney(value) >= roundMoney(price);
+// ─────────────────────────────────────────────────────────────────────────────
+// THE PROMOTION CEILING (audit M-7) — no promotion may take more than 90% off.
+//
+// It started as "no promotion may make a product free" (a FIXED_AMOUNT at or
+// above a price takes the line to 0, since the engine floors at 0), but a
+// 99.99%-off or a 299-off-300 typo bills ~1 EGP and nothing refused it. One
+// ceiling now covers both: PERCENTAGE ≤ 90, and FIXED_AMOUNT ≤ 90% of the
+// cheapest price it reaches. Every guard calls these — promotion save /
+// re-activation, collection publish / add, product create / update — and so
+// does the admin form, so the form and the server can't disagree.
+//
+// Everything is judged on the 2-dp grid the Decimal(12,2) columns store
+// (199.999 is stored as 200.00). These helpers VALIDATE writes; they never
+// change what resolvePrice bills for a promotion already saved.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The most a PERCENTAGE promotion may take off. */
+export const MAX_PERCENT_OFF = 90;
+
+/** The largest FIXED_AMOUNT allowed on `price`: 90% of it, floored to the piastre so it never exceeds 90%. */
+export function maxFixedDiscount(price: Numeric): number {
+  return Math.floor(roundMoney(price) * MAX_PERCENT_OFF + 1e-6) / 100;
+}
+
+/** A PERCENTAGE value above the ceiling. */
+export function percentageOverCeiling(value: Numeric): boolean {
+  return roundMoney(value) > MAX_PERCENT_OFF;
+}
+
+/** A FIXED_AMOUNT value that would take more than 90% off `price` (which includes making it free). */
+export function fixedAmountOverCeiling(value: Numeric, price: Numeric): boolean {
+  return roundMoney(value) > maxFixedDiscount(price);
 }
 
 /**
- * The product side of that guard: given each orderable variant with the
- * FIXED_AMOUNT promotions that reach it, the pair that would price a line at
- * 0 — the cheapest such variant, with the largest discount that frees it — or
- * null when every line stays above every discount.
+ * The price-independent half of the ceiling, shared word-for-word by the admin
+ * form and validatePromotion: a positive value, and ≤ 90 for a PERCENTAGE. The
+ * FIXED_AMOUNT half needs the targeted prices, so only the server can judge it.
  */
-export function findFreeingPromotion<
+export function promotionValueProblem(type: string, value: number): string | null {
+  if (!Number.isFinite(value) || roundMoney(value) <= 0) {
+    return "Discount value must be a positive number.";
+  }
+  if (type === DiscountType.PERCENTAGE && percentageOverCeiling(value)) {
+    return `A percentage discount can be at most ${MAX_PERCENT_OFF}%.`;
+  }
+  return null;
+}
+
+/**
+ * The product side of the ceiling: given each orderable variant with the
+ * FIXED_AMOUNT promotions that reach it, the pair that breaks the ceiling —
+ * the cheapest such variant, with the largest discount on it — or null when
+ * every line keeps at least 10% of its price.
+ */
+export function findOverCeilingPromotion<
   V extends { price: Numeric },
   P extends { value: Numeric },
 >(lines: { variant: V; promotions: P[] }[]): { variant: V; promotion: P } | null {
   let hit: { variant: V; promotion: P } | null = null;
   for (const { variant, promotions } of lines) {
     for (const promotion of promotions) {
-      if (!fixedAmountMakesFree(promotion.value, variant.price)) continue;
+      if (!fixedAmountOverCeiling(promotion.value, variant.price)) continue;
       const cheaper = !hit || roundMoney(variant.price) < roundMoney(hit.variant.price);
       const sameLineBigger =
         !!hit && hit.variant === variant && roundMoney(promotion.value) > roundMoney(hit.promotion.value);

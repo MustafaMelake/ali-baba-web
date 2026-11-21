@@ -26,7 +26,7 @@ import { ensureAdmin, prismaErrorCode, slugify } from "@/lib/action-utils";
 import { deleteUploadedFiles } from "@/lib/r2";
 import type { Prisma } from "@/generated/prisma/client";
 import { DiscountType } from "@/generated/prisma/enums";
-import { fixedAmountMakesFree, roundMoney } from "@/lib/discounts";
+import { fixedAmountOverCeiling, MAX_PERCENT_OFF, maxFixedDiscount, roundMoney } from "@/lib/discounts";
 import {
   COLLECTION_MAX_PRODUCTS,
   collectionCategoryIdsSchema,
@@ -206,10 +206,10 @@ async function freeProductProblem(
   });
   if (!cheapest) return null;
 
-  if (!fixedAmountMakesFree(promotion.value, cheapest.price)) return null;
+  if (!fixedAmountOverCeiling(promotion.value, cheapest.price)) return null;
   const price = roundMoney(cheapest.price);
   const value = roundMoney(promotion.value);
-  return `"${promotion.name}" takes ${value} EGP off this collection — it would make "${cheapest.product.name} — ${cheapest.name}" (${price} EGP) free. Lower that promotion first.`;
+  return `"${promotion.name}" takes ${value} EGP off this collection — more than ${MAX_PERCENT_OFF}% of "${cheapest.product.name} — ${cheapest.name}" (${price} EGP), where at most ${maxFixedDiscount(price)} EGP is allowed. Lower that promotion first.`;
 }
 
 /**

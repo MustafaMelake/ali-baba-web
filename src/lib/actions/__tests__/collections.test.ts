@@ -370,8 +370,17 @@ describe("no promotion may make a product free — the collection side", () => {
     cheapest(40);
     const res = await updateCollection("c1", input({ isActive: true }));
     expect(res.success).toBe(false);
-    if (!res.success) expect(res.error).toContain("free");
+    if (!res.success) expect(res.error).toContain("more than 90%");
     expect(mockPrisma.collection.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses publishing when the promotion takes more than 90% — even short of free (audit M-7)", async () => {
+    mockPrisma.collection.findUnique.mockResolvedValue({ image: null, isActive: false } as never);
+    fixed(46);
+    cheapest(50); // 46 > 45 = 90% of 50
+    const res = await updateCollection("c1", input({ isActive: true }));
+    expect(res.success).toBe(false);
+    if (!res.success) expect(res.error).toContain("at most 45 EGP");
   });
 
   it("refuses to add a product the collection's fixed-amount promotion would zero", async () => {

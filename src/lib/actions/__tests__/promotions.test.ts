@@ -98,12 +98,24 @@ describe("createPromotion — fixed-amount ceiling", () => {
     expect(mockPrisma.promotion.create).not.toHaveBeenCalled();
   });
 
-  it("saves a fixed discount below every targeted price", async () => {
-    mockPrisma.productVariant.findFirst.mockResolvedValue(cheapest(50.01));
+  it("saves a fixed discount of at most 90% of every targeted price (audit M-7)", async () => {
+    mockPrisma.productVariant.findFirst.mockResolvedValue(cheapest(55.56)); // 90% = 50.00
 
     const res = await createPromotion(input({ value: 50 }));
 
     expect(res).toEqual({ success: true, id: "promo_1" });
+  });
+
+  it("refuses a fixed discount over 90% even when it wouldn't make the product free (the 299-off-300 typo)", async () => {
+    mockPrisma.productVariant.findFirst.mockResolvedValue(cheapest(300));
+
+    const res = await createPromotion(input({ value: 299 }));
+
+    expect(res).toEqual({
+      success: false,
+      error: 'A 299 EGP discount would take more than 90% off "Kunafa — Small" (300 EGP). Use at most 270 EGP.',
+    });
+    expect(mockPrisma.promotion.create).not.toHaveBeenCalled();
   });
 
   it("looks for the cheapest AVAILABLE variant across variant, product, category and collection targets", async () => {
@@ -143,10 +155,17 @@ describe("createPromotion — percentage ceiling", () => {
     expect(mockPrisma.promotion.create).not.toHaveBeenCalled();
   });
 
-  it("accepts 99.5% off", async () => {
-    const res = await createPromotion(input({ type: DiscountType.PERCENTAGE, value: 99.5 }));
+  it("accepts exactly 90% off — the ceiling (audit M-7)", async () => {
+    const res = await createPromotion(input({ type: DiscountType.PERCENTAGE, value: 90 }));
 
     expect(res.success).toBe(true);
+  });
+
+  it.each([90.01, 95, 99.5])("refuses %s percent off — over the 90 percent ceiling", async (value) => {
+    const res = await createPromotion(input({ type: DiscountType.PERCENTAGE, value }));
+
+    expect(res).toEqual({ success: false, error: "A percentage discount can be at most 90%." });
+    expect(mockPrisma.promotion.create).not.toHaveBeenCalled();
   });
 });
 
@@ -154,7 +173,7 @@ describe("promotion values are judged on the 2-dp grid they're stored on (audit 
   it("refuses 99.996% — Decimal(12,2) would store it as 100.00 and price everything at 0", async () => {
     const res = await createPromotion(input({ type: DiscountType.PERCENTAGE, value: 99.996 }));
 
-    expect(res).toEqual({ success: false, error: "A percentage discount must be below 100%." });
+    expect(res).toEqual({ success: false, error: "A percentage discount can be at most 90%." });
     expect(mockPrisma.promotion.create).not.toHaveBeenCalled();
   });
 
