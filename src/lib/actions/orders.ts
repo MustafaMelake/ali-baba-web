@@ -34,12 +34,30 @@ import {
  * a script can fill the table with fake orders; capping *unconfirmed* orders
  * per phone means each junk identity stalls after this many rows, while a
  * legitimate repeat customer frees a slot the moment staff confirm an order
- * (PENDING → PREPARING/…). Phone-keyed because no Edge KV/IP infrastructure is
- * configured and the phone is the field the business actually calls back;
- * being client-supplied, it raises the cost of abuse rather than eliminating
- * it (a rotating-phone bot needs a fresh number per 3 orders).
+ * (PENDING → PREPARING/…).
+ *
+ * ATOMIC: the count runs inside the order transaction, behind a transaction-
+ * scoped advisory lock on the canonical phone (PHONE_LOCK_PREFIX), so two
+ * orders for one phone serialize — the second counts only after the first has
+ * committed (or rolled back). A burst of parallel requests can no longer all
+ * read the same count and all pass.
+ *
+ * What it does NOT stop: number rotation. Any of ~400M valid Egyptian mobiles
+ * passes `normalizeEgyptMobile`, so a script with a fresh number per 3 orders
+ * walks straight past a per-phone cap. That is the job of the per-IP rate
+ * limits at the edge (Vercel Firewall — docs/DEPLOY_RUNBOOK.md); this throttle
+ * only bounds what one identity can do.
  */
 const MAX_PENDING_ORDERS_PER_PHONE = 3;
+
+/** Namespaces the per-phone advisory lock key (no other advisory locks exist). */
+const PHONE_LOCK_PREFIX = "order-phone:";
+
+/** Marks the throttle refusal so the catch can pass its message through verbatim. */
+class TooManyPendingOrdersError extends Error {}
+
+const TOO_MANY_PENDING_ERROR =
+  "Too many pending orders. Please wait for your current orders to be confirmed.";
 
 /**
  * Marks a throw as a *domain* failure whose message is written for the customer
@@ -92,26 +110,16 @@ export async function placeOrder(
   const data = parsed.data;
 
   try {
-    // ── [H-1] Per-phone pending-order throttle ─────────────────────────────
-    // Runs FIRST — before the branch/settings reads and the transaction — so
-    // a throttled request costs one indexed COUNT and nothing else. The match
-    // is exact on the schema-trimmed phone string and counts only PENDING
-    // orders: confirmed/cancelled orders never block a customer. (Count-then-
-    // create is not atomic — a burst of parallel requests can land slightly
-    // over the cap. Fine for a throttle; the ceiling still holds within one
-    // request of the limit.)
-    const pendingCount = await prisma.order.count({
-      where: {
-        customerPhone: data.customerPhone,
-        status: OrderStatus.PENDING,
-      },
+    // [H-1] Fast reject, NOT the authority: a phone already at the cap is
+    // turned away with one indexed COUNT, before any read and without ever
+    // opening a transaction or waiting on the lock — so a bot retrying one
+    // number can't tie up pooled connections. The authoritative count is the
+    // locked one inside the transaction below.
+    const pendingBefore = await prisma.order.count({
+      where: { customerPhone: data.customerPhone, status: OrderStatus.PENDING },
     });
-    if (pendingCount >= MAX_PENDING_ORDERS_PER_PHONE) {
-      return {
-        success: false,
-        error:
-          "Too many pending orders. Please wait for your current orders to be confirmed.",
-      };
+    if (pendingBefore >= MAX_PENDING_ORDERS_PER_PHONE) {
+      return { success: false, error: TOO_MANY_PENDING_ERROR };
     }
 
     // Defensive branch resolution: only stamp a REAL, ACTIVE branch (the pickup
@@ -152,12 +160,34 @@ export async function placeOrder(
     const now = new Date();
 
     // Transaction يضمن تماسك الداتا: إمّا الأوردر بكل سطوره يتعمل، أو لا شيء.
-    // Kept deliberately SHORT for Neon: at most three statements — one batched
-    // variant read, one nested order create and, for a signed-in buyer, one
-    // cart delete — regardless of how many lines the order has (was a
-    // findUnique per line, an N+1 that held the transaction open in
-    // proportion to cart size).
+    // Kept deliberately SHORT for Neon: at most FIVE statements, regardless of
+    // how many lines the order has —
+    //   1. the per-phone advisory lock,
+    //   2. the PENDING count (the throttle),
+    //   3. one batched variant read,
+    //   4. one nested order create,
+    //   5. for a signed-in buyer only, one cart delete.
+    // (Was a findUnique per line, an N+1 that held the transaction open in
+    // proportion to cart size.)
     const newOrder = await prisma.$transaction(async (tx) => {
+      // ── [H-1] Per-phone pending-order throttle, atomic ──────────────────
+      // The advisory lock serializes every order for this canonical phone;
+      // it is released when this transaction commits or rolls back. Only
+      // then does the next order for the same phone get to count, so it sees
+      // this one. A throttled request still does no pricing work.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${PHONE_LOCK_PREFIX + data.customerPhone}, 0))`;
+      // Exact match on the canonical E.164 phone, PENDING only:
+      // confirmed/cancelled orders never block a customer.
+      const pendingCount = await tx.order.count({
+        where: {
+          customerPhone: data.customerPhone,
+          status: OrderStatus.PENDING,
+        },
+      });
+      if (pendingCount >= MAX_PENDING_ORDERS_PER_PHONE) {
+        throw new TooManyPendingOrdersError(TOO_MANY_PENDING_ERROR);
+      }
+
       // ONE read for the whole cart. The schema has already capped items at
       // CHECKOUT_MAX_ITEMS, so this `id IN (…)` list is bounded too.
       const variantIds = [...new Set(data.items.map((i) => i.variantId))];
@@ -349,6 +379,10 @@ export async function placeOrder(
       orderId: newOrder.id,
     };
   } catch (err) {
+    // The throttle is an expected refusal, not a fault — no log noise.
+    if (err instanceof TooManyPendingOrdersError) {
+      return { success: false, error: err.message };
+    }
     // Only a deliberate domain throw carries a customer-safe message. Every
     // other failure (Prisma fault, driver error) gets the generic line — a
     // raw `err.message` here would surface internal schema text at checkout,

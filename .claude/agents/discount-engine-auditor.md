@@ -27,7 +27,7 @@ revenue or corrupts the books. You are **advisory**: investigate, then report.
 - **`DELIVERED`-only revenue.** Every revenue aggregate/groupBy/raw rollup carries `status: DELIVERED`. Flag a revenue query filtering merely "not CANCELLED." (Pure *volume* counters — today/yesterday, peak hours — are correctly status-agnostic; don't flag those.)
 - **Africa/Cairo store day.** Date/month bucketing must use `src/lib/timezone.ts` (`STORE_TZ`, `storeMidnight`, `storeMonthStart`, `storeDayKey`) or the SQL `AT TIME ZONE` equivalent — never the Node server's local clock, and never a hardcoded UTC+2 (DST-unsafe). Flag `.getHours()`/local-midnight math on order timestamps.
 - **Decimal boundary.** Flag a raw Prisma `Decimal` crossing to a client component without `.toNumber()`.
-- **Throttle & limits.** `placeOrder` keeps the ≤ 3 PENDING-per-phone throttle; quantities clamp to `CHECKOUT_MAX_QUANTITY` (99) and distinct lines to `CHECKOUT_MAX_ITEMS` (50).
+- **Throttle & limits.** `placeOrder` keeps the ≤ 3 PENDING-per-phone throttle, counted inside the transaction behind the per-phone advisory lock (never a bare count before it); quantities clamp to `CHECKOUT_MAX_QUANTITY` (99) and distinct lines to `CHECKOUT_MAX_ITEMS` (50).
 
 ## How to verify
 

@@ -162,6 +162,7 @@ beforeEach(() => {
   mockedDashboardAccess.mockReset();
 
   mockedSession.mockResolvedValue(null); // guest by default
+  mockPrisma.$executeRaw.mockResolvedValue(1 as never); // the per-phone advisory lock
   mockPrisma.order.count.mockResolvedValue(0); // no pending backlog
   // Only the default pickup branch resolves; any other id is unknown/inactive.
   mockPrisma.branch.findFirst.mockImplementation((async (args: { where?: { id?: string } }) =>
@@ -230,7 +231,7 @@ describe("placeOrder — per-phone pending throttle [H-1]", () => {
     expect(mockPrisma.order.create).toHaveBeenCalledTimes(1);
   });
 
-  it("REJECTS at exactly 3 pending orders, without opening a transaction", async () => {
+  it("REJECTS at exactly 3 pending orders on the fast path — no transaction, no lock held", async () => {
     mockPrisma.order.count.mockResolvedValue(3);
     const res = await placeOrder(payload({ customerPhone: "01234567890" }));
     expect(res).toEqual({
@@ -238,7 +239,49 @@ describe("placeOrder — per-phone pending throttle [H-1]", () => {
       error: "Too many pending orders. Please wait for your current orders to be confirmed.",
     });
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.$executeRaw).not.toHaveBeenCalled();
+    expect(mockPrisma.branch.findFirst).not.toHaveBeenCalled();
     expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("the LOCKED count inside the transaction is the authority: refuses when the fast path raced", async () => {
+    // The fast pre-count saw a free slot; by the time this order held the lock, it was gone.
+    mockPrisma.order.count.mockResolvedValueOnce(2).mockResolvedValueOnce(3);
+    const res = await placeOrder(payload());
+    expect(res).toEqual({
+      success: false,
+      error: "Too many pending orders. Please wait for your current orders to be confirmed.",
+    });
+    expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.productVariant.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+    // An expected refusal, not a fault — nothing logged.
+    expect(console.error).not.toHaveBeenCalledWith("placeOrder failed:", expect.anything());
+  });
+
+  it("inside the transaction, takes the per-phone advisory lock FIRST, keyed on the canonical phone", async () => {
+    const order: string[] = [];
+    mockPrisma.$executeRaw.mockImplementation((async () => {
+      order.push("lock");
+      return 1;
+    }) as never);
+    mockPrisma.order.count.mockImplementation((async () => {
+      order.push("count");
+      return 0;
+    }) as never);
+    mockPrisma.productVariant.findMany.mockImplementation((async () => {
+      order.push("variants");
+      return [variantRow({ id: "v1", price: 100 })];
+    }) as never);
+
+    await placeOrder(payload({ customerPhone: "+20 100 123 4567" }));
+
+    // Fast pre-count, then inside the transaction: lock → authoritative count → pricing read.
+    expect(order).toEqual(["count", "lock", "count", "variants"]);
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    const [strings, key] = mockPrisma.$executeRaw.mock.calls[0] as unknown as [TemplateStringsArray, string];
+    expect(strings.join("?")).toBe("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))");
+    expect(key).toBe("order-phone:+201001234567");
   });
 
   it("rejects above the cap too (e.g. 5 pending)", async () => {
@@ -255,7 +298,8 @@ describe("placeOrder — per-phone pending throttle [H-1]", () => {
     const keys = mockPrisma.order.count.mock.calls.map(
       ([args]) => (args as { where: { customerPhone: string } }).where.customerPhone,
     );
-    expect(keys).toEqual(["+201001234567", "+201001234567", "+201001234567"]);
+    // Two counts per order (fast pre-count + the locked one), all on one canonical key.
+    expect(keys).toEqual(Array(6).fill("+201001234567"));
   });
 
   it("refuses a non-mobile number before any database work", async () => {
@@ -272,6 +316,96 @@ describe("placeOrder — per-phone pending throttle [H-1]", () => {
     expect(mockPrisma.order.count).toHaveBeenCalledWith({
       where: { customerPhone: "+201555555555", status: OrderStatus.PENDING },
     });
+  });
+});
+
+describe("placeOrder — the throttle under concurrency [audit H-1]", () => {
+  /**
+   * A minimal Postgres stand-in for the parts the throttle relies on: each
+   * transaction gets its own handle whose `$executeRaw` takes a per-key lock
+   * held until that transaction ends (pg_advisory_xact_lock), a shared table of
+   * PENDING orders per phone, and a deliberate pause between the count and the
+   * insert to widen the race window.
+   */
+  function simulatePostgres(pendingAtStart: number, { locking }: { locking: boolean }) {
+    const pending = new Map<string, number>([["+201000000000", pendingAtStart]]);
+    const lockTails = new Map<string, Promise<void>>();
+    const pause = () => new Promise((r) => setTimeout(r, 15));
+
+    mockPrisma.$transaction.mockImplementation((async (cb: (tx: unknown) => unknown) => {
+      const releases: (() => void)[] = [];
+      const tx = new Proxy(mockPrisma, {
+        get(target, prop, receiver) {
+          if (prop === "$executeRaw") {
+            return async (_s: TemplateStringsArray, key: string) => {
+              if (!locking) return 1;
+              const previous = lockTails.get(key) ?? Promise.resolve();
+              let release!: () => void;
+              lockTails.set(key, new Promise<void>((r) => (release = r)));
+              releases.push(release);
+              await previous;
+              return 1;
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      });
+      try {
+        return await cb(tx);
+      } finally {
+        releases.forEach((release) => release()); // commit / rollback releases the lock
+      }
+    }) as never);
+
+    mockPrisma.order.count.mockImplementation((async (args: { where: { customerPhone: string } }) => {
+      const n = pending.get(args.where.customerPhone) ?? 0;
+      await pause();
+      return n;
+    }) as never);
+    mockPrisma.order.create.mockImplementation((async (args: { data: { customerPhone: string } }) => {
+      await pause();
+      pending.set(args.data.customerPhone, (pending.get(args.data.customerPhone) ?? 0) + 1);
+      return { id: `order_${Math.random()}`, orderNumber: 1 };
+    }) as never);
+    return pending;
+  }
+
+  it("two concurrent orders past the limit → exactly ONE passes", async () => {
+    const pending = simulatePostgres(2, { locking: true }); // one slot left under the cap of 3
+
+    const results = await Promise.all([
+      placeOrder(payload({ customerPhone: "01000000000" })),
+      placeOrder(payload({ customerPhone: "+201000000000" })), // same canonical phone
+    ]);
+
+    expect(results.filter((r) => r.success)).toHaveLength(1);
+    expect(results.filter((r) => !r.success)).toEqual([
+      { success: false, error: "Too many pending orders. Please wait for your current orders to be confirmed." },
+    ]);
+    expect(pending.get("+201000000000")).toBe(3); // the cap holds exactly
+  });
+
+  it("a burst of ten from one phone with one slot left still lands exactly one order", async () => {
+    const pending = simulatePostgres(2, { locking: true });
+
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => placeOrder(payload({ customerPhone: "01000000000" }))),
+    );
+
+    expect(results.filter((r) => r.success)).toHaveLength(1);
+    expect(pending.get("+201000000000")).toBe(3);
+  });
+
+  it("(control) without the lock the same burst overshoots — the race the lock closes is real", async () => {
+    const pending = simulatePostgres(2, { locking: false });
+
+    const results = await Promise.all([
+      placeOrder(payload({ customerPhone: "01000000000" })),
+      placeOrder(payload({ customerPhone: "01000000000" })),
+    ]);
+
+    expect(results.filter((r) => r.success)).toHaveLength(2);
+    expect(pending.get("+201000000000")).toBe(4);
   });
 });
 
@@ -295,11 +429,13 @@ describe("placeOrder — error whitelist [D-9]", () => {
     expect(console.error).toHaveBeenCalledWith("placeOrder failed:", internal);
   });
 
-  it("never leaks a driver error raised before the transaction (the throttle COUNT)", async () => {
+  it("never leaks a driver error from the throttle (the advisory lock or the COUNT)", async () => {
     mockPrisma.order.count.mockRejectedValue(new Error("connect ETIMEDOUT 10.0.0.12:5432"));
-    const res = await placeOrder(payload());
-    expect(res).toEqual({ success: false, error: GENERIC });
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(await placeOrder(payload())).toEqual({ success: false, error: GENERIC });
+
+    mockPrisma.$executeRaw.mockRejectedValue(new Error("canceling statement due to lock timeout"));
+    expect(await placeOrder(payload())).toEqual({ success: false, error: GENERIC });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
   });
 
   it("passes the whitelisted, customer-written messages through verbatim", async () => {
