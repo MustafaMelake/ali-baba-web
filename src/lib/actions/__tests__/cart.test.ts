@@ -482,3 +482,29 @@ describe("cart reads price the collection level too (the checkout preview's sour
     expect(args.select.product.select.collections.where).toEqual({ collection: { isActive: true } });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [audit L-11] rePriceGuestCart is public — a crafted POST gets a typed error,
+// never a thrown 500, and never reaches the database.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("rePriceGuestCart — malformed input", () => {
+  it.each([
+    ["a string", "v1"],
+    ["an object", { 0: "v1" }],
+    ["a number", 42],
+    ["an array of numbers", [1, 2]],
+    ["an array holding an object", ["v1", { id: "v2" }]],
+    ["an over-long id", ["x".repeat(65)]],
+  ])("answers a typed error for %s — no throw, no query", async (_label, input) => {
+    const res = await rePriceGuestCart(input as never);
+
+    expect(res).toEqual({ success: false, error: "Invalid request." });
+    expect(mockPrisma.productVariant.findMany).not.toHaveBeenCalled();
+  });
+
+  it("treats null / undefined as an empty cart, as before", async () => {
+    expect(await rePriceGuestCart(null as never)).toEqual({ success: true, data: [] });
+    expect(await rePriceGuestCart(undefined as never)).toEqual({ success: true, data: [] });
+  });
+});

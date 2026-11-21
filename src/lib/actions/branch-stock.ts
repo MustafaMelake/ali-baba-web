@@ -36,6 +36,9 @@ import {
   soldOutTodaySchema,
   type BranchStockInput,
   type SoldOutTodayInput,
+  INVALID_REQUEST_ERROR,
+  isOptionalPublicId,
+  publicIdList,
 } from "@/lib/validators";
 import { nextStoreMidnight } from "@/lib/timezone";
 
@@ -253,13 +256,11 @@ export async function getBranchStockIssues(
   variantIds: string[],
   branchId: string | null,
 ): Promise<BranchStockIssuesResult> {
-  const ids = [
-    ...new Set(
-      (variantIds ?? [])
-        .map((id) => (typeof id === "string" ? id.trim() : ""))
-        .filter(Boolean),
-    ),
-  ].slice(0, CHECKOUT_MAX_ITEMS);
+  // A public endpoint: a crafted POST can send anything (audit L-11).
+  const ids = publicIdList(variantIds, CHECKOUT_MAX_ITEMS);
+  if (ids === null || !isOptionalPublicId(branchId)) {
+    return { success: false, error: INVALID_REQUEST_ERROR };
+  }
 
   if (!branchId || ids.length === 0) return { success: true, issues: [] };
 

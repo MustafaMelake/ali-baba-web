@@ -16,6 +16,8 @@ import {
   CHECKOUT_MAX_ITEMS,
   CHECKOUT_MAX_QUANTITY,
   CART_LIMIT_ERROR,
+  INVALID_REQUEST_ERROR,
+  publicIdList,
 } from "@/lib/validators";
 
 /**
@@ -378,13 +380,9 @@ const MAX_REPRICE_IDS = 100;
 export async function rePriceGuestCart(
   variantIds: string[],
 ): Promise<CartActionResult<RepricedVariant[]>> {
-  const ids = [
-    ...new Set(
-      (variantIds ?? [])
-        .map((id) => (typeof id === "string" ? id.trim() : ""))
-        .filter(Boolean),
-    ),
-  ].slice(0, MAX_REPRICE_IDS);
+  // A public endpoint: a crafted POST can send anything (audit L-11).
+  const ids = publicIdList(variantIds, MAX_REPRICE_IDS);
+  if (ids === null) return { success: false, error: INVALID_REQUEST_ERROR };
 
   if (ids.length === 0) return { success: true, data: [] };
 

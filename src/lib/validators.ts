@@ -257,6 +257,40 @@ export const ORDER_NOTES_MAX_LENGTH = 1000;
  */
 export const CART_LIMIT_ERROR = "Cart cannot exceed 50 distinct items.";
 
+// ─── Public read inputs (audit L-11) ─────────────────────────────────────────
+
+/** What a public action answers for a payload of the wrong shape — never a thrown 500. */
+export const INVALID_REQUEST_ERROR = "Invalid request.";
+
+/** Longest id a public action will look up (cuids are 25 chars). */
+const PUBLIC_ID_MAX_LENGTH = 64;
+
+/**
+ * The id list a PUBLIC action (rePriceGuestCart, getBranchStockIssues) will
+ * accept from the browser: an array of short strings — trimmed, de-duplicated,
+ * blanks dropped, capped at `max`. `null`/`undefined` mean "no ids" (an empty
+ * list). Anything else — a string, an object, a number, an array holding
+ * non-strings or over-long strings — returns null, so the caller answers
+ * INVALID_REQUEST_ERROR instead of a crafted POST throwing a 500.
+ */
+export function publicIdList(input: unknown, max: number): string[] | null {
+  if (input == null) return [];
+  if (!Array.isArray(input)) return null;
+  const ids: string[] = [];
+  for (const item of input) {
+    if (typeof item !== "string" || item.length > PUBLIC_ID_MAX_LENGTH) return null;
+    const id = item.trim();
+    if (id && !ids.includes(id)) ids.push(id);
+    if (ids.length === max) break;
+  }
+  return ids;
+}
+
+/** A public action's optional id argument: a short string, null or undefined — else invalid. */
+export function isOptionalPublicId(input: unknown): input is string | null | undefined {
+  return input == null || (typeof input === "string" && input.length <= PUBLIC_ID_MAX_LENGTH);
+}
+
 /** Ceiling on any single delivery fee (EGP) — blocks fat-fingered "3500000" typos. */
 export const MAX_DELIVERY_FEE = 10_000;
 

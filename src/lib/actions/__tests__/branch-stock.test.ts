@@ -486,3 +486,29 @@ describe("getBranchStockIssues — checkout preview", () => {
     expect(res).toEqual({ success: false, error: "Could not check branch stock." });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [audit L-11] getBranchStockIssues is public — malformed input gets a typed
+// error, never a thrown 500, and never reaches the database.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getBranchStockIssues — malformed input", () => {
+  it.each([
+    ["variantIds as a string", "v1", "b1"],
+    ["variantIds as an object", { length: 2 }, "b1"],
+    ["variantIds holding numbers", [1], "b1"],
+    ["branchId as an object", ["v1"], { id: "b1" }],
+    ["branchId as a number", ["v1"], 7],
+    ["an over-long branchId", ["v1"], "b".repeat(65)],
+  ])("answers a typed error for %s — no throw, no query", async (_label, variantIds, branchId) => {
+    const res = await getBranchStockIssues(variantIds as never, branchId as never);
+
+    expect(res).toEqual({ success: false, error: "Invalid request." });
+    expect(mockPrisma.branch.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.branchVariantAvailability.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a well-formed call with no branch still answers no issues, as before", async () => {
+    expect(await getBranchStockIssues(["v1"], null)).toEqual({ success: true, issues: [] });
+  });
+});
