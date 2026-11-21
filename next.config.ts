@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { r2OriginFrom, securityHeaders } from "./src/lib/security-headers";
 
 /**
  * The R2 public host `next/image` may load from — the same
@@ -24,6 +25,20 @@ const nextConfig: NextConfig = {
   experimental: {},
   turbopack: {
     root: __dirname,
+  },
+  // Audit L-2 — HSTS, nosniff, Referrer-Policy, frame-ancestors and a
+  // Permissions-Policy on every response, plus the full CSP in Report-Only
+  // mode (it allows the same R2 host as remotePatterns below).
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: securityHeaders({
+          r2Origin: r2OriginFrom(process.env.NEXT_PUBLIC_R2_PUBLIC_BASE_URL),
+          dev: process.env.NODE_ENV === "development",
+        }),
+      },
+    ];
   },
   images: {
     remotePatterns: [

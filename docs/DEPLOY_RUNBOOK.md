@@ -319,3 +319,30 @@ SHOW statement_timeout;   -- 30s
 - **30 s** is far above any app query and still kills a runaway one. It also applies to `prisma migrate deploy` (same role): today's migrations take milliseconds, but a future migration that builds a large index should start with `SET statement_timeout = 0;`.
 - **To undo:** `ALTER ROLE CURRENT_USER RESET statement_timeout;`
 - **Connection strings:** at runtime `DATABASE_URL` should be Neon's **pooled** host (`…-pooler…`), and `DIRECT_URL` the direct one for migrations (§7). The local `.env`'s `DATABASE_URL` currently points at the **direct** host. That is fine for development, but make sure the Vercel value is the pooled one.
+
+---
+
+## 15. Security headers and the CSP rollout (audit L-2)
+
+`next.config.ts` adds these to every response, from `src/lib/security-headers.ts`:
+
+- **Enforced now:**
+  - `Strict-Transport-Security: max-age=63072000` (2 years; no `includeSubDomains` / `preload` until the production domain is final, because that binds every subdomain to HTTPS for two years);
+  - `X-Content-Type-Options: nosniff`;
+  - `Referrer-Policy: strict-origin-when-cross-origin`;
+  - `Content-Security-Policy: frame-ancestors 'self'` plus `X-Frame-Options: SAMEORIGIN` (no clickjacking of the admin console);
+  - `Permissions-Policy` turning off camera, microphone, geolocation, payment, USB and Topics.
+- **Report-Only:** `Content-Security-Policy-Report-Only` with the full policy:
+  - scripts and styles from our origin, plus inline (Next's bootstrap, the grid-density script, framer-motion styles);
+  - images from our origin, `data:`, `blob:` and the **R2 public host** (`NEXT_PUBLIC_R2_PUBLIC_BASE_URL`, read at build time, same as `images.remotePatterns`);
+  - nothing framed, no plugins, forms post only to us.
+
+  Violations show in the browser **console**. There is no reporting endpoint, on purpose: it would be another public write.
+
+**Promote the CSP to enforcing** after a few days without violations:
+1. Browse the storefront, checkout, and every admin screen with DevTools open, including an image upload in the product form.
+2. Look for `[Report Only] Refused to …` messages.
+3. If there are none, rename the header key `Content-Security-Policy-Report-Only` → `Content-Security-Policy` in `securityHeaders()` (merging in the `frame-ancestors 'self'` one), and deploy.
+4. Adding a third-party script, embed or image host later means adding it to `contentSecurityPolicy()` first.
+
+**Verify after deploy:** `curl -sI https://<production-domain>/ | grep -iE "strict-transport|x-content-type|referrer-policy|permissions-policy|content-security|x-frame"` should list all seven headers.
