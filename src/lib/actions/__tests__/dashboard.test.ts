@@ -152,17 +152,54 @@ describe("getOrders — MANAGER", () => {
     for (const where of wheres) expect(where.branchId).toBe(OWN_BRANCH);
   });
 
-  it("keeps the branch scope on an order-number search that matches other branches", async () => {
+  it("an all-digit search is an EXACT order-number match — no raw SQL scan (audit M-6)", async () => {
     signedInAs("MANAGER", OWN_BRANCH);
-    // The ::text search runs unscoped and may return another branch's order id…
-    mockPrisma.$queryRaw.mockResolvedValue([{ id: "order_from_zamalek" }] as never);
 
     await getOrders({ query: "1002" });
 
-    // …so the branch must still be ANDed at the top level of both queries.
+    expect(mockPrisma.$queryRaw).not.toHaveBeenCalled();
+    for (const where of orderWheres()) {
+      expect(where.branchId).toBe(OWN_BRANCH); // still branch-scoped
+      expect(where.OR).toContainEqual({ orderNumber: 1002 });
+    }
+  });
+
+  it("accepts '#10024' as the exact order number too", async () => {
+    signedInAs("ADMIN");
+
+    await getOrders({ query: "#10024" });
+
+    expect(mockPrisma.$queryRaw).not.toHaveBeenCalled();
+    expect(orderWheres()[0].OR).toContainEqual({ orderNumber: 10024 });
+  });
+
+  it("a digit string longer than an INT can hold matches no order number (no overflow error)", async () => {
+    signedInAs("ADMIN");
+
+    await getOrders({ query: "201001234567" }); // a pasted phone, all digits
+
+    const or = orderWheres()[0].OR as unknown[];
+    expect(or.some((c) => (c as { orderNumber?: number }).orderNumber !== undefined)).toBe(false);
+    expect(or).toContainEqual({ customerPhone: { contains: "1001234567" } }); // the phone match still runs
+  });
+
+  it("mixed text with digits keeps the partial match — branch-scoped IN the SQL and capped at 200 ids", async () => {
+    signedInAs("MANAGER", OWN_BRANCH);
+    mockPrisma.$queryRaw.mockResolvedValue([{ id: "order_7" }] as never);
+
+    await getOrders({ query: "A10" });
+
+    const [strings, ...values] = mockPrisma.$queryRaw.mock.calls[0] as unknown as [string[], ...unknown[]];
+    const fragment = values[1] as { strings: string[]; values: unknown[] };
+    expect(strings.join("?")).toMatch(/"orderNumber"::text ILIKE \?[\s\S]*LIMIT \?/);
+    expect(values[0]).toBe("%A10%");
+    expect(fragment.strings.join("?")).toContain('AND "branchId" = ?');
+    expect(fragment.values).toEqual([OWN_BRANCH]);
+    expect(values[2]).toBe(200);
+    // …and the branch is still ANDed at the top level of both queries.
     for (const where of orderWheres()) {
       expect(where.branchId).toBe(OWN_BRANCH);
-      expect(where.OR).toContainEqual({ id: { in: ["order_from_zamalek"] } });
+      expect(where.OR).toContainEqual({ id: { in: ["order_7"] } });
     }
   });
 

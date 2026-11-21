@@ -304,7 +304,9 @@ The tab bar is `ALL` plus the five `OrderStatus` values, each annotated with a l
 
 The active tab is highlighted with a Framer Motion `layoutId="admin-status-pill"` `<motion.span>` — a single shared element animates (spring physics, not a linear tween) between whichever tab is active, rather than each tab independently fading in and out.
 
-#### Partial numeric order-number search (raw SQL `::text` cast)
+#### Order-number search — exact for digits, partial (raw SQL `::text` cast) otherwise
+
+**Since audit M-6:** a query that is all digits (optionally prefixed `#`) is an **exact** `orderNumber` match through Prisma and the unique index — no raw SQL. The partial match below runs only for other text containing digits, now branch-scoped inside the SQL and capped with `LIMIT 200`, so a one-digit search can no longer pull every order id into an `IN (…)` list.
 
 `orderNumber` is a Postgres `Int` column (auto-incrementing, human-friendly). Prisma's typed query builder can do `equals` on an `Int`, but **not** `contains` — there's no SQL operator for "string-contains" on an integer type. Searching for `"100"` and expecting it to match order `#10024` requires comparing against the integer's *text representation*, which Prisma's typed API can't express.
 

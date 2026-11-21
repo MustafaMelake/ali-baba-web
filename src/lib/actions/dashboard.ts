@@ -347,6 +347,11 @@ const EMPTY_WINDOW_ROW: VisitWindowRow = {
   weekCheckoutStarters: 0,
 };
 
+/** Most order ids a partial order-number search may return (audit M-6). */
+const ORDER_SEARCH_ID_LIMIT = 200;
+/** orderNumber is a Postgres INT — a longer digit string can't be an order number. */
+const MAX_INT32 = 2_147_483_647;
+
 /** Rows per admin orders page — bounds both the RSC payload and the pager math. */
 export const ORDERS_PAGE_SIZE = 50;
 
@@ -407,15 +412,23 @@ export async function getOrders(
 
   const q = params?.query?.trim() ?? "";
 
-  // Order # is an Int column, so Prisma can't `contains` on it directly —
-  // a raw ::text cast lets staff search "100" and match order #10024. Candidate
-  // ids may span branches, but branchWhere is ANDed at the top level below, so a
-  // manager can never surface another branch's order this way.
+  // Order-number search (audit M-6).
+  //   - All digits (optionally "#10024"): an EXACT orderNumber match through
+  //     the unique index — no raw SQL, no scan.
+  //   - Other text containing digits: a partial ::text match (Prisma can't
+  //     `contains` on an Int), scoped to the caller's branch INSIDE the SQL and
+  //     capped at ORDER_SEARCH_ID_LIMIT ids, so a short query can't pull every
+  //     order id into an `IN (…)` list. branchWhere is still ANDed at the top
+  //     level below as well.
+  const exactOrderNumber = /^#?\d+$/.test(q) ? Number(q.replace(/^#/, "")) : null;
   const numericOrderIds =
-    q && /\d/.test(q)
+    q && exactOrderNumber === null && /\d/.test(q)
       ? (
           await prisma.$queryRaw<{ id: string }[]>`
-            SELECT id FROM "Order" WHERE "orderNumber"::text ILIKE ${`%${q}%`}
+            SELECT id FROM "Order"
+            WHERE "orderNumber"::text ILIKE ${`%${q}%`}
+            ${branchId ? Prisma.sql`AND "branchId" = ${branchId}` : Prisma.empty}
+            LIMIT ${ORDER_SEARCH_ID_LIMIT}
           `
         ).map((row) => row.id)
       : [];
@@ -429,6 +442,9 @@ export async function getOrders(
         OR: [
           { customerName: { contains: q, mode: "insensitive" } },
           { customerPhone: { contains: phoneDigits ?? q } },
+          ...(exactOrderNumber !== null && exactOrderNumber <= MAX_INT32
+            ? [{ orderNumber: exactOrderNumber }]
+            : []),
           ...(numericOrderIds.length ? [{ id: { in: numericOrderIds } }] : []),
         ],
       }
