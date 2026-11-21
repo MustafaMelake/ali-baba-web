@@ -293,3 +293,29 @@ The edge rules above are the fix for H-4. These would add a second line and are 
 1. **Per-IP order cap in `placeOrder`.** Store a salted hash of the client IP (Vercel's `x-forwarded-for`, trustworthy on Vercel) on `Order` and refuse more than N PENDING orders per IP hash per hour. That would catch phone rotation even if a Firewall rule is misconfigured. It needs a migration (new nullable column + index), and a privacy note (a salted hash, never the raw IP).
 2. **Shared Better Auth limiter.** Configure `rateLimit: { storage: "database" }` (Better Auth's own rate-limit table, one more model and migration) or a `secondaryStorage` (Upstash/Vercel KV), so its sign-in limits count across instances. The edge rules #3–#5 already cover this.
 3. **Phone verification for first-time guests** (WhatsApp/SMS OTP before the first COD order). This is the only real stop for determined fake-order fraud, and it is a product decision with cost per message.
+
+---
+
+## 14. Database timeouts (audit M-8)
+
+**In code (ships with the deploy, nothing to configure):** `src/lib/prisma.ts` → `PG_POOL_SETTINGS`:
+
+| Setting | Value | Why |
+|---|---|---|
+| `connectionTimeoutMillis` | 10 s | `pg`'s default is 0 = wait forever: an unreachable database used to hang a request until the Vercel function timed out. 10 s covers a Neon compute waking from scale-to-zero. |
+| `query_timeout` | 20 s | Client-side: the call errors instead of pinning the function. No query here legitimately takes more than a few seconds. Safe through the pooler. |
+| `idleTimeoutMillis` | 10 s | Idle connections are released soon after a burst. |
+| `max` | 10 | Connections per function instance; the Neon pooler multiplexes them. |
+
+**Server-side statement timeout: a one-time SQL step, run by you (not done automatically).** `query_timeout` makes the *app* give up, but Postgres keeps running the statement. A server-side `statement_timeout` stops it. It **cannot** go in the connection string or the client config, because Neon's pooled endpoint refuses it as a startup parameter (verified: `08P01 unsupported startup parameter in options: statement_timeout`). Set it on the role instead, which applies to every new session, pooled or direct:
+
+```sql
+-- Neon SQL Editor, on the production branch, as the app's role:
+ALTER ROLE CURRENT_USER SET statement_timeout = '30s';
+-- verify (new sessions pick it up; reconnect first):
+SHOW statement_timeout;   -- 30s
+```
+
+- **30 s** is far above any app query and still kills a runaway one. It also applies to `prisma migrate deploy` (same role): today's migrations take milliseconds, but a future migration that builds a large index should start with `SET statement_timeout = 0;`.
+- **To undo:** `ALTER ROLE CURRENT_USER RESET statement_timeout;`
+- **Connection strings:** at runtime `DATABASE_URL` should be Neon's **pooled** host (`…-pooler…`), and `DIRECT_URL` the direct one for migrations (§7). The local `.env`'s `DATABASE_URL` currently points at the **direct** host. That is fine for development, but make sure the Vercel value is the pooled one.
