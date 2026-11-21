@@ -32,6 +32,13 @@ vi.mock("@aws-sdk/client-s3", () => ({
   },
 }));
 
+// The reference check every purge runs first (audit M-1). Default: nothing
+// else references any URL, so the storage-level specs below see every key.
+const findReferencedImageUrls = vi.fn();
+vi.mock("@/lib/image-references", () => ({
+  findReferencedImageUrls: (urls: string[]) => findReferencedImageUrls(urls),
+}));
+
 const ENV = {
   R2_ENDPOINT: "https://acct123.r2.cloudflarestorage.com",
   R2_ACCESS_KEY_ID: "test-key-id",
@@ -48,6 +55,8 @@ async function loadR2() {
 beforeEach(() => {
   send.mockReset();
   send.mockResolvedValue({});
+  findReferencedImageUrls.mockReset();
+  findReferencedImageUrls.mockResolvedValue(new Set());
   constructed.length = 0;
   for (const [k, v] of Object.entries(ENV)) vi.stubEnv(k, v);
 });
@@ -229,6 +238,62 @@ describe("deleteUploadedFiles", () => {
     const { deleteUploadedFiles } = await loadR2();
 
     await expect(deleteUploadedFiles(["https://img.alibaba.test/products/a.webp"])).resolves.toBeUndefined();
+    expect(consoleError).toHaveBeenCalled();
+  });
+});
+
+describe("deleteUploadedFiles — reference-aware (audit M-1: never purge a file another row still shows)", () => {
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  beforeEach(() => consoleError.mockClear());
+
+  const SHARED = "https://img.alibaba.test/products/shared.webp";
+  const LAST = "https://img.alibaba.test/hero/last.png";
+
+  it("does NOT purge an object another row/column still references", async () => {
+    findReferencedImageUrls.mockResolvedValue(new Set([SHARED]));
+    const { deleteUploadedFiles } = await loadR2();
+
+    await deleteUploadedFiles([SHARED]);
+
+    expect(findReferencedImageUrls).toHaveBeenCalledWith([SHARED]);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("DOES purge the last reference — and only the unreferenced ones in a mixed batch", async () => {
+    findReferencedImageUrls.mockResolvedValue(new Set([SHARED]));
+    const { deleteUploadedFiles } = await loadR2();
+
+    await deleteUploadedFiles([SHARED, LAST]);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const { input } = send.mock.calls[0][0] as { input: { Delete: { Objects: unknown[] } } };
+    expect(input.Delete.Objects).toEqual([{ Key: "hero/last.png" }]);
+  });
+
+  it("never purges — or even looks up — a /public path or a foreign URL", async () => {
+    const { deleteUploadedFiles } = await loadR2();
+
+    await deleteUploadedFiles(["/cake4.jpg", "/sweet.jpg", "https://utfs.io/f/x"]);
+
+    expect(findReferencedImageUrls).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("only asks about URLs that map to one of our keys", async () => {
+    const { deleteUploadedFiles } = await loadR2();
+
+    await deleteUploadedFiles(["/cake4.jpg", LAST, LAST]);
+
+    expect(findReferencedImageUrls).toHaveBeenCalledWith([LAST]);
+  });
+
+  it("keeps every file when the reference check fails — logs, never throws, purges nothing", async () => {
+    findReferencedImageUrls.mockRejectedValue(new Error("connection reset"));
+    const { deleteUploadedFiles } = await loadR2();
+
+    await expect(deleteUploadedFiles([SHARED, LAST])).resolves.toBeUndefined();
+
+    expect(send).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalled();
   });
 });

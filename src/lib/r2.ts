@@ -19,6 +19,8 @@
 // file, so the catalog mutations call deleteUploadedFiles after their DB write
 // commits. Purges are STRICTLY best-effort — a failed delete never rolls back or
 // fails the write; the worst case is a lingering file, logged for a manual sweep.
+// They are also reference-aware: a URL any other row still holds is never
+// purged (src/lib/image-references.ts), since one object can back several rows.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DeleteObjectsCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -131,14 +133,40 @@ const DELETE_BATCH = 1000;
  * UploadThing URLs, foreign values), and swallows (logs) every failure —
  * including missing R2 env. Callers invoke it AFTER their DB write commits and
  * never need to catch.
+ *
+ * REFERENCE-AWARE (audit M-1): one object can back several rows, so a URL is
+ * purged only when no row/column anywhere still holds it
+ * (findReferencedImageUrls). Called post-commit, any remaining reference is
+ * another row's. If that check fails, nothing is purged — a lingering file is
+ * the safe failure, a deleted only-copy is not.
  */
 export async function deleteUploadedFiles(
   urls: ReadonlyArray<string | null | undefined>,
 ): Promise<void> {
+  // Only URLs that map to one of our keys are ever candidates — a /public path
+  // or a foreign URL is never purged, and never even looked up.
+  const candidates = [
+    ...new Set(
+      urls.filter((u): u is string => typeof u === "string" && u.length > 0 && keyFromUrl(u) !== null),
+    ),
+  ];
+  if (candidates.length === 0) return;
+
+  let referenced: Set<string>;
+  try {
+    // Loaded here, not at module top: the upload route and the migration
+    // script use this module only to PUT, and must not pull in Prisma.
+    const { findReferencedImageUrls } = await import("@/lib/image-references");
+    referenced = await findReferencedImageUrls(candidates);
+  } catch (err) {
+    console.error("R2 purge skipped — couldn't confirm the files are unreferenced (they stay):", err);
+    return;
+  }
+
   const keys = [
     ...new Set(
-      urls
-        .filter((u): u is string => typeof u === "string" && u.length > 0)
+      candidates
+        .filter((url) => !referenced.has(url))
         .map(keyFromUrl)
         .filter((k): k is string => k !== null),
     ),

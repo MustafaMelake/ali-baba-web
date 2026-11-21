@@ -92,7 +92,7 @@ Each row is mapped to the `CategorySlider` card shape: a presentational two-digi
 - `sliderOrder` is sanitized server-side (`sanitizeSliderOrder`: non-finite → 0, floored, clamped ≥ 0).
 - Every mutation revalidates `/`, `/admin/categories`, and fires `updateTag("categories")` so the footer's cached category column updates read-your-own-writes (§1.3). `updateCategory` also revalidates `/category/${slug}`.
 - Like every admin action module, the category actions gate and translate errors through the centralized [`src/lib/action-utils.ts`](../src/lib/action-utils.ts) helpers (`ensureAdmin` RBAC gate, `prismaErrorCode`, `slugify`) — the previously copy-pasted per-file versions are gone.
-- **Bucket hygiene:** replacing or deleting a category image purges the old R2 object via `deleteUploadedFiles` ([`src/lib/r2.ts`](../src/lib/r2.ts)). Purges run strictly **post-commit and best-effort** — a failed bucket delete never rolls back or fails the DB write, it only logs. Product image mutations do the same.
+- **Bucket hygiene:** replacing or deleting a category image purges the old R2 object via `deleteUploadedFiles` ([`src/lib/r2.ts`](../src/lib/r2.ts)). Purges run strictly **post-commit and best-effort** — a failed bucket delete never rolls back or fails the DB write, it only logs. Product image mutations do the same. A purge skips any URL another row still references (`findReferencedImageUrls`), so a shared image is never deleted out from under the row still showing it.
 
 ### 1.2 Standard Categories & the Catalog Directory — `BUILT`
 
