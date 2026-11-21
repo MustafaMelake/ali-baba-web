@@ -128,18 +128,35 @@ export function prettyLabel(value: string) {
 }
 
 /**
+ * A clean same-site path: one leading "/", not followed by "/" or "\", and no
+ * backslash, whitespace or control character ANYWHERE. The WHATWG URL parser
+ * strips tab / LF / CR anywhere in a URL and treats "\" as "/", so "/\t/evil.com"
+ * or "/\evil.com" become "//evil.com" — protocol-relative, off-site.
+ */
+const SAFE_REDIRECT_PATH = /^\/(?![/\\])[^\\\s\u0000-\u001f\u007f]*$/
+
+/** Any origin works here; it only proves a path can't escape the site it's resolved against. */
+const SAME_SITE_PROBE = "https://same-site.invalid"
+
+/**
  * Guards against an open-redirect: a `redirect` value typically arrives as a raw
  * query-string value, so anyone can link to `/login?redirect=https://evil.com`
  * directly (it never has to pass through our own proxy.ts to be attacker-
- * controlled). Only a same-origin relative path is accepted — absolute URLs and
- * the protocol-relative "//host" AND backslash "/\host" tricks (both of which a
- * browser normalises to a different origin) fall back to "/". Rejecting a second
- * character of "/" OR "\" blocks both in one check. Shared so every auth surface
- * that honors a `?redirect=` (login, signup, password reset, …) applies the
- * identical guard.
+ * controlled). Only a clean same-site path is accepted (SAFE_REDIRECT_PATH) —
+ * an absolute URL, a scheme, "//host", "/\host", and the stripped-character
+ * spellings ("/\t/evil.com") all fall back to "/". As a second line, the path
+ * must also resolve to the same origin it's resolved against. This guard stands
+ * on its own: it must never rely on Better Auth also refusing the value as a
+ * `callbackURL`. Shared so every auth surface that honors a `?redirect=`
+ * (login, signup, password reset, …) applies the identical guard.
  */
 export function sanitizeRedirect(path: string | null): string {
-  if (!path || !path.startsWith("/") || path[1] === "/" || path[1] === "\\") return "/"
+  if (!path || !SAFE_REDIRECT_PATH.test(path)) return "/"
+  try {
+    if (new URL(path, SAME_SITE_PROBE).origin !== SAME_SITE_PROBE) return "/"
+  } catch {
+    return "/"
+  }
   return path
 }
 

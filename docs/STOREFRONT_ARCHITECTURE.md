@@ -497,14 +497,13 @@ export const config = {
 **Open-redirect hardening — `sanitizeRedirect`.** The `redirect` value is attacker-controllable. The guard is a **shared export in [`@/lib/utils`](../src/lib/utils.ts)**, usable isomorphically from Server and Client code:
 
 ```ts
-// src/lib/utils.ts
-export function sanitizeRedirect(path: string | null): string {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) return "/"
-  return path
-}
+// src/lib/utils.ts — one leading "/", not followed by "/" or "\", and no
+// backslash, whitespace or control character anywhere…
+const SAFE_REDIRECT_PATH = /^\/(?![/\\])[^\\\s\u0000-\u001f\u007f]*$/
+// …and it must still resolve to the origin it's resolved against.
 ```
 
-Only a single-slash, same-origin relative path survives; absolute URLs and the protocol-relative `//host` trick collapse to `"/"`. On a successful `signIn.email`, navigation is **`router.push(redirectTo)` followed by `router.refresh()`** — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only honored by redirect-based flows), so the explicit push is what returns the user to the page the proxy bounced them from. The refresh lets [`CartSyncProvider`](../src/components/providers/CartSyncProvider.tsx) observe the new session and fold the guest cart into the account (§5.4).
+Only a clean same-site path survives. Absolute URLs, schemes, `//host`, `/\host` and stripped-character spellings such as `/\t/evil.com` (the URL parser drops tab/LF/CR, so it becomes `//evil.com`) all collapse to `"/"`, with no reliance on Better Auth also refusing the value as a `callbackURL`. On a successful `signIn.email`, navigation is **`router.push(redirectTo)` followed by `router.refresh()`** — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only honored by redirect-based flows), so the explicit push is what returns the user to the page the proxy bounced them from. The refresh lets [`CartSyncProvider`](../src/components/providers/CartSyncProvider.tsx) observe the new session and fold the guest cart into the account (§5.4).
 
 > **Signup symmetry — `BUILT`.** [`/signup`](../src/app/(shop)/signup/page.tsx) now mirrors the login flow: `SignupClient` reads `?redirect=` through the same shared `sanitizeRedirect` guard and pushes the sanitized destination after `signUp.email`. A guest bounced off `/wishlist` who chooses "create an account" lands back where they intended, and the cart merge still fires (the session transition is what triggers it, §5.4).
 

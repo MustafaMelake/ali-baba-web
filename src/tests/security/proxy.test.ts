@@ -12,8 +12,10 @@
 //     #1's admin case is tested against the REAL gate (requireAdminPage).
 //   • Interception is `NextResponse.redirect` (default 307), not 302/401, to
 //     /login?redirect=<path> (the param is `redirect`, not `callbackUrl`).
-//   • sanitizeRedirect blocks absolute + protocol-relative URLs, but a "/\" path
-//     BYPASSES it and resolves cross-origin — a real open-redirect gap, flagged.
+//   • sanitizeRedirect accepts only a clean same-site path: absolute URLs,
+//     schemes, "//host", "/\host", a backslash anywhere, and whitespace/control
+//     characters (the URL parser strips tab/LF/CR, so "/\t/evil.com" would
+//     become "//evil.com") all collapse to "/".
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -231,6 +233,60 @@ describe("sanitizeRedirect — backslash open-redirect (hardened)", () => {
 
   it("collapses the backslash path to '/' — bypass blocked", () => {
     expect(sanitizeRedirect(BACKSLASH_EXPLOIT)).toBe("/");
+  });
+});
+
+describe("sanitizeRedirect — control characters, whitespace, backslashes anywhere (audit: latent open redirect)", () => {
+  // The WHATWG URL parser STRIPS tab / LF / CR anywhere in a URL before
+  // parsing, so "/\t/evil.com" — which passed the old "2nd char isn't / or \"
+  // check — becomes "//evil.com" in the browser. Only Better Auth refusing the
+  // same value as `callbackURL` stopped it reaching router.push(). The guard now
+  // accepts only a clean same-site path on its own.
+  const SITE = "https://mystore.com";
+
+  it.each([
+    ["/\t/evil.com", "tab after the slash"],
+    ["/\n/evil.com", "newline after the slash"],
+    ["/\r/evil.com", "carriage return after the slash"],
+    ["/\t\t/evil.com", "several stripped characters"],
+  ])("a stripped-character bypass %o (%s) WOULD resolve off-site raw — and is now '/'", (vector) => {
+    expect(new URL(vector, SITE).origin).toBe("https://evil.com"); // why it matters
+    expect(sanitizeRedirect(vector)).toBe("/");
+  });
+
+  it.each([
+    "/\\evil.com", // "/\evil.com"
+    "/\\/evil.com",
+    "/foo\\bar", // a backslash anywhere, not just second
+    "//evil.com",
+    "///evil.com",
+    "https://evil.com",
+    "http:/evil.com",
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "/path with space",
+    "/trailing-newline\n",
+    "/null\u0000byte",
+    "/del\u007fchar",
+    "/nbsp x",
+    "/line separator",
+    "evil.com",
+    "",
+  ])("refuses %o → '/'", (vector) => {
+    expect(sanitizeRedirect(vector)).toBe("/");
+  });
+
+  it.each([
+    "/",
+    "/my-orders",
+    "/wishlist/abc?tab=1",
+    "/account/change-password",
+    "/product/pistachio-kunafa#reviews",
+    "/shop?category=oriental-sweets&sale=1",
+    "/%09/encoded-tab-stays-a-path", // percent-encoded: the parser never decodes it into a host
+  ])("keeps the clean same-site path %o", (path) => {
+    expect(sanitizeRedirect(path)).toBe(path);
+    expect(new URL(sanitizeRedirect(path), SITE).origin).toBe(SITE);
   });
 });
 

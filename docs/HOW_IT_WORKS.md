@@ -85,14 +85,13 @@ The boundary is **required**, not cosmetic: [`LoginClient.tsx`](../src/app/(shop
 **Open-redirect hardening — a globally shared guard.** The `redirect` value is attacker-controllable (anyone can hand-craft `/login?redirect=https://evil.com` — it never had to pass through our proxy to arrive). The application is protected by `sanitizeRedirect`, a single function exported from [`@/lib/utils`](../src/lib/utils.ts) — **not** a private helper duplicated inside `LoginClient.tsx` — so the same protection is isomorphic and importable from any Server Component, Client Component, or Server Action that ever needs to honor a `?redirect=` value:
 
 ```ts
-// src/lib/utils.ts
-export function sanitizeRedirect(path: string | null): string {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) return "/"
-  return path
-}
+// src/lib/utils.ts — one leading "/", not followed by "/" or "\", and no
+// backslash, whitespace or control character anywhere…
+const SAFE_REDIRECT_PATH = /^\/(?![/\\])[^\\\s\u0000-\u001f\u007f]*$/
+// …and it must still resolve to the origin it's resolved against.
 ```
 
-`LoginClient` imports it and runs the proxy's `?redirect=` value through it before navigating: `const redirectTo = sanitizeRedirect(searchParams.get("redirect"))`. Only a single-slash, same-origin relative path survives; absolute URLs and the protocol-relative `//host` trick (which browsers resolve to a different origin) both fall back to `"/"`. On a successful `signIn.email`, navigation is driven by `router.push(redirectTo)` followed by `router.refresh()` — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only acted on by redirect-based flows like OAuth), so the explicit `router.push` is what completes the round-trip back to the originally-requested page.
+`LoginClient` imports it and runs the proxy's `?redirect=` value through it before navigating: `const redirectTo = sanitizeRedirect(searchParams.get("redirect"))`. Only a clean same-site path survives. Everything else falls back to `"/"`: absolute URLs, schemes, the protocol-relative `//host` trick, `/\host` (the URL parser reads `\` as `/`), and stripped-character spellings such as `/\t/evil.com` (the parser drops tab/LF/CR anywhere, so it becomes `//evil.com`). The guard stands on its own and never relies on Better Auth also refusing the value as a `callbackURL`. On a successful `signIn.email`, navigation is driven by `router.push(redirectTo)` followed by `router.refresh()` — Better Auth's vanilla email sign-in does not auto-navigate (its `callbackURL` is only acted on by redirect-based flows like OAuth), so the explicit `router.push` is what completes the round-trip back to the originally-requested page.
 
 Because the guard lives in `@/lib/utils` rather than one client island, any future redirect-consuming surface — a signup flow honoring `?redirect=`, a password-reset return path, a Server Action that needs to validate a callback target — imports the same function instead of re-implementing (and potentially drifting from) the open-redirect policy. There is exactly one definition of "what counts as a safe redirect" for the whole app.
 
