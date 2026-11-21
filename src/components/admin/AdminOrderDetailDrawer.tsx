@@ -20,7 +20,7 @@ import {
 import { toast } from "sonner";
 import { OrderStatus, FulfillmentMethod } from "@/generated/prisma/enums";
 import { updateOrderStatus } from "@/lib/actions/orders";
-import { nextOrderStatuses } from "@/lib/order-status";
+import { isFinalOrderStatus, nextOrderStatuses } from "@/lib/order-status";
 import { formatEGP, formatMoney, formatPhoneLocal, prettyLabel, whatsappHref } from "@/lib/utils";
 import { vatLabel } from "@/lib/cart-summary";
 import StatusPill from "@/components/orders/StatusPill";
@@ -42,9 +42,18 @@ function statusLabel(status: OrderStatus) {
   return status.charAt(0) + status.slice(1).toLowerCase();
 }
 
+/** Copy for the final-status confirmation (kept out of the markup). */
+const FINAL_STATUS_COPY = {
+  title: (status: string) => `Mark this order ${status}?`,
+  body: "This is final and can't be undone.",
+  confirm: (status: string) => `Yes, mark ${status}`,
+  keep: "Keep current status",
+} as const;
+
 // ─── Interactive status control ──────────────────────────────────
 // Keyed by order id in the parent so `optimistic` resets per order.
-function StatusControl({
+// Exported for its component test.
+export function StatusControl({
   orderId,
   current,
   fulfillment,
@@ -59,14 +68,25 @@ function StatusControl({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [optimistic, setOptimistic] = useState<OrderStatus | null>(null);
+  // A final status (DELIVERED / CANCELLED) waiting for the staff member's
+  // confirmation — it can never be changed again (src/lib/order-status.ts).
+  const [confirming, setConfirming] = useState<OrderStatus | null>(null);
 
   const active = optimistic ?? current;
   // Only the next steps of the lifecycle are offered (src/lib/order-status.ts);
   // the server enforces the same graph, so this is convenience, not the gate.
   const allowed = new Set(nextOrderStatuses(fulfillment, current));
 
+  /** A chip click: a final status asks first (inline confirm-in-place); any other step applies at once. */
+  function choose(next: OrderStatus) {
+    if (next === active || isPending) return;
+    if (isFinalOrderStatus(next)) setConfirming(next);
+    else change(next);
+  }
+
   function change(next: OrderStatus) {
     if (next === active || isPending) return;
+    setConfirming(null);
     setOptimistic(next); // instant feedback
 
     startTransition(async () => {
@@ -100,7 +120,7 @@ function StatusControl({
             <button
               key={status}
               type="button"
-              onClick={() => change(status)}
+              onClick={() => choose(status)}
               disabled={isPending || unavailable}
               title={unavailable ? `Not a next step from ${statusLabel(current)}` : undefined}
               aria-pressed={isActive}
@@ -118,6 +138,52 @@ function StatusControl({
           );
         })}
       </div>
+
+      {/* Final-status confirmation — inline, in place (no nested modal inside the drawer). */}
+      <AnimatePresence initial={false}>
+        {confirming && (
+          <motion.div
+            key="confirm-final"
+            role="alertdialog"
+            aria-labelledby="final-status-title"
+            aria-describedby="final-status-body"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-start">
+              <p id="final-status-title" className="text-sm font-semibold text-amber-900">
+                {FINAL_STATUS_COPY.title(statusLabel(confirming))}
+              </p>
+              <p id="final-status-body" className="mt-1 text-xs text-amber-800">
+                {FINAL_STATUS_COPY.body}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => change(confirming)}
+                  disabled={isPending}
+                  className="rounded-full bg-stone-900 px-4 py-1.5 text-[13px] font-semibold text-white transition-colors hover:bg-stone-700 disabled:opacity-60"
+                >
+                  {FINAL_STATUS_COPY.confirm(statusLabel(confirming))}
+                </button>
+                <button
+                  type="button"
+                  autoFocus
+                  onClick={() => setConfirming(null)}
+                  disabled={isPending}
+                  className="rounded-full border border-stone-200 bg-white px-4 py-1.5 text-[13px] font-medium text-stone-600 transition-colors hover:text-stone-900 disabled:opacity-60"
+                >
+                  {FINAL_STATUS_COPY.keep}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {changedLabel && (
         <p className="mt-3 text-xs text-stone-400">
           Last changed by <span className="text-stone-500">{changedLabel}</span>
