@@ -308,18 +308,23 @@ export const PHONE_ERROR = "Enter an Egyptian mobile number, e.g. 010 1234 5678.
  * wa.me links see one customer as one phone however it was typed.
  *
  * Accepts the national form (01…), the country-code forms (201…, +201…,
- * 00201…), separators (spaces, dashes, dots, parentheses) and Arabic-Indic /
- * Eastern Arabic-Indic digits. Egyptian MOBILES only — the store calls back on
- * WhatsApp. Returns null for anything else.
+ * 00201…) — also with the trunk 0 kept after the code ("+20 010…", "+20 (0)
+ * 10…", audit L-4) — separators (spaces incl. no-break spaces, dashes, dots,
+ * parentheses) and Arabic-Indic / Eastern Arabic-Indic digits. Invisible
+ * formatting characters are stripped first: a number copied out of WhatsApp or
+ * the contacts app on an Arabic UI arrives wrapped in direction marks (LRM/RLM,
+ * LRE…PDF, LRI…PDI, ALM), zero-width spaces or a BOM. Egyptian MOBILES only —
+ * the store calls back on WhatsApp. Returns null for anything else.
  *
- * Mirrored in SQL by the 20261023000000_normalize_order_phone migration — keep
- * the two in step.
+ * The 20261023000000_normalize_order_phone migration mirrored the rules as
+ * they were then; rows it left untouched (reported) stay as they are.
  */
 export function normalizeEgyptMobile(raw: string): string | null {
   const ascii = (raw ?? "")
+    .replace(INVISIBLE_FORMAT_CHARS, "")
     .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
     .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
-    .replace(/[\s\-.()]/g, "");
+    .replace(/[\s\-.()‐-―]/g, "");
 
   let national: string;
   if (/^\+20\d+$/.test(ascii)) national = ascii.slice(3);
@@ -328,8 +333,19 @@ export function normalizeEgyptMobile(raw: string): string | null {
   else if (/^0\d+$/.test(ascii)) national = ascii.slice(1);
   else return null;
 
+  // "+20 010…": the trunk 0 kept after the country code — exactly one, before
+  // a full 10-digit national number.
+  if (/^0\d{10}$/.test(national)) national = national.slice(1);
+
   return EGYPT_MOBILE_NATIONAL.test(national) ? `+20${national}` : null;
 }
+
+/**
+ * Zero-width and bidi formatting characters a copy-paste carries along:
+ * soft hyphen, Arabic Letter Mark, ZWSP/ZWNJ/ZWJ/LRM/RLM, LRE/RLE/PDF/LRO/RLO,
+ * word joiner … invisible separators, LRI/RLI/FSI/PDI, and the BOM.
+ */
+const INVISIBLE_FORMAT_CHARS = /[­؜​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
 
 /**
  * The digits an admin's search box should match against canonical phones:
